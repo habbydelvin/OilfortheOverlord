@@ -2,9 +2,10 @@ import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 
 /**
- * Blockout buildings. Maya exports these in centimetres with the mesh pivot
+ * Blockout tiles. Maya exports these in centimetres with the mesh pivot
  * up in the air, and tags the atlas as Maya|baseColor, which FBXLoader skips.
  * Fit each one to a single board cell and put Atlas.jpg on the material.
+ * Wasteland has no model yet and stays a coloured block.
  */
 export const BLOCKOUTS = {
   capital: 'Capital01.fbx',
@@ -13,10 +14,15 @@ export const BLOCKOUTS = {
   pump: 'WaterPump01.fbx',
   station: 'OilStation01.fbx',
   refinery: 'Refinary01.fbx',
+  oasis: 'Oasis01.fbx',
+  tarpit: 'TarPit01.fbx',
+  cliffs: 'Cliffs01.fbx',
+  ruins: 'PreWarRuins01.fbx',
+  crater: 'ToxicCrater01.fbx',
 };
 
 const MODEL_URL = '/models/blockouts/';
-const ATLAS_URL = '/models/Atlas.jpg';
+const ATLAS_URL = '/models/Atlas.jpg?v=20261026-1640';
 // Footprints measure about 96 × 97 cm. One board cell is 1 unit across.
 const CELL = 0.97;
 
