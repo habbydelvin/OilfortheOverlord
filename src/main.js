@@ -4,6 +4,7 @@ import { createScene } from './scene.js';
 import { CameraRig } from './controls.js';
 import { Grid } from './grid.js';
 import { TileFactory, TERRAINS, hex } from './tiles.js';
+import { hasBlockout } from './models.js';
 import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
 import { Hand } from './hand.js';
@@ -24,7 +25,7 @@ const factory = new TileFactory();
 const tiles = new THREE.Group();
 scene.add(tiles);
 const frontier = new Frontier(scene);
-const placement = new Placement(scene, grid);
+const placement = new Placement(scene, grid, factory);
 const expansion = new Expansion(scene);
 const payoutCfg = loadPayoutConfig();
 const payout = new Payout(camera, document.getElementById('floaters'), payoutCfg);
@@ -66,6 +67,22 @@ function addTile(x, z, terrain, delay = 0) {
   grid.set(x, z, { terrain, mesh, onRuins });
   anims.push({ mesh, t: -delay, dur: 0.38 });
 }
+
+/** Swap any flat stand-in that now has a loaded blockout, including one still falling. */
+function adoptBlockouts() {
+  for (const cell of grid.cells.values()) {
+    if (!hasBlockout(cell.terrain)) continue;
+    const previous = cell.mesh;
+    const next = factory.upgrade(previous, cell.terrain);
+    if (next === previous) continue;
+    const anim = anims.find((a) => a.mesh === previous);
+    if (anim) anim.mesh = next;
+    cell.mesh = next;
+  }
+  if (hand.piece) placement.setPiece(hand.piece);
+}
+
+factory.ready.then(adoptBlockouts);
 
 function removeMesh(mesh) {
   tiles.remove(mesh);

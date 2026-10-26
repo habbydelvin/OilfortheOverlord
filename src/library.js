@@ -81,7 +81,7 @@ function statLines(stats) {
 }
 
 /** One WebGL context, one still per terrain. A page of live canvases trips the browser context limit. */
-function renderThumbs() {
+async function renderThumbs() {
   const width = 480;
   const height = 320;
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
@@ -105,11 +105,21 @@ function renderThumbs() {
   camera.lookAt(0, -0.32, 0);
 
   const factory = new TileFactory();
+  await factory.ready;
   const urls = {};
+  const offset = new THREE.Vector3(1, 0.72, 1.15).normalize();
   for (const key of TERRAIN_KEYS) {
     const mesh = factory.create(key);
-    mesh.rotation.y = 0.55;
     scene.add(mesh);
+    const box = new THREE.Box3().setFromObject(mesh);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const dist = (Math.max(size.x, size.y, size.z) * 0.68) / Math.sin(THREE.MathUtils.degToRad(16));
+    camera.position.copy(center).addScaledVector(offset, dist);
+    camera.near = Math.max(0.01, dist / 80);
+    camera.far = dist * 12;
+    camera.lookAt(center);
+    camera.updateProjectionMatrix();
     renderer.render(scene, camera);
     urls[key] = renderer.domElement.toDataURL('image/png');
     scene.remove(mesh);
@@ -168,8 +178,10 @@ function shapeStrip() {
     .join('');
 }
 
-const thumbs = renderThumbs();
 const root = document.getElementById('library');
+document.getElementById('lede').textContent = 'Loading blockouts…';
+
+const thumbs = await renderThumbs();
 document.getElementById('lede').textContent =
   `${TERRAIN_KEYS.length} tiles · bag weight ${bagWeight}. Weights are relative. Capital and the toxic crater are never drawn.`;
 

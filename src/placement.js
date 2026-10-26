@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { pieceOffsets } from './pieces.js';
+import { hasBlockout } from './models.js';
 import { TERRAINS, TILE, isBuilding } from './tiles.js';
 
 const OK_COLOR = new THREE.Color(0x8be39a);
@@ -17,8 +18,9 @@ export class Placement {
   result = { ok: false, reason: '' };
   shake = 0;
 
-  constructor(scene, grid) {
+  constructor(scene, grid, factory) {
     this.grid = grid;
+    this.factory = factory;
     const s = 1 - TILE.gap;
 
     this.blocks = new THREE.Group();
@@ -42,8 +44,9 @@ export class Placement {
       return;
     }
     this.offsets = pieceOffsets(piece);
+    const blockout = hasBlockout(piece.terrain) && this.factory?.models?.has(piece.terrain);
     for (const [ox, oz] of this.offsets) {
-      const b = new THREE.Mesh(this.blockGeo, this.blockMat);
+      const b = blockout ? this.factory.preview(piece.terrain) : new THREE.Mesh(this.blockGeo, this.blockMat);
       b.position.set(ox, 0, oz);
       b.castShadow = true;
       this.blocks.add(b);
@@ -97,6 +100,13 @@ export class Placement {
     this.blockMat.color.set(TERRAINS[this.piece.terrain].top);
     if (!ok) this.blockMat.color.lerp(BAD_COLOR, 0.55);
     this.blockMat.emissive.copy(ok ? OK_COLOR : BAD_COLOR).multiplyScalar(0.08);
+    // Blockout ghosts keep the atlas. Only push them toward red when the spot is illegal.
+    this.blocks.traverse((obj) => {
+      const base = obj.material?.userData?.base;
+      if (!base) return;
+      obj.material.color.copy(base);
+      if (!ok) obj.material.color.lerp(BAD_COLOR, 0.45);
+    });
 
     this.feet.position.set(cell[0], 0, cell[1]);
     const goal = new THREE.Vector3(cell[0], HOVER_Y + Math.sin(time * 3) * 0.05, cell[1]);

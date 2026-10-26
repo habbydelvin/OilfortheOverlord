@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { hasBlockout, loadBlockouts } from './models.js';
 
 /**
  * Desert dieselpunk tile set. Flat colours only for now, detail comes later.
@@ -178,8 +179,15 @@ export const TILE = {
 
 export const hex = (n) => `#${n.toString(16).padStart(6, '0')}`;
 
-/** Builds tile meshes (terrain cap + soil block) sharing geometry and materials. */
+/**
+ * Builds tile meshes. Building terrains use the blockout FBX once it has
+ * loaded; everything else stays a coloured soil block.
+ */
 export class TileFactory {
+  /** @type {Map<string, THREE.Object3D> | null} */
+  models = null;
+  ready;
+
   constructor() {
     const s = 1 - TILE.gap;
     this.capGeo = new THREE.BoxGeometry(s, TILE.capH, s).translate(0, -TILE.capH / 2, 0);
@@ -192,17 +200,66 @@ export class TileFactory {
       // BoxGeometry face order: +x, -x, +y (top), -y, +z, -z
       this.capMats[k] = [edge, edge, top, edge, edge, edge];
     }
+    this.ready = loadBlockouts()
+      .then((models) => {
+        this.models = models;
+      })
+      .catch((error) => {
+        console.error('Blockout models failed to load; coloured blocks stay in place.', error);
+      });
   }
 
-  create(terrain) {
+  /** Flat stand-in used for land, junk, and buildings before the FBX arrives. */
+  #block(terrain) {
     const group = new THREE.Group();
     const soil = new THREE.Mesh(this.soilGeo, this.soilMat);
     const cap = new THREE.Mesh(this.capGeo, this.capMats[terrain]);
-    for (const m of [soil, cap]) {
-      m.castShadow = true;
-      m.receiveShadow = true;
+    for (const mesh of [soil, cap]) {
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
     }
     group.add(soil, cap);
     return group;
+  }
+
+  create(terrain) {
+    const source = this.models?.get(terrain);
+    if (!source) return this.#block(terrain);
+    // The fitted model keeps its own offset. A holder takes the cell position
+    // so placing or animating the tile does not undo that fit.
+    const holder = new THREE.Group();
+    holder.add(source.clone(true));
+    holder.userData.blockout = true;
+    return holder;
+  }
+
+  /** Transparent copy for the placement ghost. Materials are not shared. */
+  preview(terrain) {
+    const mesh = this.create(terrain);
+    mesh.traverse((obj) => {
+      if (!obj.isMesh) return;
+      const material = obj.material.clone();
+      material.transparent = true;
+      material.opacity = 0.86;
+      material.depthWrite = false;
+      material.userData.base = material.color.clone();
+      obj.material = material;
+      obj.castShadow = true;
+    });
+    return mesh;
+  }
+
+  /** Swap a placed flat block for its blockout, keeping the board transform. */
+  upgrade(mesh, terrain) {
+    if (!hasBlockout(terrain) || !this.models?.has(terrain)) return mesh;
+    if (mesh.userData.blockout) return mesh;
+    const next = this.create(terrain);
+    next.position.copy(mesh.position);
+    next.scale.copy(mesh.scale);
+    next.visible = mesh.visible;
+    next.userData.blockout = true;
+    mesh.parent?.add(next);
+    mesh.removeFromParent();
+    return next;
   }
 }
