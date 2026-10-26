@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tile Island — Placement Sandbox</title>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="ui">
+      <header id="top">
+        <div class="level" id="milestoneLabel">island sandbox</div>
+        <div class="bar"><div class="fill" id="milestoneFill"></div></div>
+        <div class="count" id="milestoneCount">1 / 5</div>
+        <div class="sub" id="pieceCount">0 pieces placed</div>
+      </header>
+
+      <aside id="panel">
+        <div class="stat">
+          <div class="big" id="islandSize">1</div>
+          <div class="label">island tiles</div>
+        </div>
+        <div class="spacer"></div>
+        <button id="btnReroll" class="btn blue">
+          Reroll hand<span>draw 5 new pieces</span>
+        </button>
+        <button id="btnReset" class="btn red">
+          Reset island<span>back to a single tile</span>
+        </button>
+      </aside>
+
+      <div id="help">
+        <b>1–5</b> / click card · select piece<br />
+        <b>R</b> / right-click · rotate &nbsp; <b>F</b> · rotate back<br />
+        <b>Click</b> · place &nbsp; <b>Esc</b> · cancel<br />
+        <b>Drag</b> / <b>WASD</b> · pan &nbsp; <b>Wheel</b> · zoom<br />
+        <b>Q / E</b> · turn camera &nbsp; <b>C</b> · recenter
+      </div>
+
+      <div id="toast"></div>
+      <div id="hand"></div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
