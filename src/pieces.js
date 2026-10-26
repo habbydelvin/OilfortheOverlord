@@ -103,6 +103,18 @@ export function shapeFits(grid, shapeKey) {
 }
 
 /**
+ * The biggest shape (at most `maxCells` cells) that can be placed right now, picked at random
+ * among equally big ones. null if not even a single cell fits.
+ */
+export function largestFittingShape(grid, maxCells) {
+  const fits = SHAPE_KEYS.filter((k) => SHAPES[k].cells.length <= maxCells && shapeFits(grid, k));
+  if (!fits.length) return null;
+  const best = Math.max(...fits.map((k) => SHAPES[k].cells.length));
+  const top = fits.filter((k) => SHAPES[k].cells.length === best);
+  return top[Math.floor(Math.random() * top.length)];
+}
+
+/**
  * Only Wasteland comes in multi-block shapes; every other tile is a single block.
  * `grid` (optional) limits Wasteland to shapes that fit in the space you have left.
  */

@@ -2,10 +2,11 @@ import * as THREE from 'three';
 
 const TILE_H = 0.62; // cap + soil height, used to squash from the bottom
 
+// Resources are told apart by colour alone; only population keeps a word.
 const RES = {
-  food: { word: 'food', color: '#9be36f' },
-  manpower: { word: 'manpower', color: '#f0b27a' },
-  oil: { word: 'oil', color: '#ffb347' },
+  food: { word: '', color: '#9be36f' },
+  manpower: { word: '', color: '#f0b27a' },
+  oil: { word: '', color: '#ffb347' },
   population: { word: 'population', color: '#8fe0ff' },
 };
 
@@ -104,7 +105,7 @@ export class Payout {
         .map(
           (r) =>
             `<div class="row${tile[r] < 0 ? ' neg' : ''}" style="--c:${RES[r].color}">` +
-            `<b>${tile[r] > 0 ? '+' : ''}${tile[r]}</b><span>${RES[r].word}</span></div>`,
+            `<b>${tile[r] > 0 ? '+' : ''}${tile[r]}</b>${RES[r].word ? `<span>${RES[r].word}</span>` : ''}</div>`,
         )
         .join('');
       let el = null;

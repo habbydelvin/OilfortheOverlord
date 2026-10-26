@@ -17,7 +17,7 @@ const GROUPS = [
   {
     id: 'junk',
     title: 'Junk',
-    blurb: 'Clogs the hand. Only Wasteland is drawn as a polyomino. The four Wasteland colours share one look and split a draw weight of 2.',
+    blurb: 'Clogs the hand. Only Wasteland is drawn as a polyomino. The four Wasteland colours share one look and split a draw weight of about 8.3 (≈40% of draws). Wasteland must be placed before ending the turn and can never be built on.',
   },
 ];
 

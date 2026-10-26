@@ -9,6 +9,7 @@ import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
 import { Hand } from './hand.js';
 import { Expansion } from './expansion.js';
+import { Mysteries } from './mystery.js';
 import { computeEconomy, growthCost, FIRST_QUOTA, nextQuota, SEASONS } from './economy.js';
 import { Payout } from './payout.js';
 import { loadPayoutConfig } from './payoutConfig.js';
@@ -27,6 +28,7 @@ scene.add(tiles);
 const frontier = new Frontier(scene);
 const placement = new Placement(scene, grid, factory);
 const expansion = new Expansion(scene);
+const mysteries = new Mysteries(scene);
 const payoutCfg = loadPayoutConfig();
 const payout = new Payout(camera, document.getElementById('floaters'), payoutCfg);
 const debug = createDebugPanel(document.getElementById('debug'), document.getElementById('btnDebug'), payoutCfg, {
@@ -181,8 +183,11 @@ function updateHUD() {
     (turn.population ? ` · population ${turn.population}` : '');
 
   $('btnReroll').classList.toggle('hidden', hand.isEmpty);
-  $('btnNextSub').textContent =
-    turn.season === 3 ? `collect oil, pay ${quota} tribute` : 'collect oil, draw a new hand';
+  $('btnNextSub').textContent = hand.forced.length
+    ? 'place your Wasteland first'
+    : turn.season === 3
+      ? `collect oil, pay ${quota} tribute`
+      : 'collect oil, draw a new hand';
   if (tipKind) renderResTip(e);
 }
 
@@ -218,7 +223,7 @@ function breakdown(kind, e) {
     if (e.foodBalance < 0) {
       note(
         e.fed < 1
-          ? `Store can't cover it: people go hungry, oil ×${pct(e.fed)}`
+          ? `Store can't cover it: people go hungry, stations run at ${pct(e.fed)}`
           : `Shortfall covered from the store (${e.foodStore})`,
       );
     }
@@ -232,17 +237,17 @@ function breakdown(kind, e) {
     add('Toxic craters', -e.craterManpower);
     total('Supplied', e.supplied);
     add(`Hydro-farms ×${c('farm')}`, -c('farm'));
-    add(`Oil stations ×${c('station')}`, -c('station'));
+    add(`Stations ×${c('station')}`, -c('station'));
     add(`Refineries ×${c('refinery')}`, -2 * c('refinery'));
     add('Rerolls this season', -e.rerollsSpent);
     total('Spare', signed(e.spare));
     note(
       e.spare >= 0
-        ? `Each spare worker: +10% oil (now ${times(e.boost)})`
+        ? `Each spare worker: +10% station output (now ${times(e.boost)})`
         : `Short ${-e.spare} workers: buildings run at ${pct(e.staffing)}`,
     );
   } else {
-    add(`Oil stations ×${c('station')}`, 2 * c('station'));
+    add(`Stations ×${c('station')}`, 2 * c('station'));
     add(`Tar pit bonus ×${e.bonus.tarpitStations}`, 2 * e.bonus.tarpitStations);
     total('Crude', e.crude);
     mul(`Refineries (${e.refineryLinks} station link${e.refineryLinks === 1 ? '' : 's'})`, e.refineryMult);
@@ -256,12 +261,12 @@ function breakdown(kind, e) {
   return rows;
 }
 
-const TIP_TITLES = { food: 'Food this season', mp: 'Manpower this season', oil: 'Oil this season' };
+const TIP_TITLE = 'How this season adds up';
 
 function renderResTip(e = economyNow()) {
   const rows = breakdown(tipKind, e);
   $('resTip').innerHTML =
-    `<div class="title">${TIP_TITLES[tipKind]}</div>` +
+    `<div class="title">${TIP_TITLE}</div>` +
     (rows.length ? '' : '<div class="row note">Nothing yet</div>') +
     rows
       .map(([label, value, type]) => `<div class="row ${type}"><span>${label}</span><b>${value}</b></div>`)
@@ -324,6 +329,19 @@ function endTurn() {
       payout.skip(); // pressing again fast-forwards
       return;
     }
+  }
+  // Wasteland must be placed first.
+  const forced = hand.forced.length;
+  if (forced) {
+    if (grid.isFull()) {
+      checkExpansion();
+      toast('Expand your territory to place your Wasteland', 'bad');
+    } else {
+      refitWasteland();
+      if (hand.forced.length) toast(`Place your Wasteland first (${hand.forced.length} left in hand)`, 'bad');
+      else endTurn(); // the last Wasteland had nowhere to go and was dropped
+    }
+    return;
   }
   hand.select(-1);
   const e = economyNow();
@@ -479,6 +497,15 @@ function hoveredCell() {
   return [Math.round(hit.x), Math.round(hit.z)];
 }
 
+/** Shrink Wasteland cards that no longer fit (or drop them if nothing fits) and say so. */
+function refitWasteland() {
+  if (grid.isFull()) return; // expansion comes first
+  const { shrunk, discarded } = hand.fitForced();
+  if (shrunk) toast(`Wasteland shrank to fit the space left`);
+  if (discarded) toast(`No room for ${discarded} Wasteland piece${discarded === 1 ? '' : 's'}: discarded`, 'bad');
+  if (shrunk || discarded) updateHUD();
+}
+
 // ---------- territory expansion ----------
 function checkExpansion() {
   if (!grid.isFull() || expansion.active) return;
@@ -489,11 +516,20 @@ function checkExpansion() {
 function expand(option) {
   grid.unlock(option.px, option.pz);
   expansion.clear();
+  // Mystery sites in the new plot turn into real tiles.
+  const found = mysteries.reveal(option.px, option.pz);
+  found.forEach(({ x, z, terrain }, i) => addTile(x, z, terrain, 0.25 + i * 0.15));
   frontier.rebuild(grid);
   placement.cell = null; // force ghost revalidation
   rig.focus(...grid.territoryCenter());
-  toast('Territory expanded', 'good');
+  toast(
+    found.length
+      ? `Territory expanded · found ${found.map((f) => `a ${TERRAINS[f.terrain].name}`).join(', ')}!`
+      : 'Territory expanded',
+    'good',
+  );
   updateHUD();
+  refitWasteland();
 }
 
 function tryPlace() {
@@ -527,6 +563,7 @@ function tryPlace() {
   frontier.rebuild(grid);
   updateHUD();
   checkExpansion();
+  refitWasteland();
 }
 
 rig.onClick = tryPlace;
@@ -595,6 +632,7 @@ function resetIsland() {
   });
   $('report').textContent = 'No seasons played yet.';
   addTile(0, 0, SEED_TERRAIN);
+  mysteries.reset();
   frontier.rebuild(grid);
   hand.deal(HAND_SIZE);
   rig.focus(0, 0);
@@ -611,6 +649,7 @@ function frame(now) {
   followTarget(rig.target, rig.distance, dt);
   updateDropAnims(dt);
   frontier.update(dt, time);
+  mysteries.update(time);
   const cell = rig.isDragging ? null : hoveredCell();
   expansion.update(cell, dt, time);
   updateInspect(cell);
@@ -626,4 +665,4 @@ resetIsland();
 requestAnimationFrame(frame);
 
 // Handy for debugging in the console.
-window.tileIsland = { grid, hand, placement, rig, expansion, turn, economy: economyNow };
+window.tileIsland = { grid, hand, placement, rig, expansion, mysteries, turn, economy: economyNow };

@@ -1,7 +1,10 @@
-import { randomPiece, rotateCells, SHAPES } from './pieces.js';
+import { largestFittingShape, randomPiece, rotateCells, shapeFits, SHAPES } from './pieces.js';
 import { TERRAINS, hex } from './tiles.js';
 
 const CELL_PX = 20;
+
+/** Wasteland has to be placed: it can't be rerolled away or left in hand at the end of a turn. */
+export const isForced = (piece) => piece.terrain.startsWith('wasteland');
 
 /** The row of piece cards along the bottom of the screen. */
 export class Hand {
@@ -52,9 +55,42 @@ export class Hand {
     this.onChange?.(null);
   }
 
-  /** Redraw the cards still in hand (same number of cards). */
+  /** Cards that must be placed before the turn can end (Wasteland). */
+  get forced() {
+    return this.cards.filter(isForced);
+  }
+
+  /** Redraw every card still in hand, Wasteland included (same number of cards). */
   reroll() {
     this.deal(this.cards.length);
+  }
+
+  /**
+   * Keep Wasteland cards placeable as the free space shrinks: a shape that no longer fits is
+   * shrunk to the biggest shape that does; only if not even one cell fits is the card dropped.
+   * Call only when the territory isn't full (a full territory should be expanded first).
+   */
+  fitForced() {
+    const out = { shrunk: 0, discarded: 0 };
+    if (!this.grid) return out;
+    const kept = [];
+    this.cards.forEach((p, i) => {
+      if (!isForced(p) || shapeFits(this.grid, p.shape)) return kept.push(p);
+      const shape = largestFittingShape(this.grid, SHAPES[p.shape].cells.length);
+      if (!shape) return out.discarded++;
+      p.shape = shape;
+      this.fresh.add(kept.length);
+      kept.push(p);
+      out.shrunk++;
+    });
+    if (out.shrunk || out.discarded) {
+      const sel = this.piece;
+      this.cards = kept;
+      this.selected = sel ? kept.indexOf(sel) : -1;
+      this.render();
+      this.onChange?.(this.piece);
+    }
+    return out;
   }
 
   /** Use up the selected card. No replacement until next turn. */
