@@ -560,6 +560,21 @@ body.paying #btnReset {
   gap: 12px;
 }
 
+#libraryLink {
+  pointer-events: auto;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gold);
+  text-decoration: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+#libraryLink:hover {
+  text-decoration: underline;
+}
+
 #help {
   font-size: 12px;
   line-height: 1.7;
