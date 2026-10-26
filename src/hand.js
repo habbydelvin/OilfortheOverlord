@@ -106,7 +106,6 @@ export class Hand {
           <div class="art">${this.#shapeHTML(p, hex(t.top), hex(t.edge))}</div>
           <div class="name">${t.name}</div>
           <div class="rule">${t.rule}</div>
-          <div class="kind">${t.category} · ${SHAPES[p.shape].name}</div>
         </div>`;
       })
       .join('');

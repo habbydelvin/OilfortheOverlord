@@ -100,16 +100,20 @@ A round is four turns: Spring, Summer, Autumn, Winter. Tribute is due at the end
 
 Oil is delivered to the overlord. The better you do, the higher the next quota. Fall short and the overlord retaliates.
 
-Quota curve, for illustration only. Numbers to be tuned.
+The Overlord takes the whole stockpile after Winter; nothing carries over. The next quota grows with what he received:
 
-| Round | Quota (barrels) |
+```
+excess    = max(0, delivered - quota)
+nextQuota = round(quota × 1.10 + excess × 0.75)
+```
+
+The first quota is 24. The quota always grows by 10%, even if you fall short, and every barrel of excess raises it further. Numbers to be tuned.
+
+| Delivered vs quota | Next quota |
 | --- | --- |
-| 1 | 24 |
-| 2 | 36 |
-| 3 | 54 |
-| 4 | 80 |
-| 5 | 120 |
-| 6 | 175 |
+| 24 / 24 (exactly met) | 26 |
+| 40 / 24 (16 excess) | 38 |
+| 15 / 24 (missed, plus a nuke) | 26 |
 
 ## Build phase
 

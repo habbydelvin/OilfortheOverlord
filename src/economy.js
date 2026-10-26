@@ -31,6 +31,8 @@ export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
   let crude = 0;
   let refineryLinks = 0;
   const counts = {};
+  // Bonus counts for the HUD breakdown tooltips.
+  const bonus = { ruins: 0, pumpFarms: 0, oasisFarms: 0, tarpitStations: 0 };
   // What each tile contributes, for the end-of-turn payout animation.
   const perCell = [];
 
@@ -56,16 +58,23 @@ export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
 
     // Ruins under any building: +1 manpower, +1 more for a settlement.
     if (cell.onRuins && TERRAINS[t].category === 'building') {
-      const bonus = 1 + (t === 'settlement' ? stats.ruinsBonusManpower : 0);
-      supplied += bonus;
-      per.manpower += bonus;
+      const ruins = 1 + (t === 'settlement' ? stats.ruinsBonusManpower : 0);
+      supplied += ruins;
+      per.manpower += ruins;
+      bonus.ruins += ruins;
     }
 
     if (t === 'farm') {
-      per.rawFood = 2 + (near.includes('pump') ? 2 : 0) + (near.includes('oasis') ? 3 : 0);
+      const pump = near.includes('pump');
+      const oasis = near.includes('oasis');
+      if (pump) bonus.pumpFarms++;
+      if (oasis) bonus.oasisFarms++;
+      per.rawFood = 2 + (pump ? 2 : 0) + (oasis ? 3 : 0);
       farmFood += per.rawFood;
     } else if (t === 'station') {
-      per.rawCrude = 2 + (near.includes('tarpit') ? 2 : 0);
+      const tarpit = near.includes('tarpit');
+      if (tarpit) bonus.tarpitStations++;
+      per.rawCrude = 2 + (tarpit ? 2 : 0);
       crude += per.rawCrude;
     } else if (t === 'refinery') {
       refineryLinks += near.filter((n) => n === 'station').length;
@@ -132,8 +141,10 @@ export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
     nextGrowthCost: growthCost(population + popGrowth),
     crude,
     refineryMult,
+    refineryLinks,
     oil,
     counts,
+    bonus,
   };
 }
 
@@ -162,11 +173,19 @@ export function growthCost(population) {
   return 10 + 5 * population;
 }
 
-/** Tribute quota per round (placeholder curve from the proposal, then ×1.45 per round). */
-const QUOTAS = [24, 36, 54, 80, 120, 175];
-export function quotaFor(round) {
-  if (round <= QUOTAS.length) return QUOTAS[round - 1];
-  return Math.round(QUOTAS[QUOTAS.length - 1] * Math.pow(1.45, round - QUOTAS.length));
+/** Tribute quota for the first year. */
+export const FIRST_QUOTA = 24;
+/** The quota always grows by this much per year, even if you only just meet it (or miss it). */
+const QUOTA_GROWTH = 1.1;
+/** Each barrel delivered above the quota raises the next quota by this much. */
+const EXCESS_FACTOR = 0.75;
+
+/**
+ * Next year's quota: the Overlord's greed grows with what you hand over.
+ * A shortfall counts as zero excess (the quota still grows by QUOTA_GROWTH).
+ */
+export function nextQuota(quota, delivered) {
+  return Math.round(quota * QUOTA_GROWTH + Math.max(0, delivered - quota) * EXCESS_FACTOR);
 }
 
 export const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter'];

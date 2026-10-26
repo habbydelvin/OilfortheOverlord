@@ -241,6 +241,90 @@ body {
   color: var(--muted);
 }
 
+#panel .res[data-tip] {
+  cursor: help;
+}
+
+#panel .res[data-tip]:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Breakdown shown beside a hovered resource row. */
+#resTip {
+  position: fixed;
+  right: calc(var(--panel-w) + 10px);
+  width: 270px;
+  padding: 10px 12px 8px;
+  border-left: 4px solid var(--c);
+  border-radius: 4px;
+  background: rgba(18, 22, 24, 0.96);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  font-size: 12px;
+  z-index: 20;
+  animation: tipIn 0.12s ease-out;
+}
+
+#resTip.hidden {
+  display: none;
+}
+
+@keyframes tipIn {
+  from {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+}
+
+#resTip .title {
+  margin-bottom: 6px;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+#resTip .row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+#resTip .row b {
+  font-variant-numeric: tabular-nums;
+  color: #7fd36a;
+}
+
+#resTip .row.bad b {
+  color: #ff8f7a;
+}
+
+#resTip .row.mul b {
+  color: var(--gold);
+}
+
+#resTip .row.mul.bad b {
+  color: #ff8f7a;
+}
+
+#resTip .row.total {
+  margin: 3px 0 5px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  font-weight: 600;
+}
+
+#resTip .row.total b {
+  color: var(--ink);
+}
+
+#resTip .row.note {
+  padding-top: 3px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
 #report {
   margin-right: 14px;
   font-size: 12px;
@@ -728,12 +812,13 @@ body.paying #btnReset {
 }
 
 .card .rule {
-  padding: 3px 8px 2px;
+  padding: 3px 8px 26px;
   text-align: center;
   font-size: 11px;
   line-height: 1.3;
   background: var(--edge);
   color: rgba(255, 255, 255, 0.92);
+  border-radius: 0 0 6px 6px;
 }
 
 .card .name {
@@ -744,17 +829,6 @@ body.paying #btnReset {
   letter-spacing: 0.06em;
   background: var(--edge);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-}
-
-.card .kind {
-  padding: 0 0 26px;
-  text-align: center;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  background: var(--edge);
-  color: rgba(255, 255, 255, 0.7);
-  border-radius: 0 0 6px 6px;
 }
 
 .card .badge {

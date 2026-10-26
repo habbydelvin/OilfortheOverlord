@@ -9,7 +9,7 @@ import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
 import { Hand } from './hand.js';
 import { Expansion } from './expansion.js';
-import { computeEconomy, growthCost, quotaFor, SEASONS } from './economy.js';
+import { computeEconomy, growthCost, FIRST_QUOTA, nextQuota, SEASONS } from './economy.js';
 import { Payout } from './payout.js';
 import { loadPayoutConfig } from './payoutConfig.js';
 import { createDebugPanel } from './debugPanel.js';
@@ -39,7 +39,7 @@ const anims = [];
 let piecesPlaced = 0;
 
 // Turn state: a turn is a season, a round is four seasons, tribute after Winter.
-const turn = { round: 1, season: 0, stockpile: 0, rerolls: 0, total: 0, food: 0, population: 0 };
+const turn = { round: 1, season: 0, stockpile: 0, rerolls: 0, total: 0, food: 0, population: 0, quota: FIRST_QUOTA };
 
 /** This season's economy with the carried-over food store and population. */
 const economyNow = () => computeEconomy(grid, turn.rerolls, { population: turn.population, foodStore: turn.food });
@@ -155,7 +155,7 @@ function setRes(id, amount, change) {
 
 function updateHUD() {
   const n = grid.size;
-  const quota = quotaFor(turn.round);
+  const quota = turn.quota;
   const left = 3 - turn.season;
   $('seasonLabel').textContent =
     `Round ${turn.round} · ${SEASONS[turn.season]} · tribute ${left ? `in ${left} season${left === 1 ? '' : 's'}` : 'due this Winter'}`;
@@ -165,10 +165,12 @@ function updateHUD() {
 
   // Projected economy for this season if the turn ended now.
   const e = economyNow();
-  // Big number = how much you produce, small (±n) = excess or shortfall after upkeep.
+  // Food / Manpower: big number = how much you produce, small (±n) = excess or shortfall after upkeep.
   setRes('resFood', e.foodGrown, e.foodBalance);
   setRes('resMp', e.supplied, e.spare);
-  setRes('resOil', e.oil, e.oil);
+  // Oil: big number = the stockpile (the Overlord takes it all after Winter), small = this season's yield.
+  $('resOilD').textContent = `(+${e.oil})`;
+  $('resOilD').className = e.oil > 0 ? 'up' : '';
 
   // Food store progress toward the next population point.
   const cost = growthCost(turn.population);
@@ -181,6 +183,107 @@ function updateHUD() {
   $('btnReroll').classList.toggle('hidden', hand.isEmpty);
   $('btnNextSub').textContent =
     turn.season === 3 ? `collect oil, pay ${quota} tribute` : 'collect oil, draw a new hand';
+  if (tipKind) renderResTip(e);
+}
+
+// ---------- resource breakdown tooltips ----------
+let tipKind = null; // 'food' | 'mp' | 'oil' while a resource row is hovered
+
+const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
+const pct = (f) => `${Math.round(f * 100)}%`;
+const times = (f) => `×${+f.toFixed(2)}`;
+
+/**
+ * Line items for one resource. Each row: [label, value, type]
+ * type: 'add' (signed amount), 'mul' (multiplier), 'total' (subtotal line), 'note' (plain text)
+ */
+function breakdown(kind, e) {
+  const c = (t) => e.counts[t] ?? 0;
+  const rows = [];
+  const add = (label, v) => v && rows.push([label, signed(v), v < 0 ? 'add bad' : 'add']);
+  const mul = (label, f) => f !== 1 && rows.push([label, times(f), f < 1 ? 'mul bad' : 'mul']);
+  const total = (label, v) => rows.push([label, v, 'total']);
+  const note = (text) => rows.push([text, '', 'note']);
+
+  if (kind === 'food') {
+    add(`Hydro-farms ×${c('farm')}`, 2 * c('farm'));
+    add(`Pump bonus ×${e.bonus.pumpFarms}`, 2 * e.bonus.pumpFarms);
+    add(`Oasis bonus ×${e.bonus.oasisFarms}`, 3 * e.bonus.oasisFarms);
+    if (e.staffing < 1) mul(`Understaffed (${pct(e.staffing)})`, e.staffing);
+    total('Grown', Math.round(e.foodGrown));
+    add('Capital eats', -3 * c('capital'));
+    add(`Settlements ×${c('settlement')}`, -c('settlement'));
+    add('Toxic craters', -e.craterFood);
+    total('Balance', signed(Math.round(e.foodBalance)));
+    if (e.foodBalance < 0) {
+      note(
+        e.fed < 1
+          ? `Store can't cover it: people go hungry, oil ×${pct(e.fed)}`
+          : `Shortfall covered from the store (${e.foodStore})`,
+      );
+    }
+    note(`Store ${e.foodStore} → ${e.storeAfter} / ${e.nextGrowthCost} for +1 population`);
+    if (e.popGrowth) note(`Population grows +${e.popGrowth} this season`);
+  } else if (kind === 'mp') {
+    add('Capital', 4 * c('capital'));
+    add(`Settlements ×${c('settlement')}`, 2 * c('settlement'));
+    add('Built on ruins', e.bonus.ruins);
+    add(`Population`, e.population);
+    add('Toxic craters', -e.craterManpower);
+    total('Supplied', e.supplied);
+    add(`Hydro-farms ×${c('farm')}`, -c('farm'));
+    add(`Oil stations ×${c('station')}`, -c('station'));
+    add(`Refineries ×${c('refinery')}`, -2 * c('refinery'));
+    add('Rerolls this season', -e.rerollsSpent);
+    total('Spare', signed(e.spare));
+    note(
+      e.spare >= 0
+        ? `Each spare worker: +10% oil (now ${times(e.boost)})`
+        : `Short ${-e.spare} workers: buildings run at ${pct(e.staffing)}`,
+    );
+  } else {
+    add(`Oil stations ×${c('station')}`, 2 * c('station'));
+    add(`Tar pit bonus ×${e.bonus.tarpitStations}`, 2 * e.bonus.tarpitStations);
+    total('Crude', e.crude);
+    mul(`Refineries (${e.refineryLinks} station link${e.refineryLinks === 1 ? '' : 's'})`, e.refineryMult);
+    mul('Spare workers', e.boost);
+    mul('Understaffed', e.staffing);
+    mul('Hunger', e.fed);
+    total('This season', signed(e.oil));
+    note(`Stockpile ${turn.stockpile} → ${turn.stockpile + e.oil} / ${turn.quota} tribute`);
+    note('The Overlord takes all of it after Winter.');
+  }
+  return rows;
+}
+
+const TIP_TITLES = { food: 'Food this season', mp: 'Manpower this season', oil: 'Oil this season' };
+
+function renderResTip(e = economyNow()) {
+  const rows = breakdown(tipKind, e);
+  $('resTip').innerHTML =
+    `<div class="title">${TIP_TITLES[tipKind]}</div>` +
+    (rows.length ? '' : '<div class="row note">Nothing yet</div>') +
+    rows
+      .map(([label, value, type]) => `<div class="row ${type}"><span>${label}</span><b>${value}</b></div>`)
+      .join('');
+}
+
+for (const row of document.querySelectorAll('#panel .res[data-tip]')) {
+  row.addEventListener('mouseenter', () => {
+    tipKind = row.dataset.tip;
+    renderResTip();
+    const tip = $('resTip');
+    tip.style.setProperty('--c', getComputedStyle(row).getPropertyValue('--c'));
+    tip.classList.remove('hidden');
+    // Beside the row, kept on screen.
+    const r = row.getBoundingClientRect();
+    const top = Math.min(r.top, window.innerHeight - tip.offsetHeight - 8);
+    tip.style.top = `${Math.max(8, top)}px`;
+  });
+  row.addEventListener('mouseleave', () => {
+    tipKind = null;
+    $('resTip').classList.add('hidden');
+  });
 }
 
 // ---------- hovered tile info ----------
@@ -250,8 +353,9 @@ function cancelPreview() {
 
 /** Show an oil amount in the stockpile counter and the quota bar at the top. */
 function showOil(amount, bump = false) {
-  const quota = quotaFor(turn.round);
+  const quota = turn.quota;
   $('oilStock').textContent = amount;
+  $('resOil').textContent = amount;
   $('quotaCount').textContent = `${amount} / ${quota} barrels`;
   $('quotaFill').style.width = `${Math.min(1, amount / quota) * 100}%`;
   $('quotaFill').classList.toggle('met', amount >= quota);
@@ -317,14 +421,17 @@ function settleTurn(e) {
 
   // Tribute after Winter.
   if (turn.season === 3) {
-    const quota = quotaFor(turn.round);
-    if (turn.stockpile >= quota) {
-      turn.stockpile = 0; // the Overlord takes everything; the new year starts from empty
-      lines.push(`<span class="good">Tribute paid: ${quota} barrels.</span>`);
-      msg += ` · Tribute of ${quota} paid. The Overlord is satisfied.`;
+    const quota = turn.quota;
+    const delivered = turn.stockpile;
+    turn.stockpile = 0; // the Overlord takes everything; the new year starts from empty
+    // The Overlord's greed grows with what he receives: excess raises next year's quota.
+    turn.quota = nextQuota(quota, delivered);
+    const rise = turn.quota - quota;
+    if (delivered >= quota) {
+      lines.push(`<span class="good">Tribute of ${quota} met. The Overlord seized all ${delivered} barrels.</span>`);
+      msg += ` · Tribute of ${quota} met. The Overlord seized all ${delivered} barrels.`;
     } else {
-      const short = quota - turn.stockpile;
-      turn.stockpile = 0;
+      const short = quota - delivered;
       const lost = nukeRandomTile(true);
       lines.push(
         `<span class="bad">Tribute short by ${short}. ${lost ? `The Overlord nuked your ${lost}.` : ''}</span>`,
@@ -332,6 +439,9 @@ function settleTurn(e) {
       msg += ` · Tribute short by ${short}! ${lost ? `The Overlord nuked your ${lost}.` : ''}`;
       kind = 'bad';
     }
+    const greed = delivered > quota ? "Your excess whetted the Overlord's appetite. " : '';
+    lines.push(`<span class="bad">${greed}Next tribute: ${turn.quota} (+${rise}).</span>`);
+    msg += ` · ${greed}Next tribute: ${turn.quota} (+${rise}).`;
   }
 
   $('report').innerHTML = lines.join('<br />');
@@ -473,7 +583,16 @@ function resetIsland() {
   anims.length = 0;
   expansion.clear();
   piecesPlaced = 0;
-  Object.assign(turn, { round: 1, season: 0, stockpile: 0, rerolls: 0, total: 0, food: 0, population: 0 });
+  Object.assign(turn, {
+    round: 1,
+    season: 0,
+    stockpile: 0,
+    rerolls: 0,
+    total: 0,
+    food: 0,
+    population: 0,
+    quota: FIRST_QUOTA,
+  });
   $('report').textContent = 'No seasons played yet.';
   addTile(0, 0, SEED_TERRAIN);
   frontier.rebuild(grid);
