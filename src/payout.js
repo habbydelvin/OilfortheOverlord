@@ -6,6 +6,7 @@ const RES = {
   food: { word: 'food', color: '#9be36f' },
   manpower: { word: 'manpower', color: '#f0b27a' },
   oil: { word: 'oil', color: '#ffb347' },
+  population: { word: 'population', color: '#8fe0ff' },
 };
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -84,14 +85,21 @@ export class Payout {
   start(tiles, onFire, onDone) {
     this.clear();
     const c = this.cfg;
-    tiles = ordered(tiles, c.order);
+    // `finale` tiles (e.g. population growth) always go last, after a short beat.
+    const finale = tiles.filter((t) => t.finale);
+    tiles = ordered(
+      tiles.filter((t) => !t.finale),
+      c.order,
+    );
     const stagger = c.order === 'together' || !tiles.length ? 0 : Math.min(c.stagger, c.maxRipple / tiles.length);
+    const finaleAt = (tiles.length ? (tiles.length - 1) * stagger : 0) + c.hopDuration;
+    tiles = [...tiles, ...finale];
     this.layer.style.setProperty('--floater-size', `${c.labelSize}px`);
     this.time = 0;
     this.onFire = onFire;
     this.done = onDone;
     tiles.forEach((tile, i) => {
-      const rows = ['oil', 'food', 'manpower']
+      const rows = ['population', 'oil', 'food', 'manpower']
         .filter((r) => tile[r])
         .map(
           (r) =>
@@ -107,7 +115,7 @@ export class Payout {
         el.style.opacity = 0;
         this.layer.appendChild(el);
       }
-      this.items.push({ tile, el, start: i * stagger, fired: false });
+      this.items.push({ tile, el, start: tile.finale ? finaleAt : i * stagger, fired: false });
     });
     if (!this.items.length) this.#finish();
   }

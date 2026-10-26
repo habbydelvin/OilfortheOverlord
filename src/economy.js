@@ -12,8 +12,14 @@ const WORKERS = { farm: 1, station: 1, refinery: 2 };
  *     minus manpower spent on rerolls. Short of workers -> staffing < 1, spare workers -> oil boost.
  *  2. Food: farms grow (scaled by staffing), capital/settlements eat. Not enough food -> fed < 1.
  *  3. Oil: crude × refinery multiplier × boost × staffing × fed.
+ *  4. Food store: spare food is banked; a shortfall is covered from the store before `fed` drops.
+ *     Each time the store reaches growthCost(population), it converts into +1 population.
+ *
+ * state: { population, foodStore } carried between seasons. Population adds +1 manpower each.
  */
-export function computeEconomy(grid, rerollsSpent = 0) {
+export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
+  const population = state.population ?? 0;
+  const foodStore = state.foodStore ?? 0;
   const neighbours = (x, z) => DIRS.map(([dx, dz]) => grid.get(x + dx, z + dz)?.terrain);
 
   let supplied = 0;
@@ -72,7 +78,7 @@ export function computeEconomy(grid, rerollsSpent = 0) {
     }
   }
 
-  supplied = Math.max(0, supplied - craterManpower);
+  supplied = Math.max(0, supplied + population - craterManpower);
   const spare = supplied - employed - rerollsSpent;
   const staffing = spare >= 0 ? 1 : employed > 0 ? Math.max(0, employed + spare) / employed : 1;
   const boost = 1 + 0.1 * Math.max(0, spare);
@@ -80,7 +86,16 @@ export function computeEconomy(grid, rerollsSpent = 0) {
   const foodGrown = farmFood * staffing;
   const totalEaten = foodEaten + craterFood;
   const foodBalance = foodGrown - totalEaten;
-  const fed = totalEaten > 0 ? Math.min(1, foodGrown / totalEaten) : 1;
+  // The store covers a shortfall first; only what it can't cover starves the city.
+  const fed = totalEaten > 0 ? Math.min(1, (foodGrown + foodStore) / totalEaten) : 1;
+
+  // Bank spare food (whole numbers), then convert full growth costs into population.
+  let storeAfter = Math.max(0, foodStore + Math.round(foodBalance));
+  let popGrowth = 0;
+  while (storeAfter >= growthCost(population + popGrowth)) {
+    storeAfter -= growthCost(population + popGrowth);
+    popGrowth++;
+  }
 
   const refineryMult = 1 + 0.5 * refineryLinks;
   const oil = Math.round(crude * refineryMult * boost * staffing * fed);
@@ -110,6 +125,11 @@ export function computeEconomy(grid, rerollsSpent = 0) {
     craterFood,
     foodBalance,
     fed,
+    population,
+    foodStore,
+    storeAfter,
+    popGrowth,
+    nextGrowthCost: growthCost(population + popGrowth),
     crude,
     refineryMult,
     oil,
@@ -135,6 +155,11 @@ function shareOut(cells, weightKey, outKey, total) {
   parts.sort((a, b) => b.rem - a.rem);
   for (let i = 0; given < total; i = (i + 1) % parts.length, given++) parts[i].base++;
   for (const p of parts) p.c[outKey] += p.base;
+}
+
+/** Food needed for the next population point when you already have `population` (10, 15, 20, …). */
+export function growthCost(population) {
+  return 10 + 5 * population;
 }
 
 /** Tribute quota per round (placeholder curve from the proposal, then ×1.45 per round). */

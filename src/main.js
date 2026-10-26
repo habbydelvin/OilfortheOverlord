@@ -8,7 +8,7 @@ import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
 import { Hand } from './hand.js';
 import { Expansion } from './expansion.js';
-import { computeEconomy, quotaFor, SEASONS } from './economy.js';
+import { computeEconomy, growthCost, quotaFor, SEASONS } from './economy.js';
 import { Payout } from './payout.js';
 import { loadPayoutConfig } from './payoutConfig.js';
 import { createDebugPanel } from './debugPanel.js';
@@ -38,7 +38,13 @@ const anims = [];
 let piecesPlaced = 0;
 
 // Turn state: a turn is a season, a round is four seasons, tribute after Winter.
-const turn = { round: 1, season: 0, stockpile: 0, rerolls: 0, total: 0 };
+const turn = { round: 1, season: 0, stockpile: 0, rerolls: 0, total: 0, food: 0, population: 0 };
+
+/** This season's economy with the carried-over food store and population. */
+const economyNow = () => computeEconomy(grid, turn.rerolls, { population: turn.population, foodStore: turn.food });
+
+// Tiles that can't be drawn yet: no Cliffs or Pre-war Ruins during the first round.
+hand.excluded = () => (turn.round === 1 ? ['cliffs', 'ruins'] : []);
 
 // ---------- tiles ----------
 const WASTELAND_VARIANTS = ['wasteland1', 'wasteland2', 'wasteland3', 'wasteland4'];
@@ -125,7 +131,8 @@ function setRes(id, amount, change) {
   $(id).textContent = Math.round(amount);
   const d = $(`${id}D`);
   const n = Math.round(change);
-  d.textContent = `(${n > 0 ? `+${n}` : n})`;
+  // Only show the bracket when something is used up: if nothing is consumed it just repeats the big number.
+  d.textContent = n === Math.round(amount) ? '' : `(${n > 0 ? `+${n}` : n})`;
   d.className = n > 0 ? 'up' : n < 0 ? 'down' : '';
 }
 
@@ -135,18 +142,24 @@ function updateHUD() {
   const left = 3 - turn.season;
   $('seasonLabel').textContent =
     `Round ${turn.round} · ${SEASONS[turn.season]} · tribute ${left ? `in ${left} season${left === 1 ? '' : 's'}` : 'due this Winter'}`;
-  $('quotaFill').style.width = `${Math.min(1, turn.stockpile / quota) * 100}%`;
-  $('quotaCount').textContent = `${turn.stockpile} / ${quota} barrels`;
+  showOil(turn.stockpile);
   $('pieceCount').textContent =
     `${piecesPlaced} piece${piecesPlaced === 1 ? '' : 's'} placed · territory ${n} / ${grid.capacity}`;
-  $('oilStock').textContent = turn.stockpile;
 
   // Projected economy for this season if the turn ended now.
-  const e = computeEconomy(grid, turn.rerolls);
+  const e = economyNow();
   // Big number = how much you produce, small (±n) = excess or shortfall after upkeep.
   setRes('resFood', e.foodGrown, e.foodBalance);
   setRes('resMp', e.supplied, e.spare);
   setRes('resOil', e.oil, e.oil);
+
+  // Food store progress toward the next population point.
+  const cost = growthCost(turn.population);
+  $('popFill').style.width = `${Math.min(1, turn.food / cost) * 100}%`;
+  $('popText').textContent =
+    `store ${turn.food} / ${cost} → +1 pop` +
+    (e.popGrowth ? ` · growing +${e.popGrowth} this season` : '') +
+    (turn.population ? ` · population ${turn.population}` : '');
 
   $('btnReroll').classList.toggle('hidden', hand.isEmpty);
   $('btnNextSub').textContent =
@@ -193,7 +206,7 @@ function endTurn() {
     }
   }
   hand.select(-1);
-  const e = computeEconomy(grid, turn.rerolls);
+  const e = economyNow();
   runPayout(e, () => settleTurn(e));
 }
 
@@ -208,14 +221,27 @@ function previewPayout() {
     cancelPreview(); // restart the preview
   }
   previewing = true;
-  runPayout(computeEconomy(grid, turn.rerolls), cancelPreview);
+  runPayout(economyNow(), cancelPreview);
 }
 
 function cancelPreview() {
   payout.cancel();
   previewing = false;
   document.body.classList.remove('paying');
-  $('oilStock').textContent = turn.stockpile; // undo the counter ticking
+  showOil(turn.stockpile); // undo the counter / bar filling
+}
+
+/** Show an oil amount in the stockpile counter and the quota bar at the top. */
+function showOil(amount, bump = false) {
+  const quota = quotaFor(turn.round);
+  $('oilStock').textContent = amount;
+  $('quotaCount').textContent = `${amount} / ${quota} barrels`;
+  $('quotaFill').style.width = `${Math.min(1, amount / quota) * 100}%`;
+  $('quotaFill').classList.toggle('met', amount >= quota);
+  if (bump) {
+    pop($('oilStock'));
+    pop($('quotaCount'));
+  }
 }
 
 function runPayout(e, onDone) {
@@ -223,17 +249,21 @@ function runPayout(e, onDone) {
     .filter((p) => p.food || p.manpower || p.oil || EFFECT_TILES.has(p.terrain))
     .map((p) => ({ ...p, mesh: grid.get(p.x, p.z).mesh }));
 
-  // Tick the oil counter up as each station pops.
+  // Population growth: the Capital hops once more at the end and shows "+N population".
+  const capital = [...grid.cells.values()].find((c) => c.terrain === 'capital');
+  if (e.popGrowth && capital) {
+    tiles.push({ x: capital.x, z: capital.z, mesh: capital.mesh, population: e.popGrowth, finale: true });
+  }
+
+  // Tick the oil counter and fill the quota bar as each station pops.
   let shown = turn.stockpile;
-  const stock = $('oilStock');
   document.body.classList.add('paying');
   payout.start(
     tiles,
     (tile) => {
       if (!tile.oil) return;
       shown += tile.oil;
-      stock.textContent = shown;
-      pop(stock);
+      showOil(shown, true);
     },
     () => {
       document.body.classList.remove('paying');
@@ -249,6 +279,8 @@ function settleTurn(e) {
   const label = `${SEASONS[turn.season]}, round ${turn.round}`;
   turn.stockpile += e.oil;
   turn.total += e.oil;
+  turn.food = e.storeAfter;
+  turn.population += e.popGrowth;
 
   const sgn = (n) => {
     const r = Math.round(n);
@@ -261,12 +293,16 @@ function settleTurn(e) {
   ];
   let msg = `${label}: +${e.oil} oil`;
   let kind = 'good';
+  if (e.popGrowth) {
+    lines.push(`<span class="good">Population +${e.popGrowth} (now ${turn.population}).</span>`);
+    msg += ` · Population +${e.popGrowth}`;
+  }
 
   // Tribute after Winter.
   if (turn.season === 3) {
     const quota = quotaFor(turn.round);
     if (turn.stockpile >= quota) {
-      turn.stockpile -= quota;
+      turn.stockpile = 0; // the Overlord takes everything; the new year starts from empty
       lines.push(`<span class="good">Tribute paid: ${quota} barrels.</span>`);
       msg += ` · Tribute of ${quota} paid. The Overlord is satisfied.`;
     } else {
@@ -420,7 +456,7 @@ function resetIsland() {
   anims.length = 0;
   expansion.clear();
   piecesPlaced = 0;
-  Object.assign(turn, { round: 1, season: 0, stockpile: 0, rerolls: 0, total: 0 });
+  Object.assign(turn, { round: 1, season: 0, stockpile: 0, rerolls: 0, total: 0, food: 0, population: 0 });
   $('report').textContent = 'No seasons played yet.';
   addTile(0, 0, SEED_TERRAIN);
   frontier.rebuild(grid);
@@ -454,4 +490,4 @@ resetIsland();
 requestAnimationFrame(frame);
 
 // Handy for debugging in the console.
-window.tileIsland = { grid, hand, placement, rig, expansion, turn, economy: () => computeEconomy(grid, turn.rerolls) };
+window.tileIsland = { grid, hand, placement, rig, expansion, turn, economy: economyNow };

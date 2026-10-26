@@ -81,6 +81,23 @@ body {
   font-weight: 600;
 }
 
+#top .count.pop {
+  animation: countpop 0.3s ease-out;
+}
+
+@keyframes countpop {
+  40% {
+    transform: scale(1.12);
+    color: #ffd27a;
+  }
+}
+
+/* Quota met: the bar glows a hotter orange. */
+#top .fill.met {
+  background: linear-gradient(180deg, #ffd27a, #f0a030);
+  box-shadow: 0 0 12px rgba(255, 190, 80, 0.6);
+}
+
 #top .sub {
   margin-top: 4px;
   font-size: 12px;
@@ -175,6 +192,31 @@ body {
   font-size: 18px;
   font-weight: 600;
   text-align: right;
+}
+
+#panel .res .pop {
+  grid-column: 1 / -1;
+  margin-top: 5px;
+}
+
+#panel .res .pop-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+#panel .res .pop-fill {
+  height: 100%;
+  width: 0;
+  background: #7fd36a;
+  transition: width 0.4s ease-out;
+}
+
+#panel .res .pop-text {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 #panel .res .v small {

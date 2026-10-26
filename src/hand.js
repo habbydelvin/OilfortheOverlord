@@ -44,7 +44,8 @@ export class Hand {
 
   /** Deal a fresh hand of `count` pieces (start of a turn). */
   deal(count = this.size) {
-    this.cards = Array.from({ length: count }, () => randomPiece(this.grid));
+    const exclude = this.excluded?.() ?? [];
+    this.cards = Array.from({ length: count }, () => randomPiece(this.grid, exclude));
     this.fresh = new Set(this.cards.map((_, i) => i));
     this.selected = -1;
     this.render();
