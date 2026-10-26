@@ -1,4 +1,16 @@
-import { TERRAIN_KEYS } from './tiles.js';
+import { TERRAINS, TERRAIN_KEYS } from './tiles.js';
+
+const DRAWABLE = TERRAIN_KEYS.filter((k) => TERRAINS[k].weight > 0);
+const TERRAIN_WEIGHT = DRAWABLE.reduce((s, k) => s + TERRAINS[k].weight, 0);
+
+function randomTerrain() {
+  let r = Math.random() * TERRAIN_WEIGHT;
+  for (const k of DRAWABLE) {
+    r -= TERRAINS[k].weight;
+    if (r <= 0) return k;
+  }
+  return DRAWABLE[DRAWABLE.length - 1];
+}
 
 /**
  * Piece shapes as [x, z] cells (x = right, z = down on screen at default camera).
@@ -19,7 +31,6 @@ export const SHAPES = {
 };
 
 const SHAPE_KEYS = Object.keys(SHAPES);
-const TOTAL_WEIGHT = SHAPE_KEYS.reduce((s, k) => s + SHAPES[k].weight, 0);
 
 function normalize(cells) {
   const minX = Math.min(...cells.map((c) => c[0]));
@@ -57,16 +68,45 @@ export function pieceOffsets(piece) {
 
 let nextId = 1;
 
-export function randomPiece() {
-  let r = Math.random() * TOTAL_WEIGHT;
-  let shape = SHAPE_KEYS[0];
-  for (const k of SHAPE_KEYS) {
+function randomShape(fits) {
+  const keys = fits ? SHAPE_KEYS.filter(fits) : SHAPE_KEYS;
+  if (!keys.length) return 'mono';
+  let r = Math.random() * keys.reduce((s, k) => s + SHAPES[k].weight, 0);
+  for (const k of keys) {
     r -= SHAPES[k].weight;
-    if (r <= 0) {
-      shape = k;
-      break;
+    if (r <= 0) return k;
+  }
+  return keys[keys.length - 1];
+}
+
+/**
+ * True if a junk/land shape can be placed somewhere right now: in some rotation, every cell is
+ * empty and inside the territory, and at least one cell touches existing land.
+ */
+export function shapeFits(grid, shapeKey) {
+  const empty = grid.emptyTerritoryKeys();
+  if (empty.size < SHAPES[shapeKey].cells.length) return false;
+  const free = (x, z) => empty.has(`${x},${z}`);
+  for (let rot = 0; rot < 4; rot++) {
+    const cells = rotateCells(SHAPES[shapeKey].cells, rot);
+    for (const k of empty) {
+      const [ax, az] = k.split(',').map(Number);
+      // Try each cell of the shape on this empty cell.
+      for (const [cx, cz] of cells) {
+        const placed = cells.map(([x, z]) => [ax + x - cx, az + z - cz]);
+        if (placed.every(([x, z]) => free(x, z)) && placed.some(([x, z]) => grid.touchesIsland(x, z))) return true;
+      }
     }
   }
-  const terrain = TERRAIN_KEYS[Math.floor(Math.random() * TERRAIN_KEYS.length)];
+  return false;
+}
+
+/**
+ * Only Wasteland comes in multi-block shapes; every other tile is a single block.
+ * `grid` (optional) limits Wasteland to shapes that fit in the space you have left.
+ */
+export function randomPiece(grid = null) {
+  const terrain = randomTerrain();
+  const shape = terrain.startsWith('wasteland') ? randomShape(grid && ((k) => shapeFits(grid, k))) : 'mono';
   return { id: nextId++, shape, terrain, rot: Math.floor(Math.random() * 4) };
 }

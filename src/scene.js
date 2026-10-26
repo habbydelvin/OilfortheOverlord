@@ -1,37 +1,6 @@
 import * as THREE from 'three';
 
-const BG = 0x2b3133;
-
-/** Soft, tileable cloud texture drawn on a canvas (no external assets). */
-function cloudTexture() {
-  const size = 512;
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const g = c.getContext('2d');
-  g.fillStyle = '#2a3032';
-  g.fillRect(0, 0, size, size);
-  for (let i = 0; i < 70; i++) {
-    const x = Math.random() * size;
-    const y = Math.random() * size;
-    const r = 40 + Math.random() * 140;
-    const a = 0.05 + Math.random() * 0.08;
-    // Draw with wrap-around copies so the texture tiles seamlessly.
-    for (const ox of [-size, 0, size]) {
-      for (const oy of [-size, 0, size]) {
-        const grd = g.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r);
-        grd.addColorStop(0, `rgba(130,145,150,${a})`);
-        grd.addColorStop(1, 'rgba(130,145,150,0)');
-        g.fillStyle = grd;
-        g.fillRect(x + ox - r, y + oy - r, r * 2, r * 2);
-      }
-    }
-  }
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(5, 5);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
+const BG = 0x000000;
 
 export function createScene(container) {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -60,23 +29,6 @@ export function createScene(container) {
   Object.assign(sun.shadow.camera, { near: 0.5, far: 60 });
   scene.add(sun, sun.target);
 
-  // Cloudy void far below the floating island.
-  const clouds = cloudTexture();
-  const cloudPlane = new THREE.Mesh(
-    new THREE.PlaneGeometry(400, 400).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({ map: clouds }),
-  );
-  cloudPlane.position.y = -4;
-  scene.add(cloudPlane);
-
-  // Invisible plane that only shows the island's drop shadow on the clouds.
-  const shadowPlane = new THREE.Mesh(
-    new THREE.PlaneGeometry(400, 400).rotateX(-Math.PI / 2),
-    new THREE.ShadowMaterial({ opacity: 0.28 }),
-  );
-  shadowPlane.position.y = -3.95;
-  shadowPlane.receiveShadow = true;
-  scene.add(shadowPlane);
 
   // Shift the projection centre so the look-at point sits in the middle of the
   // open play area (left of the 300px side panel, above the card hand).
@@ -109,8 +61,6 @@ export function createScene(container) {
     }
     scene.fog.near = distance + 4;
     scene.fog.far = distance + 45;
-    clouds.offset.x += dt * 0.0025;
-    clouds.offset.y += dt * 0.0012;
   }
 
   return { renderer, scene, camera, followTarget };

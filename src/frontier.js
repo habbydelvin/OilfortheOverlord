@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { key } from './grid.js';
 
-const BASE_OPACITY = 0.16;
+const BASE_OPACITY = 0.22;
 
-/** Translucent "buildable" slots around the island (like the slate squares in Robin). */
+/** Translucent slots marking the empty cells of your territory. */
 export class Frontier {
   slots = new Map(); // key -> { mesh, age }
 
@@ -20,7 +20,7 @@ export class Frontier {
   }
 
   rebuild(grid) {
-    const keys = grid.frontierKeys();
+    const keys = grid.emptyTerritoryKeys();
     for (const [k, slot] of this.slots) {
       if (!keys.has(k)) {
         this.group.remove(slot.mesh);

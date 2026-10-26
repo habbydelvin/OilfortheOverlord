@@ -3,41 +3,72 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tile Island — Placement Sandbox</title>
+    <title>Oil for the Overlord</title>
   </head>
   <body>
     <div id="app"></div>
 
     <div id="ui">
       <header id="top">
-        <div class="level" id="milestoneLabel">island sandbox</div>
-        <div class="bar"><div class="fill" id="milestoneFill"></div></div>
-        <div class="count" id="milestoneCount">1 / 5</div>
+        <div class="level" id="seasonLabel">Round 1 · Spring</div>
+        <div class="bar"><div class="fill" id="quotaFill"></div></div>
+        <div class="count" id="quotaCount">0 / 24 barrels</div>
         <div class="sub" id="pieceCount">0 pieces placed</div>
       </header>
 
       <aside id="panel">
         <div class="stat">
-          <div class="big" id="islandSize">1</div>
-          <div class="label">island tiles</div>
+          <div class="big" id="oilStock">0</div>
+          <div class="label">oil stockpile</div>
         </div>
+
+        <div class="section">This season</div>
+        <div class="res food">
+          <div class="k">Food</div>
+          <div class="v"><span id="resFood">0</span><small id="resFoodD">(0)</small></div>
+        </div>
+        <div class="res mp">
+          <div class="k">Manpower</div>
+          <div class="v"><span id="resMp">0</span><small id="resMpD">(0)</small></div>
+        </div>
+        <div class="res oil">
+          <div class="k">Oil</div>
+          <div class="v"><span id="resOil">0</span><small id="resOilD">(0)</small></div>
+        </div>
+
+        <div class="section">Last season</div>
+        <div id="report">No seasons played yet.</div>
+
+        <div id="inspect" class="hidden"></div>
+
         <div class="spacer"></div>
+        <button id="btnNext" class="btn gold">
+          Next turn<span id="btnNextSub">collect oil, draw a new hand</span>
+        </button>
         <button id="btnReroll" class="btn blue">
-          Reroll hand<span>draw 5 new pieces</span>
+          Reroll hand<span>costs 1 manpower this season</span>
         </button>
         <button id="btnReset" class="btn red">
-          Reset island<span>back to a single tile</span>
+          Reset<span>back to the capital</span>
         </button>
       </aside>
 
-      <div id="help">
-        <b>1–5</b> / click card · select piece<br />
-        <b>R</b> / right-click · rotate &nbsp; <b>F</b> · rotate back<br />
-        <b>Click</b> · place &nbsp; <b>Esc</b> · cancel<br />
-        <b>Drag</b> / <b>WASD</b> · pan &nbsp; <b>Wheel</b> · zoom<br />
-        <b>Q / E</b> · turn camera &nbsp; <b>C</b> · recenter
+      <div id="leftcol">
+        <div id="help">
+          <b>1–5</b> / click card · select piece<br />
+          <b>R</b> / right-click · rotate &nbsp; <b>F</b> · rotate back<br />
+          <b>Click</b> · place &nbsp; <b>Esc</b> · cancel<br />
+          <b>Enter</b> · next turn<br />
+          <b>Drag</b> / <b>WASD</b> · pan &nbsp; <b>Wheel</b> · zoom<br />
+          <b>Q / E</b> · turn camera &nbsp; <b>C</b> · recenter<br />
+          <b>N</b> · debug: overlord nuke (toxic crater)<br />
+          <b>Space</b> · debug: replay payout &nbsp; <b>`</b> · tuning panel
+        </div>
+        <button id="btnDebug" class="hidden">Payout tuning</button>
+        <div id="debug" class="hidden"></div>
       </div>
 
+      <div id="floaters"></div>
       <div id="toast"></div>
       <div id="hand"></div>
     </div>

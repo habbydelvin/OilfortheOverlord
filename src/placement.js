@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { pieceOffsets } from './pieces.js';
-import { TERRAINS, TILE } from './tiles.js';
+import { TERRAINS, TILE, isBuilding } from './tiles.js';
 
 const OK_COLOR = new THREE.Color(0x8be39a);
 const BAD_COLOR = new THREE.Color(0xe0563f);
@@ -58,9 +58,20 @@ export class Placement {
   }
 
   validate(cells) {
-    if (cells.some(([x, z]) => this.grid.has(x, z))) return { ok: false, reason: 'That spot overlaps the island' };
-    if (!cells.some(([x, z]) => this.grid.touchesIsland(x, z)))
-      return { ok: false, reason: 'Pieces must touch the island' };
+    const building = this.piece && isBuilding(this.piece.terrain);
+    if (cells.some(([x, z]) => !this.grid.inTerritory(x, z)))
+      return { ok: false, reason: 'Outside your territory' };
+    for (const [x, z] of cells) {
+      const cell = this.grid.get(x, z);
+      if (!cell) continue;
+      const t = TERRAINS[cell.terrain];
+      if (building && t.buildable) continue; // buildings may go on Wasteland / Ruins
+      if (t.buildable) return { ok: false, reason: `Only buildings can go on ${t.name}` };
+      return { ok: false, reason: `Can't build on ${t.name}` };
+    }
+    // Every piece must touch existing land (cells it builds over count as touching).
+    if (!cells.some(([x, z]) => this.grid.has(x, z) || this.grid.touchesIsland(x, z)))
+      return { ok: false, reason: 'Pieces must touch your land' };
     return { ok: true, reason: '' };
   }
 

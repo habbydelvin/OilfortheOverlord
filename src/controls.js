@@ -106,6 +106,7 @@ export class CameraRig {
   };
 
   #onKeyDown = (e) => {
+    if (e.target.matches?.('input, select, textarea')) return; // debug panel sliders use arrow keys
     if (e.repeat && (e.key === 'q' || e.key === 'e')) return;
     const k = e.key.toLowerCase();
     if (k === 'q') this.rotate(-1);

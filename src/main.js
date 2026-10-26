@@ -3,14 +3,18 @@ import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { CameraRig } from './controls.js';
 import { Grid } from './grid.js';
-import { TileFactory } from './tiles.js';
+import { TileFactory, TERRAINS, hex } from './tiles.js';
 import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
 import { Hand } from './hand.js';
+import { Expansion } from './expansion.js';
+import { computeEconomy, quotaFor, SEASONS } from './economy.js';
+import { Payout } from './payout.js';
+import { loadPayoutConfig } from './payoutConfig.js';
+import { createDebugPanel } from './debugPanel.js';
 
 const HAND_SIZE = 5;
-const SEED_TERRAIN = 'meadow';
-const MILESTONES = [5, 10, 20, 35, 50, 75, 100, 150, 200, 300, 500, 750, 1000];
+const SEED_TERRAIN = 'capital';
 
 // ---------- setup ----------
 const { renderer, scene, camera, followTarget } = createScene(document.getElementById('app'));
@@ -21,21 +25,63 @@ const tiles = new THREE.Group();
 scene.add(tiles);
 const frontier = new Frontier(scene);
 const placement = new Placement(scene, grid);
-const hand = new Hand(document.getElementById('hand'), HAND_SIZE, (piece) => placement.setPiece(piece));
+const expansion = new Expansion(scene);
+const payoutCfg = loadPayoutConfig();
+const payout = new Payout(camera, document.getElementById('floaters'), payoutCfg);
+const debug = createDebugPanel(document.getElementById('debug'), document.getElementById('btnDebug'), payoutCfg, {
+  onPlay: () => previewPayout(),
+});
+const hand = new Hand(document.getElementById('hand'), HAND_SIZE, (piece) => placement.setPiece(piece), grid);
 
 const $ = (id) => document.getElementById(id);
 const anims = [];
 let piecesPlaced = 0;
-let lastMilestone = 0;
+
+// Turn state: a turn is a season, a round is four seasons, tribute after Winter.
+const turn = { round: 1, season: 0, stockpile: 0, rerolls: 0, total: 0 };
 
 // ---------- tiles ----------
+const WASTELAND_VARIANTS = ['wasteland1', 'wasteland2', 'wasteland3', 'wasteland4'];
+
+/** Places a tile, replacing whatever was there (building over Wasteland / Ruins). */
 function addTile(x, z, terrain, delay = 0) {
+  // Mix wasteland shades per cell so a wasteland piece doesn't look like one flat slab.
+  if (WASTELAND_VARIANTS.includes(terrain)) {
+    terrain = WASTELAND_VARIANTS[Math.floor(Math.random() * WASTELAND_VARIANTS.length)];
+  }
+  const old = grid.get(x, z);
+  const onRuins = old?.terrain === 'ruins' || (old?.onRuins ?? false);
+  if (old) removeMesh(old.mesh);
+
   const mesh = factory.create(terrain);
   mesh.position.set(x, 0, z);
   mesh.visible = false;
   tiles.add(mesh);
-  grid.set(x, z, { terrain, mesh });
+  grid.set(x, z, { terrain, mesh, onRuins });
   anims.push({ mesh, t: -delay, dur: 0.38 });
+}
+
+function removeMesh(mesh) {
+  tiles.remove(mesh);
+  const i = anims.findIndex((a) => a.mesh === mesh);
+  if (i >= 0) anims.splice(i, 1);
+}
+
+/** Debug stand-in for the overlord's nuke: turn a random non-capital tile into a Toxic Crater. */
+function nukeRandomTile(quiet = false) {
+  const targets = [...grid.cells.values()].filter((c) => c.terrain !== 'capital' && c.terrain !== 'crater');
+  if (!targets.length) {
+    if (!quiet) toast('Nothing for the Overlord to nuke');
+    return null;
+  }
+  const { x, z } = targets[Math.floor(Math.random() * targets.length)];
+  const lost = TERRAINS[grid.get(x, z).terrain].name;
+  addTile(x, z, 'crater');
+  grid.get(x, z).onRuins = false; // the ruins are gone too
+  if (!quiet) toast('The Overlord is displeased: a Toxic Crater forms', 'bad');
+  placement.cell = null; // force ghost revalidation
+  updateHUD();
+  return lost;
 }
 
 function updateDropAnims(dt) {
@@ -60,37 +106,190 @@ function updateDropAnims(dt) {
 
 // ---------- HUD ----------
 let toastTimer = 0;
-function toast(msg, kind = '') {
+function toast(msg, kind = '', ms = 1600) {
   const el = $('toast');
   el.textContent = msg;
   el.className = `show ${kind}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.className = kind), 1600);
+  toastTimer = setTimeout(() => (el.className = kind), ms);
 }
 
-function milestoneFor(n) {
-  for (let i = 0; i < MILESTONES.length; i++) {
-    if (n < MILESTONES[i]) return { index: i, prev: i ? MILESTONES[i - 1] : 1, next: MILESTONES[i] };
-  }
-  const step = 500;
-  const next = Math.floor(n / step) * step + step;
-  return { index: MILESTONES.length + (next - 1000) / step - 1, prev: next - step, next };
+function pop(el) {
+  el.classList.remove('pop');
+  void el.offsetWidth; // restart animation
+  el.classList.add('pop');
+}
+
+/** Big number = current amount, small (±n) = change this season. */
+function setRes(id, amount, change) {
+  $(id).textContent = Math.round(amount);
+  const d = $(`${id}D`);
+  const n = Math.round(change);
+  d.textContent = `(${n > 0 ? `+${n}` : n})`;
+  d.className = n > 0 ? 'up' : n < 0 ? 'down' : '';
 }
 
 function updateHUD() {
   const n = grid.size;
-  const m = milestoneFor(n);
-  $('milestoneLabel').textContent = `island sandbox · milestone ${m.index + 1}`;
-  $('milestoneFill').style.width = `${((n - m.prev) / (m.next - m.prev)) * 100}%`;
-  $('milestoneCount').textContent = `${n} / ${m.next}`;
-  $('pieceCount').textContent = `${piecesPlaced} piece${piecesPlaced === 1 ? '' : 's'} placed`;
-  const big = $('islandSize');
-  big.textContent = n;
-  big.classList.remove('pop');
-  void big.offsetWidth; // restart animation
-  big.classList.add('pop');
-  if (m.index > lastMilestone) toast(`Milestone reached: ${m.prev} tiles`, 'good');
-  lastMilestone = m.index;
+  const quota = quotaFor(turn.round);
+  const left = 3 - turn.season;
+  $('seasonLabel').textContent =
+    `Round ${turn.round} · ${SEASONS[turn.season]} · tribute ${left ? `in ${left} season${left === 1 ? '' : 's'}` : 'due this Winter'}`;
+  $('quotaFill').style.width = `${Math.min(1, turn.stockpile / quota) * 100}%`;
+  $('quotaCount').textContent = `${turn.stockpile} / ${quota} barrels`;
+  $('pieceCount').textContent =
+    `${piecesPlaced} piece${piecesPlaced === 1 ? '' : 's'} placed · territory ${n} / ${grid.capacity}`;
+  $('oilStock').textContent = turn.stockpile;
+
+  // Projected economy for this season if the turn ended now.
+  const e = computeEconomy(grid, turn.rerolls);
+  // Big number = how much you produce, small (±n) = excess or shortfall after upkeep.
+  setRes('resFood', e.foodGrown, e.foodBalance);
+  setRes('resMp', e.supplied, e.spare);
+  setRes('resOil', e.oil, e.oil);
+
+  $('btnReroll').classList.toggle('hidden', hand.isEmpty);
+  $('btnNextSub').textContent =
+    turn.season === 3 ? `collect oil, pay ${quota} tribute` : 'collect oil, draw a new hand';
+}
+
+// ---------- hovered tile info ----------
+let inspected = null; // cell object currently shown
+function updateInspect(cell) {
+  const c = cell ? grid.get(cell[0], cell[1]) : null;
+  if (c === inspected && c?.terrain === inspected?.terrain) return;
+  inspected = c;
+  const el = $('inspect');
+  if (!c) {
+    el.classList.add('hidden');
+    return;
+  }
+  const t = TERRAINS[c.terrain];
+  el.style.setProperty('--top', hex(t.top));
+  el.style.setProperty('--edge', hex(t.edge));
+  const notes = [];
+  if (c.onRuins && t.category === 'building')
+    notes.push(`Built on Pre-war Ruins: +${c.terrain === 'settlement' ? 2 : 1} manpower`);
+  if (t.buildable) notes.push('A building can be placed on top of this tile');
+  el.innerHTML = `
+    <div class="card-big">
+      <div class="art"><div class="swatch"></div></div>
+      <div class="name">${t.name}</div>
+      <div class="rule">${t.rule}</div>
+      <div class="kind">${t.category}</div>
+    </div>
+    ${notes.map((n) => `<div class="note">${n}</div>`).join('')}`;
+  el.classList.remove('hidden');
+}
+
+// ---------- turns ----------
+/** Next turn: tiles hop and flash what they produce, then the turn is settled. */
+function endTurn() {
+  if (payout.active) {
+    if (previewing) cancelPreview();
+    else {
+      payout.skip(); // pressing again fast-forwards
+      return;
+    }
+  }
+  hand.select(-1);
+  const e = computeEconomy(grid, turn.rerolls);
+  runPayout(e, () => settleTurn(e));
+}
+
+/** Debug (Space): play the payout sequence without ending the turn or changing anything. */
+let previewing = false;
+function previewPayout() {
+  if (payout.active) {
+    if (!previewing) {
+      payout.skip(); // a real turn is playing: just finish it
+      return;
+    }
+    cancelPreview(); // restart the preview
+  }
+  previewing = true;
+  runPayout(computeEconomy(grid, turn.rerolls), cancelPreview);
+}
+
+function cancelPreview() {
+  payout.cancel();
+  previewing = false;
+  document.body.classList.remove('paying');
+  $('oilStock').textContent = turn.stockpile; // undo the counter ticking
+}
+
+function runPayout(e, onDone) {
+  const tiles = e.perCell
+    .filter((p) => p.food || p.manpower || p.oil || EFFECT_TILES.has(p.terrain))
+    .map((p) => ({ ...p, mesh: grid.get(p.x, p.z).mesh }));
+
+  // Tick the oil counter up as each station pops.
+  let shown = turn.stockpile;
+  const stock = $('oilStock');
+  document.body.classList.add('paying');
+  payout.start(
+    tiles,
+    (tile) => {
+      if (!tile.oil) return;
+      shown += tile.oil;
+      stock.textContent = shown;
+      pop(stock);
+    },
+    () => {
+      document.body.classList.remove('paying');
+      onDone();
+    },
+  );
+}
+
+/** Tiles that hop even without a number of their own (they boost their neighbours). */
+const EFFECT_TILES = new Set(['pump', 'oasis', 'tarpit', 'refinery']);
+
+function settleTurn(e) {
+  const label = `${SEASONS[turn.season]}, round ${turn.round}`;
+  turn.stockpile += e.oil;
+  turn.total += e.oil;
+
+  const sgn = (n) => {
+    const r = Math.round(n);
+    return r > 0 ? `+${r}` : `${r}`;
+  };
+  const tag = (n) => `<span class="${Math.round(n) < 0 ? 'bad' : 'good'}">${sgn(n)}</span>`;
+  const lines = [
+    `<b>${label}</b>`,
+    `Food ${tag(e.foodBalance)} · Manpower ${tag(e.spare)} · Oil ${tag(e.oil)}`,
+  ];
+  let msg = `${label}: +${e.oil} oil`;
+  let kind = 'good';
+
+  // Tribute after Winter.
+  if (turn.season === 3) {
+    const quota = quotaFor(turn.round);
+    if (turn.stockpile >= quota) {
+      turn.stockpile -= quota;
+      lines.push(`<span class="good">Tribute paid: ${quota} barrels.</span>`);
+      msg += ` · Tribute of ${quota} paid. The Overlord is satisfied.`;
+    } else {
+      const short = quota - turn.stockpile;
+      turn.stockpile = 0;
+      const lost = nukeRandomTile(true);
+      lines.push(
+        `<span class="bad">Tribute short by ${short}. ${lost ? `The Overlord nuked your ${lost}.` : ''}</span>`,
+      );
+      msg += ` · Tribute short by ${short}! ${lost ? `The Overlord nuked your ${lost}.` : ''}`;
+      kind = 'bad';
+    }
+  }
+
+  $('report').innerHTML = lines.join('<br />');
+
+  turn.season = (turn.season + 1) % 4;
+  if (turn.season === 0) turn.round++;
+  turn.rerolls = 0;
+  hand.deal(HAND_SIZE);
+  updateHUD();
+  pop($('oilStock'));
+  toast(msg, kind, 3200);
 }
 
 // ---------- input ----------
@@ -117,10 +316,37 @@ function hoveredCell() {
   return [Math.round(hit.x), Math.round(hit.z)];
 }
 
+// ---------- territory expansion ----------
+function checkExpansion() {
+  if (!grid.isFull() || expansion.active) return;
+  expansion.show(grid);
+  toast('Territory full: pick a plot on the edge to expand', 'good');
+}
+
+function expand(option) {
+  grid.unlock(option.px, option.pz);
+  expansion.clear();
+  frontier.rebuild(grid);
+  placement.cell = null; // force ghost revalidation
+  rig.focus(...grid.territoryCenter());
+  toast('Territory expanded', 'good');
+  updateHUD();
+}
+
 function tryPlace() {
+  if (payout.active) {
+    payout.skip(); // clicking the board during the payout fast-forwards it
+    return;
+  }
+  if (expansion.active) {
+    const option = expansion.optionAt(hoveredCell());
+    if (option) expand(option);
+    else toast('Territory full: click a highlighted plot to expand');
+    return;
+  }
   const piece = hand.piece;
   if (!piece) {
-    toast('Pick a piece from your hand (1–5)');
+    toast(hand.isEmpty ? 'Hand used up: press Next turn' : 'Pick a piece from your hand');
     return;
   }
   const cell = hoveredCell();
@@ -137,12 +363,29 @@ function tryPlace() {
   hand.consume();
   frontier.rebuild(grid);
   updateHUD();
+  checkExpansion();
 }
 
 rig.onClick = tryPlace;
 
 window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
+  const tgt = e.target;
+  // Space: replay the payout sequence (debug). Works even with a debug slider focused.
+  if (k === ' ' && !tgt.matches?.('select, textarea, input:not([type=range])')) {
+    e.preventDefault();
+    if (!e.repeat) previewPayout();
+    return;
+  }
+  if (tgt.matches?.('input, select, textarea')) return; // typing in the debug panel
+  if (k === '`') {
+    debug.toggle();
+    return;
+  }
+  if (payout.active) {
+    if (k === 'enter') endTurn();
+    return; // no placing / rotating / nuking mid-payout
+  }
   if (k >= '1' && k <= String(HAND_SIZE)) {
     const i = Number(k) - 1;
     hand.select(hand.selected === i ? -1 : i);
@@ -150,24 +393,38 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'f') hand.rotate(-1);
   else if (k === 'escape') hand.select(-1);
   else if (k === 'c') rig.focus(...grid.centroid());
+  else if (k === 'n') nukeRandomTile();
+  else if (k === 'enter') endTurn();
 });
 
 $('btnReroll').addEventListener('click', () => {
+  if (hand.isEmpty || payout.active) return;
   hand.reroll();
-  toast('New hand drawn');
+  turn.rerolls++;
+  updateHUD();
+  toast(`Hand rerolled: -1 manpower this season (${turn.rerolls} spent)`);
+});
+$('btnNext').addEventListener('click', (e) => {
+  e.currentTarget.blur(); // so Space doesn't re-click it
+  endTurn();
 });
 $('btnReset').addEventListener('click', resetIsland);
 
 // ---------- lifecycle ----------
 function resetIsland() {
+  payout.cancel(); // stop a running payout without settling it
+  previewing = false;
+  document.body.classList.remove('paying');
   tiles.clear();
   grid.clear();
   anims.length = 0;
+  expansion.clear();
   piecesPlaced = 0;
-  lastMilestone = 0;
+  Object.assign(turn, { round: 1, season: 0, stockpile: 0, rerolls: 0, total: 0 });
+  $('report').textContent = 'No seasons played yet.';
   addTile(0, 0, SEED_TERRAIN);
   frontier.rebuild(grid);
-  hand.reroll();
+  hand.deal(HAND_SIZE);
   rig.focus(0, 0);
   updateHUD();
 }
@@ -182,9 +439,14 @@ function frame(now) {
   followTarget(rig.target, rig.distance, dt);
   updateDropAnims(dt);
   frontier.update(dt, time);
-  placement.update(rig.isDragging ? null : hoveredCell(), dt, time);
+  const cell = rig.isDragging ? null : hoveredCell();
+  expansion.update(cell, dt, time);
+  updateInspect(cell);
+  // Hide the ghost while choosing a plot or while the payout plays.
+  placement.update(expansion.active || payout.active ? null : cell, dt, time);
 
   renderer.render(scene, camera);
+  payout.update(dt); // after render so labels use this frame's camera
   requestAnimationFrame(frame);
 }
 
@@ -192,4 +454,4 @@ resetIsland();
 requestAnimationFrame(frame);
 
 // Handy for debugging in the console.
-window.tileIsland = { grid, hand, placement, rig };
+window.tileIsland = { grid, hand, placement, rig, expansion, turn, economy: () => computeEconomy(grid, turn.rerolls) };

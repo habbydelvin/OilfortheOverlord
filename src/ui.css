@@ -1,5 +1,5 @@
 :root {
-  --bg: #2b3133;
+  --bg: #000000;
   --ink: #ece6d6;
   --muted: #9aa5a6;
   --navy: #34496e;
@@ -97,7 +97,8 @@ body {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  padding: 70px 0 60px 14px;
+  padding: 40px 0 40px 14px;
+  overflow-y: auto;
   background: linear-gradient(90deg, rgba(30, 36, 38, 0.55), rgba(30, 36, 38, 0.85));
   pointer-events: auto;
 }
@@ -127,6 +128,380 @@ body {
 
 #panel .spacer {
   flex: 1;
+}
+
+#panel .section {
+  margin: 22px 14px 6px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+#panel .section .hint {
+  letter-spacing: 0.04em;
+  text-transform: none;
+  opacity: 0.7;
+}
+
+#panel .res {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  margin: 6px 14px 0 0;
+  padding: 6px 10px;
+  border-left: 4px solid var(--c);
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+#panel .res.food {
+  --c: #6fae4a;
+}
+#panel .res.mp {
+  --c: #a0643c;
+}
+#panel .res.oil {
+  --c: #d0782a;
+}
+
+#panel .res .k {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+#panel .res .v {
+  font-size: 18px;
+  font-weight: 600;
+  text-align: right;
+}
+
+#panel .res .v small {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+#panel .res .v small.up {
+  color: #7fd36a;
+}
+
+#panel .res .v small.down {
+  color: #ff8f7a;
+}
+
+#panel .res .d {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+#report {
+  margin-right: 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+#report b {
+  color: var(--ink);
+}
+
+#report .good {
+  color: var(--gold);
+}
+
+#report .bad {
+  color: #ff8f7a;
+}
+
+/* ---------- end-of-turn payout labels ---------- */
+#floaters {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.floater {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  white-space: nowrap;
+  will-change: transform, opacity;
+}
+
+.floater .row {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--c);
+  /* chunky dark outline so numbers read over any tile colour */
+  text-shadow:
+    0 2px 0 #1a1410,
+    2px 0 0 #1a1410,
+    -2px 0 0 #1a1410,
+    0 -2px 0 #1a1410,
+    0 4px 8px rgba(0, 0, 0, 0.55);
+}
+
+.floater .row b {
+  font-size: var(--floater-size, 30px);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.floater .row span {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.floater .row.neg {
+  color: #ff7a66;
+}
+
+.floater .row.neg b {
+  font-size: calc(var(--floater-size, 30px) * 0.73);
+}
+
+/* ---------- debug: payout tuning ---------- */
+#btnDebug,
+#debug button {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  padding: 5px 10px;
+  background: rgba(30, 36, 38, 0.9);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+#btnDebug:hover,
+#debug button:hover {
+  background: rgba(60, 70, 74, 0.95);
+}
+
+#btnDebug.hidden,
+#debug.hidden {
+  display: none;
+}
+
+#debug {
+  width: 270px;
+  max-height: calc(100vh - 230px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 6px;
+  background: rgba(18, 22, 24, 0.94);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  font-size: 12px;
+  pointer-events: auto;
+}
+
+#debug .dbg-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--gold);
+  letter-spacing: 0.06em;
+}
+
+#debug .dbg-x {
+  padding: 0 7px;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+#debug .dbg-body {
+  overflow-y: auto;
+  padding: 2px 10px 8px;
+}
+
+#debug .dbg-group {
+  margin: 10px 0 2px;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+#debug .dbg-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  row-gap: 1px;
+  padding: 3px 0;
+}
+
+#debug .dbg-row.changed .dbg-name,
+#debug .dbg-row.changed .dbg-val {
+  color: var(--gold);
+}
+
+#debug .dbg-val {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+#debug .dbg-row input,
+#debug .dbg-row select {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin: 0;
+  accent-color: var(--gold);
+}
+
+#debug .dbg-row select {
+  margin-top: 2px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: #222a2c;
+  color: var(--ink);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  font: inherit;
+}
+
+#debug .dbg-actions {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+#debug .dbg-actions button {
+  flex: 1;
+}
+
+#debug .dbg-actions small {
+  opacity: 0.6;
+}
+
+#debug .dbg-status {
+  min-height: 18px;
+  padding: 0 10px 6px;
+  font-size: 11px;
+  color: var(--gold);
+}
+
+/* While the payout plays, the hand dims and buttons other than Next turn are locked. */
+body.paying #hand {
+  opacity: 0.45;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+body.paying #btnReroll,
+body.paying #btnReset {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ---------- hovered tile info ---------- */
+#inspect {
+  margin: 22px 14px 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+#inspect.hidden {
+  display: none;
+}
+
+/* Same portrait proportions as the hand cards (150 × 215), just a bit larger. */
+#inspect .card-big {
+  width: 180px;
+  aspect-ratio: 150 / 215;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #222a2c;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45), inset 0 0 0 2px rgba(255, 255, 255, 0.04);
+}
+
+#inspect .art {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at 50% 40%, rgba(255, 255, 255, 0.06), transparent 70%), #1c2325;
+}
+
+#inspect .swatch {
+  width: 44px;
+  height: 44px;
+  border-radius: 4px;
+  background: var(--top);
+  box-shadow: inset 0 -7px 0 var(--edge);
+}
+
+#inspect .name {
+  padding: 10px 8px 2px;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  background: var(--edge);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+#inspect .rule {
+  padding: 2px 10px 4px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.35;
+  background: var(--edge);
+}
+
+#inspect .kind {
+  padding: 0 0 10px;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: var(--edge);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+#inspect .note {
+  align-self: stretch;
+  margin-top: 8px;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--gold);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.btn.gold {
+  margin-bottom: 4px;
+  background: linear-gradient(180deg, #f0c76e, #c9962f);
+  color: #2b2210;
+  animation: slidein 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+@keyframes slidein {
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+}
+
+.btn.hidden {
+  display: none;
 }
 
 .btn {
@@ -175,10 +550,17 @@ body {
 }
 
 /* ---------- help ---------- */
-#help {
+#leftcol {
   position: absolute;
   left: 22px;
   top: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+#help {
   font-size: 12px;
   line-height: 1.7;
   color: var(--muted);
@@ -237,7 +619,7 @@ body {
 .card {
   position: relative;
   width: 150px;
-  height: 190px;
+  height: 215px;
   display: flex;
   flex-direction: column;
   border-radius: 6px;
@@ -279,10 +661,28 @@ body {
   border-radius: 2px;
 }
 
-.card .name {
-  padding: 8px 0 0;
+.card.junk {
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45), inset 0 0 0 2px rgba(150, 150, 150, 0.55);
+  filter: saturate(0.6);
+}
+
+.card.junk.selected {
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.5), 0 0 0 3px var(--gold);
+}
+
+.card .rule {
+  padding: 3px 8px 2px;
   text-align: center;
-  font-size: 20px;
+  font-size: 11px;
+  line-height: 1.3;
+  background: var(--edge);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.card .name {
+  padding: 8px 4px 0;
+  text-align: center;
+  font-size: 16px;
   font-weight: 600;
   letter-spacing: 0.06em;
   background: var(--edge);

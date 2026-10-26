@@ -9,7 +9,9 @@ export class Hand {
   selected = -1;
   fresh = new Set(); // slots that should play the deal-in animation
 
-  constructor(el, size, onChange) {
+  /** grid: used so Wasteland shapes only come in sizes that fit the free space. */
+  constructor(el, size, onChange, grid = null) {
+    this.grid = grid;
     this.el = el;
     this.size = size;
     this.onChange = onChange;
@@ -23,7 +25,7 @@ export class Hand {
       e.preventDefault();
       this.rotate(1);
     });
-    this.reroll();
+    this.deal();
   }
 
   get piece() {
@@ -36,19 +38,28 @@ export class Hand {
     this.onChange?.(this.piece);
   }
 
-  reroll() {
-    this.cards = Array.from({ length: this.size }, randomPiece);
+  get isEmpty() {
+    return this.cards.length === 0;
+  }
+
+  /** Deal a fresh hand of `count` pieces (start of a turn). */
+  deal(count = this.size) {
+    this.cards = Array.from({ length: count }, () => randomPiece(this.grid));
     this.fresh = new Set(this.cards.map((_, i) => i));
     this.selected = -1;
     this.render();
     this.onChange?.(null);
   }
 
-  /** Use up the selected card and draw a replacement into the same slot. */
+  /** Redraw the cards still in hand (same number of cards). */
+  reroll() {
+    this.deal(this.cards.length);
+  }
+
+  /** Use up the selected card. No replacement until next turn. */
   consume() {
     if (this.selected < 0) return;
-    this.cards[this.selected] = randomPiece();
-    this.fresh.add(this.selected);
+    this.cards.splice(this.selected, 1);
     this.selected = -1;
     this.render();
     this.onChange?.(null);
@@ -79,7 +90,12 @@ export class Hand {
     this.el.innerHTML = this.cards
       .map((p, i) => {
         const t = TERRAINS[p.terrain];
-        const cls = ['card', i === this.selected ? 'selected' : '', this.fresh.has(i) ? 'deal' : '']
+        const cls = [
+          'card',
+          t.category === 'junk' ? 'junk' : '',
+          i === this.selected ? 'selected' : '',
+          this.fresh.has(i) ? 'deal' : '',
+        ]
           .filter(Boolean)
           .join(' ');
         return `
@@ -88,7 +104,8 @@ export class Hand {
           <div class="hotkey">${i + 1}</div>
           <div class="art">${this.#shapeHTML(p, hex(t.top), hex(t.edge))}</div>
           <div class="name">${t.name}</div>
-          <div class="kind">${SHAPES[p.shape].name}</div>
+          <div class="rule">${t.rule}</div>
+          <div class="kind">${t.category} · ${SHAPES[p.shape].name}</div>
         </div>`;
       })
       .join('');
