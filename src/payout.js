@@ -10,6 +10,10 @@ const RES = {
   population: { word: 'population', color: '#8fe0ff' },
 };
 
+/** Pause before the finale (population growth), and between several finales. */
+const FINALE_BEAT = 0.35;
+const FINALE_GAP = 0.7;
+
 const lerp = (a, b, t) => a + (b - a) * t;
 const easeOut = (t) => 1 - (1 - t) ** 3;
 const easeIn = (t) => t * t * t;
@@ -93,7 +97,7 @@ export class Payout {
       c.order,
     );
     const stagger = c.order === 'together' || !tiles.length ? 0 : Math.min(c.stagger, c.maxRipple / tiles.length);
-    const finaleAt = (tiles.length ? (tiles.length - 1) * stagger : 0) + c.hopDuration;
+    const finaleAt = (tiles.length ? (tiles.length - 1) * stagger : 0) + c.hopDuration + FINALE_BEAT;
     tiles = [...tiles, ...finale];
     this.layer.style.setProperty('--floater-size', `${c.labelSize}px`);
     this.time = 0;
@@ -116,7 +120,8 @@ export class Payout {
         el.style.opacity = 0;
         this.layer.appendChild(el);
       }
-      this.items.push({ tile, el, start: tile.finale ? finaleAt : i * stagger, fired: false });
+      const start = tile.finale ? finaleAt + (i - (tiles.length - finale.length)) * FINALE_GAP : i * stagger;
+      this.items.push({ tile, el, start, fired: false });
     });
     if (!this.items.length) this.#finish();
   }

@@ -41,10 +41,10 @@ const anims = [];
 let piecesPlaced = 0;
 
 // Turn state: a turn is a season, a round is four seasons, tribute after Winter.
-const turn = { round: 1, season: 0, stockpile: 0, rerolls: 0, total: 0, food: 0, population: 0, quota: FIRST_QUOTA };
+const turn = { round: 1, season: 0, stockpile: 0, rerolls: 0, rerollSpent: 0, total: 0, food: 0, population: 0, quota: FIRST_QUOTA };
 
 /** This season's economy with the carried-over food store and population. */
-const economyNow = () => computeEconomy(grid, turn.rerolls, { population: turn.population, foodStore: turn.food });
+const economyNow = () => computeEconomy(grid, turn.rerollSpent, { population: turn.population, foodStore: turn.food });
 
 // Tiles that can't be drawn yet: no Cliffs or Pre-war Ruins during the first round.
 hand.excluded = () => (turn.round === 1 ? ['cliffs', 'ruins'] : []);
@@ -183,13 +183,18 @@ function updateHUD() {
     (turn.population ? ` · population ${turn.population}` : '');
 
   $('btnReroll').classList.toggle('hidden', hand.isEmpty);
-  $('btnNextSub').textContent = hand.forced.length
+  $('btnReroll').classList.toggle('disabled', e.supplied - rerollCost() < 1);
+  $('btnRerollSub').textContent = `costs ${rerollCost()} manpower`;
+  $('btnNextSub').textContent = hand.placeableForced.length
     ? 'place your Wasteland first'
     : turn.season === 3
       ? `collect oil, pay ${quota} tribute`
       : 'collect oil, draw a new hand';
   if (tipKind) renderResTip(e);
 }
+
+/** Each reroll in a season costs 1 more manpower than the last (1, 2, 3, …); resets every turn. */
+const rerollCost = () => turn.rerolls + 1;
 
 // ---------- resource breakdown tooltips ----------
 let tipKind = null; // 'food' | 'mp' | 'oil' while a resource row is hovered
@@ -235,11 +240,11 @@ function breakdown(kind, e) {
     add('Built on ruins', e.bonus.ruins);
     add(`Population`, e.population);
     add('Toxic craters', -e.craterManpower);
+    add('Rerolls this season', -e.rerollsSpent);
     total('Supplied', e.supplied);
     add(`Hydro-farms ×${c('farm')}`, -c('farm'));
     add(`Stations ×${c('station')}`, -c('station'));
     add(`Refineries ×${c('refinery')}`, -2 * c('refinery'));
-    add('Rerolls this season', -e.rerollsSpent);
     total('Spare', signed(e.spare));
     note(
       e.spare >= 0
@@ -323,6 +328,7 @@ function updateInspect(cell) {
 // ---------- turns ----------
 /** Next turn: tiles hop and flash what they produce, then the turn is settled. */
 function endTurn() {
+  if (turn.over) return;
   if (payout.active) {
     if (previewing) cancelPreview();
     else {
@@ -330,17 +336,10 @@ function endTurn() {
       return;
     }
   }
-  // Wasteland must be placed first.
-  const forced = hand.forced.length;
-  if (forced) {
-    if (grid.isFull()) {
-      checkExpansion();
-      toast('Expand your territory to place your Wasteland', 'bad');
-    } else {
-      refitWasteland();
-      if (hand.forced.length) toast(`Place your Wasteland first (${hand.forced.length} left in hand)`, 'bad');
-      else endTurn(); // the last Wasteland had nowhere to go and was dropped
-    }
+  // Wasteland must be placed first, but only if it fits somewhere; if there's no room, the turn can end.
+  const blocking = hand.placeableForced.length;
+  if (blocking) {
+    toast(`Place your Wasteland first (${blocking} left in hand)`, 'bad');
     return;
   }
   hand.select(-1);
@@ -366,7 +365,45 @@ function cancelPreview() {
   payout.cancel();
   previewing = false;
   document.body.classList.remove('paying');
-  showOil(turn.stockpile); // undo the counter / bar filling
+  updateHUD(); // undo the counter / bar filling
+}
+
+/** Draw the food store bar. `amount` may briefly overshoot the cost (bar glows) or go negative (hunger). */
+function showStore(amount, cost, bumpIt = false, population = turn.population) {
+  const shown = Math.max(0, Math.round(amount));
+  $('popFill').style.width = `${Math.min(1, shown / cost) * 100}%`;
+  $('popFill').classList.toggle('full', shown >= cost);
+  $('popFill').classList.toggle('empty', amount < 0);
+  $('popText').textContent =
+    `store ${shown} / ${cost} → +1 pop` + (population ? ` · population ${population}` : '');
+  if (bumpIt) bump($('popText'));
+}
+
+function bump(el) {
+  el.classList.remove('bump');
+  void el.offsetWidth;
+  el.classList.add('bump');
+}
+
+/** A "+1 pop" chip flies from the store bar to the Capital. */
+const chipV = new THREE.Vector3();
+function flyChip(capital) {
+  if (!capital) return;
+  const from = $('popFill').parentElement.getBoundingClientRect();
+  chipV.set(capital.x, 0.8, capital.z).project(camera);
+  const tx = (chipV.x * 0.5 + 0.5) * window.innerWidth;
+  const ty = (-chipV.y * 0.5 + 0.5) * window.innerHeight;
+  const chip = document.createElement('div');
+  chip.className = 'pop-chip';
+  chip.textContent = '+1 pop';
+  chip.style.left = `${from.right - 30}px`;
+  chip.style.top = `${from.top}px`;
+  document.body.appendChild(chip);
+  requestAnimationFrame(() => {
+    chip.style.transform = `translate(${tx - from.right + 30}px, ${ty - from.top}px) scale(0.6)`;
+    chip.style.opacity = '0';
+  });
+  setTimeout(() => chip.remove(), 700);
 }
 
 /** Show an oil amount in the stockpile counter and the quota bar at the top. */
@@ -388,21 +425,38 @@ function runPayout(e, onDone) {
     .filter((p) => p.food || p.manpower || p.oil || EFFECT_TILES.has(p.terrain))
     .map((p) => ({ ...p, mesh: grid.get(p.x, p.z).mesh }));
 
-  // Population growth: the Capital hops once more at the end and shows "+N population".
+  // Population growth: once the tiles are done, the Capital hops once per population point gained.
   const capital = [...grid.cells.values()].find((c) => c.terrain === 'capital');
-  if (e.popGrowth && capital) {
-    tiles.push({ x: capital.x, z: capital.z, mesh: capital.mesh, population: e.popGrowth, finale: true });
+  if (capital) {
+    for (let i = 0; i < e.popGrowth; i++)
+      tiles.push({ x: capital.x, z: capital.z, mesh: capital.mesh, population: 1, finale: true });
   }
 
-  // Tick the oil counter and fill the quota bar as each station pops.
+  // Oil fills the quota bar; food fills the store bar; a full store turns into population.
   let shown = turn.stockpile;
+  let store = turn.food;
+  let population = turn.population;
+  let mp = e.supplied;
   document.body.classList.add('paying');
   payout.start(
     tiles,
     (tile) => {
-      if (!tile.oil) return;
-      shown += tile.oil;
-      showOil(shown, true);
+      if (tile.oil) {
+        shown += tile.oil;
+        showOil(shown, true);
+      }
+      if (tile.food) {
+        store += tile.food;
+        showStore(store, growthCost(population), true);
+      }
+      if (tile.population) {
+        flyChip(capital);
+        store -= growthCost(population);
+        population++;
+        showStore(store, growthCost(population), true, population);
+        $('resMp').textContent = ++mp;
+        bump($('resMp'));
+      }
     },
     () => {
       document.body.classList.remove('paying');
@@ -414,7 +468,29 @@ function runPayout(e, onDone) {
 /** Tiles that hop even without a number of their own (they boost their neighbours). */
 const EFFECT_TILES = new Set(['pump', 'oasis', 'tarpit', 'refinery']);
 
+/** Why the city collapses at the end of the year (checked after Winter only), or null. Food: the store is emptied by a shortfall. Manpower: none supplied at all. */
+function collapseReason(e) {
+  if (e.foodBalance < 0 && e.storeAfter <= 0) return 'Your food ran out. The people starved.';
+  if (e.supplied <= 0) return 'Your manpower ran out. The city could not be worked.';
+  return null;
+}
+
+function gameOver(reason) {
+  turn.over = true;
+  hand.select(-1);
+  $('gameoverReason').textContent = reason;
+  $('gameoverStats').textContent =
+    `Survived to ${SEASONS[turn.season]}, round ${turn.round} · ${turn.total} barrels delivered in total`;
+  $('gameover').classList.remove('hidden');
+}
+
 function settleTurn(e) {
+  // The city can only fall at the end of the year (after Winter); earlier shortfalls just cut output.
+  const reason = turn.season === 3 ? collapseReason(e) : null;
+  if (reason) {
+    gameOver(reason);
+    return;
+  }
   const label = `${SEASONS[turn.season]}, round ${turn.round}`;
   turn.stockpile += e.oil;
   turn.total += e.oil;
@@ -467,6 +543,7 @@ function settleTurn(e) {
   turn.season = (turn.season + 1) % 4;
   if (turn.season === 0) turn.round++;
   turn.rerolls = 0;
+  turn.rerollSpent = 0;
   hand.deal(HAND_SIZE);
   updateHUD();
   pop($('oilStock'));
@@ -497,15 +574,6 @@ function hoveredCell() {
   return [Math.round(hit.x), Math.round(hit.z)];
 }
 
-/** Shrink Wasteland cards that no longer fit (or drop them if nothing fits) and say so. */
-function refitWasteland() {
-  if (grid.isFull()) return; // expansion comes first
-  const { shrunk, discarded } = hand.fitForced();
-  if (shrunk) toast(`Wasteland shrank to fit the space left`);
-  if (discarded) toast(`No room for ${discarded} Wasteland piece${discarded === 1 ? '' : 's'}: discarded`, 'bad');
-  if (shrunk || discarded) updateHUD();
-}
-
 // ---------- territory expansion ----------
 function checkExpansion() {
   if (!grid.isFull() || expansion.active) return;
@@ -529,10 +597,10 @@ function expand(option) {
     'good',
   );
   updateHUD();
-  refitWasteland();
 }
 
 function tryPlace() {
+  if (turn.over) return;
   if (payout.active) {
     payout.skip(); // clicking the board during the payout fast-forwards it
     return;
@@ -563,7 +631,6 @@ function tryPlace() {
   frontier.rebuild(grid);
   updateHUD();
   checkExpansion();
-  refitWasteland();
 }
 
 rig.onClick = tryPlace;
@@ -598,17 +665,24 @@ window.addEventListener('keydown', (e) => {
 });
 
 $('btnReroll').addEventListener('click', () => {
-  if (hand.isEmpty || payout.active) return;
+  if (hand.isEmpty || payout.active || turn.over) return;
+  const cost = rerollCost();
+  if (economyNow().supplied - cost < 1) {
+    toast(`Not enough manpower to reroll (costs ${cost})`, 'bad');
+    return;
+  }
   hand.reroll();
   turn.rerolls++;
+  turn.rerollSpent += cost;
   updateHUD();
-  toast(`Hand rerolled: -1 manpower this season (${turn.rerolls} spent)`);
+  toast(`Hand rerolled: -${cost} manpower (next reroll costs ${rerollCost()})`);
 });
 $('btnNext').addEventListener('click', (e) => {
   e.currentTarget.blur(); // so Space doesn't re-click it
   endTurn();
 });
 $('btnReset').addEventListener('click', resetIsland);
+$('btnRestart').addEventListener('click', resetIsland);
 
 // ---------- lifecycle ----------
 function resetIsland() {
@@ -625,11 +699,14 @@ function resetIsland() {
     season: 0,
     stockpile: 0,
     rerolls: 0,
+    rerollSpent: 0,
     total: 0,
     food: 0,
     population: 0,
     quota: FIRST_QUOTA,
+    over: false,
   });
+  $('gameover').classList.add('hidden');
   $('report').textContent = 'No seasons played yet.';
   addTile(0, 0, SEED_TERRAIN);
   mysteries.reset();

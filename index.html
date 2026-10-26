@@ -50,7 +50,7 @@
           Next turn<span id="btnNextSub">collect oil, draw a new hand</span>
         </button>
         <button id="btnReroll" class="btn blue">
-          Reroll hand<span>costs 1 manpower this season</span>
+          Reroll hand<span id="btnRerollSub">costs 1 manpower</span>
         </button>
         <button id="btnReset" class="btn red">
           Reset<span>back to the capital</span>
@@ -74,6 +74,14 @@
       </div>
 
       <div id="resTip" class="hidden"></div>
+      <div id="gameover" class="hidden">
+        <div class="box">
+          <h1>The city has fallen</h1>
+          <p id="gameoverReason"></p>
+          <p class="stats" id="gameoverStats"></p>
+          <button id="btnRestart" class="btn gold">Start again</button>
+        </div>
+      </div>
       <div id="floaters"></div>
       <div id="toast"></div>
       <div id="hand"></div>

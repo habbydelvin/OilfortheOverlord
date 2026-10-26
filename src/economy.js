@@ -87,8 +87,9 @@ export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
     }
   }
 
-  supplied = Math.max(0, supplied + population - craterManpower);
-  const spare = supplied - employed - rerollsSpent;
+  // Rerolls are paid out of the manpower pool itself, before anyone is put to work.
+  supplied = Math.max(0, supplied + population - craterManpower - rerollsSpent);
+  const spare = supplied - employed;
   const staffing = spare >= 0 ? 1 : employed > 0 ? Math.max(0, employed + spare) / employed : 1;
   const boost = 1 + 0.1 * Math.max(0, spare);
 

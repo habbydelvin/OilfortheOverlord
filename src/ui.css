@@ -213,6 +213,34 @@ body {
   transition: width 0.4s ease-out;
 }
 
+#panel .res .pop-fill.full {
+  background: #b8ff8f;
+  box-shadow: 0 0 8px #9be36f;
+}
+
+#panel .res .pop-fill.empty {
+  background: #ff8f7a;
+}
+
+#panel .res .pop-text.bump,
+#panel .res .v span.bump {
+  display: inline-block;
+  animation: pop 0.35s ease-out;
+}
+
+.pop-chip {
+  position: fixed;
+  z-index: 30;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #8fe0ff;
+  color: #10202a;
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: none;
+  transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.6s ease-in;
+}
+
 #panel .res .pop-text {
   margin-top: 3px;
   font-size: 11px;
@@ -866,4 +894,51 @@ body.paying #btnReset {
   50% {
     transform: scale(1.25);
   }
+}
+
+/* ---------- game over ---------- */
+#gameover {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  pointer-events: auto;
+}
+
+#gameover.hidden {
+  display: none;
+}
+
+#gameover .box {
+  width: 360px;
+  padding: 24px 26px;
+  border-radius: 8px;
+  background: #1b2224;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+  text-align: center;
+}
+
+#gameover h1 {
+  margin: 0 0 10px;
+  font-size: 22px;
+  color: #ff8f7a;
+}
+
+#gameover p {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+#gameover .stats {
+  margin-bottom: 18px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+#btnReroll.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
