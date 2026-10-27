@@ -9,7 +9,7 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
  */
 export const BLOCKOUTS = {
   capital: 'CapitalCity01.fbx',
-  settlement: 'Settlement01.fbx',
+  settlement: 'VillageCity01.fbx',
   farm: 'HydroFarm01.fbx',
   pump: 'WaterPump01.fbx',
   station: 'OilStation01.fbx',
@@ -30,9 +30,12 @@ export const BLOCKOUTS = {
 const FINISHED = {
   capital: { yaw: 0, fit: 'Capital_HiveCity' },
   refinery: { yaw: 0, fit: 'Refinery_HiveCity' },
+  settlement: { yaw: 0, fit: 'Village_HiveCity' },
 };
 
 const MODEL_URL = '/models/blockouts/';
+// Bump when a model file is re-exported under the same name, so browsers drop the cached copy.
+const MODEL_VERSION = '20261027-1729';
 const ATLAS_URL = '/models/Atlas.jpg?v=20261026-1640';
 // Footprints measure about 96 × 97 cm. One board cell is 1 unit across.
 const CELL = 0.97;
@@ -154,7 +157,7 @@ export async function loadBlockouts() {
   atlas.anisotropy = 8;
 
   const jobs = Object.entries(BLOCKOUTS).map(async ([terrain, file]) => {
-    const raw = await loader.loadAsync(`${MODEL_URL}${file}`);
+    const raw = await loader.loadAsync(`${MODEL_URL}${file}?v=${MODEL_VERSION}`);
     const finished = FINISHED[terrain];
     if (finished) {
       toStandard(raw);

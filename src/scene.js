@@ -93,7 +93,7 @@ const GROUND = {
   tile: 4, // world units per texture repeat (just over one 3×3 plot)
   // The board lights (hemisphere 1.3 + sun 2.2, ACES) push the painted sand to bright orange.
   // This tint brings it back to about the texture's own muted brown.
-  tint: 0xb4b6ba,
+  tint: 0xe4e4e6,
   fadeRadius: 0.75, // sand fades out by camera distance × this, measured from the look-at point
 };
 
