@@ -41,7 +41,9 @@ const anims = [];
 let piecesPlaced = 0;
 
 // Turn state: a turn is a season, a round is four seasons, tribute after Winter.
-const turn = { strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, rerollSpent: 0, unlocked: new Set(), pinned: [], coins: 0, total: 0, food: 0, population: 0, quota: FIRST_QUOTA };
+/** Food in the store at the start, so a bad first year isn't an instant loss. */
+const STARTING_FOOD = 5;
+const turn = { strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, rerollSpent: 0, unlocked: new Set(), pinned: [], coins: 0, total: 0, food: STARTING_FOOD, population: 0, quota: FIRST_QUOTA };
 
 /** This season's economy with the carried-over food store and population. */
 const economyNow = () => computeEconomy(grid, turn.rerollSpent, { population: turn.population, foodStore: turn.food });
@@ -233,7 +235,8 @@ function breakdown(kind, e) {
     add('Capital doubles', e.bonus.capitalFood);
     total('Grown', Math.round(e.foodGrown));
     add('Capital eats', -3 * c('capital'));
-    add(`Settlements ×${c('settlement')}`, -c('settlement'));
+    add(`Settlements ×${c('settlement')}`, -2 * c('settlement'));
+    add(`Population ×${e.population}`, -e.popFood);
     add('Toxic craters', -e.craterFood);
     total('Balance', signed(Math.round(e.foodBalance)));
     if (e.foodBalance < 0) {
@@ -910,7 +913,7 @@ function resetIsland() {
     rerolls: 0,
     rerollSpent: 0,
     total: 0,
-    food: 0,
+    food: STARTING_FOOD,
     population: 0,
     quota: FIRST_QUOTA,
     over: false,

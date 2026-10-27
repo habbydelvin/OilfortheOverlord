@@ -1,10 +1,11 @@
 import { pieceOf, randomPiece, rotateCells, shapeFits, SHAPES } from './pieces.js';
-import { TERRAINS, cardDef, cardText, hex } from './tiles.js';
+import { ACTIONS, TERRAINS, cardDef, cardText, hex } from './tiles.js';
 
 const CELL_PX = 20;
 
 /** Wasteland has to be placed: it can't be rerolled away or left in hand at the end of a turn. */
-const ALL_BUT_WASTELAND = Object.keys(TERRAINS).filter((k) => !k.startsWith('wasteland'));
+// Everything that isn't Wasteland (tiles and action cards), so a pinned Wasteland slot draws only Wasteland.
+const ALL_BUT_WASTELAND = [...Object.keys(TERRAINS), ...Object.keys(ACTIONS)].filter((k) => !k.startsWith('wasteland'));
 
 export const isForced = (piece) => piece.terrain.startsWith('wasteland');
 

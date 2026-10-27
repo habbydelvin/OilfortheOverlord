@@ -17,6 +17,9 @@ const WORKERS = { station: 1, refinery: 1 };
  *
  * state: { population, foodStore } carried between seasons. Population adds +1 manpower each.
  */
+/** Population needed to eat 1 food per season. */
+const POP_PER_FOOD = 2;
+
 export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
   const population = state.population ?? 0;
   const foodStore = state.foodStore ?? 0;
@@ -105,7 +108,9 @@ export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
   const boost = 1 + 0.1 * Math.max(0, spare);
 
   const foodGrown = farmFood; // farms need no workers, so understaffing doesn't touch them
-  const totalEaten = foodEaten + craterFood;
+  // Citizens eat too: 1 food per 2 population (rounded up).
+  const popFood = Math.ceil(population / POP_PER_FOOD);
+  const totalEaten = foodEaten + craterFood + popFood;
   const foodBalance = foodGrown - totalEaten;
   // The store covers a shortfall first; only what it can't cover starves the city.
   const fed = totalEaten > 0 ? Math.min(1, (foodGrown + foodStore) / totalEaten) : 1;
@@ -143,6 +148,7 @@ export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
     boost,
     foodGrown,
     foodEaten: totalEaten,
+    popFood,
     craterFood,
     foodBalance,
     fed,

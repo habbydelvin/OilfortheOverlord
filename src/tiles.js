@@ -32,8 +32,8 @@ export const TERRAINS = {
     category: 'building',
     buildable: false,
     weight: 2,
-    rule: '+2 manpower · -1 food',
-    stats: { food: -1, manpower: 2, ruinsBonusManpower: 1 },
+    rule: '+2 manpower · -2 food',
+    stats: { food: -2, manpower: 2, ruinsBonusManpower: 1 },
   },
   farm: {
     name: 'Hydro-farm',
