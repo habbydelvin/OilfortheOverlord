@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Capital test · Oil for the Overlord</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #1b1511;
+        font-family: system-ui, sans-serif;
+        color: #e8e2d8;
+      }
+      #panel {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        padding: 10px 14px;
+        background: rgba(20, 16, 12, 0.78);
+        border: 1px solid #4a4036;
+        border-radius: 6px;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      #panel h1 {
+        margin: 0 0 4px;
+        font-size: 15px;
+      }
+      #panel a {
+        color: #d8b27a;
+      }
+      #stats {
+        opacity: 0.7;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="panel">
+      <h1>Capital test: hive city</h1>
+      <div id="stats"></div>
+      <label><input type="checkbox" id="spin" checked /> Auto-rotate</label><br />
+      <label><input type="checkbox" id="compare" /> Show current blockout</label><br />
+      <a href="/">← Back to the table</a>
+    </div>
+    <script type="module" src="/src/capitalTest.js"></script>
+  </body>
+</html>

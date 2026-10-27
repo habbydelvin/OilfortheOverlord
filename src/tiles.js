@@ -73,14 +73,14 @@ export const TERRAINS = {
     stats: { manpower: -2, oilMultiplierPerAdjacent: { station: 0.5 } },
   },
 
-  // ---- wasteland (4 cosmetic variants, share one draw weight: 4 × 2.08 ≈ 40% of draws) ----
+  // ---- wasteland (4 cosmetic variants, share one draw weight: 4 × 1.34 ≈ 30% of draws) ----
   wasteland1: {
     name: 'Wasteland',
     top: 0xd8bf8a,
     edge: 0xae9564,
     category: 'junk',
     buildable: false,
-    weight: 2.08,
+    weight: 1.34,
     rule: 'Junk · must be placed · never built on',
     stats: {},
   },
@@ -90,7 +90,7 @@ export const TERRAINS = {
     edge: 0xa58a56,
     category: 'junk',
     buildable: false,
-    weight: 2.08,
+    weight: 1.34,
     rule: 'Junk · must be placed · never built on',
     stats: {},
   },
@@ -100,7 +100,7 @@ export const TERRAINS = {
     edge: 0x9e804a,
     category: 'junk',
     buildable: false,
-    weight: 2.08,
+    weight: 1.34,
     rule: 'Junk · must be placed · never built on',
     stats: {},
   },
@@ -110,7 +110,7 @@ export const TERRAINS = {
     edge: 0xb19f72,
     category: 'junk',
     buildable: false,
-    weight: 2.08,
+    weight: 1.34,
     rule: 'Junk · must be placed · never built on',
     stats: {},
   },

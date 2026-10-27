@@ -47,7 +47,12 @@ const turn = { round: 1, season: 0, stockpile: 0, rerolls: 0, rerollSpent: 0, to
 const economyNow = () => computeEconomy(grid, turn.rerollSpent, { population: turn.population, foodStore: turn.food });
 
 // Tiles that can't be drawn yet: no Cliffs or Pre-war Ruins during the first round.
-hand.excluded = () => (turn.round === 1 ? ['cliffs', 'ruins'] : []);
+// The opening hand (first season, rerolls included) only has the basics: Wasteland, stations, farms, settlements.
+const OPENING_TILES = ['wasteland1', 'wasteland2', 'wasteland3', 'wasteland4', 'station', 'farm', 'settlement'];
+hand.excluded = () => {
+  if (turn.round === 1 && turn.season === 0) return Object.keys(TERRAINS).filter((k) => !OPENING_TILES.includes(k));
+  return turn.round === 1 ? ['cliffs', 'ruins'] : [];
+};
 
 // ---------- tiles ----------
 const WASTELAND_VARIANTS = ['wasteland1', 'wasteland2', 'wasteland3', 'wasteland4'];
@@ -148,6 +153,7 @@ function pop(el) {
 /** Big number = current amount, small (±n) = change this season. */
 function setRes(id, amount, change) {
   $(id).textContent = Math.round(amount);
+  $(id).classList.toggle('neg', Math.round(amount) < 0);
   const d = $(`${id}D`);
   const n = Math.round(change);
   // Only show the bracket when something is used up: if nothing is consumed it just repeats the big number.
@@ -168,7 +174,8 @@ function updateHUD() {
   // Projected economy for this season if the turn ended now.
   const e = economyNow();
   // Food / Manpower: big number = how much you produce, small (±n) = excess or shortfall after upkeep.
-  setRes('resFood', e.foodGrown, e.foodBalance);
+  // Food shows the balance (grown minus eaten), which is what actually goes into the store.
+  setRes('resFood', e.foodBalance, e.foodBalance);
   setRes('resMp', e.supplied, e.spare);
   // Oil: big number = the stockpile (the Overlord takes it all after Winter), small = this season's yield.
   $('resOilD').textContent = `(+${e.oil})`;

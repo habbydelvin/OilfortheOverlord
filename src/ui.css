@@ -262,6 +262,10 @@ body {
   color: #ff8f7a;
 }
 
+#panel .res .v span.neg {
+  color: #ff8f7a;
+}
+
 #panel .res .d {
   grid-column: 1 / -1;
   font-size: 11px;
