@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { hasBlockout, loadBlockouts } from './models.js';
+import { buildRaiderCamp } from './raiderMesh.js';
+import { buildLabourCamp } from './labourCampMesh.js';
 
 /**
  * Desert dieselpunk tile set. Flat colours only for now, detail comes later.
@@ -149,6 +151,17 @@ export const TERRAINS = {
     rule: 'Adjacent oil stations +2 oil',
     stats: { adjacentBonus: { station: { oil: 2 } } }, // +2 total, not stacked
   },
+  labourcamp: {
+    name: 'Labour Camp',
+    trigger: 'Passive',
+    top: 0x8a7a5a,
+    edge: 0x5f543d,
+    category: 'land',
+    buildable: false,
+    weight: 0.5,
+    rule: '+2 worker slots if next to a Settlement',
+    stats: { adjacentManpower: { settlement: 2 } }, // +2 total, not per settlement
+  },
   cliffs: {
     name: 'Cliffs',
     trigger: 'Junk',
@@ -166,10 +179,10 @@ export const TERRAINS = {
     top: 0x9a9284,
     edge: 0x6f685c,
     category: 'land',
-    buildable: true,
-    weight: 0.75,
-    rule: 'Built on: +1 worker slot (+2 settlement)',
-    stats: { builtOnBonus: { manpower: 1 } }, // permanent, any building
+    buildable: false,
+    weight: 0, // already on the map, never drawn
+    rule: 'Build next to it to clear · Clearing refills your hand to 5',
+    stats: {},
   },
   crater: {
     name: 'Toxic Crater',
@@ -181,6 +194,17 @@ export const TERRAINS = {
     weight: 0, // only created by the overlord
     rule: '-1 worker slot, -1 food per adjacent farm/settlement',
     stats: { adjacentPenalty: { farm: { manpower: -1, food: -1 }, settlement: { manpower: -1, food: -1 } } },
+  },
+  raider: {
+    name: 'Raider Camp',
+    trigger: 'Passive',
+    top: 0x7a3a2a,
+    edge: 0x52261b,
+    category: 'junk',
+    buildable: false,
+    weight: 0, // only spawned by a starving year
+    rule: '-2 worker slots · Leaves when your people are fed',
+    stats: { raiderDrain: 2 },
   },
 };
 
@@ -223,7 +247,7 @@ export const ICONS = {
 };
 
 /** Swap "<amount> food/oil/worker slot(s)" for "<amount> <icon>" in rule text. */
-const iconize = (line) =>
+export const iconize = (line) =>
   line.replace(/([+-]?\d+(?:\.\d+)?×?) (food|oil|worker slots?|manpower)\b/g, (_, n, w) =>
     `${n}${ICONS[w.startsWith('worker') ? 'manpower' : w]}`,
   );
@@ -240,9 +264,9 @@ export const cardDef = (key) => TERRAINS[key] ?? ACTIONS[key];
 /** Shop stock. Special tiles are locked until bought once; action cards are one use. [terrain, price in barrels of excess oil] */
 export const SHOP_ITEMS = [
   ['pump', 3],
-  ['ruins', 3],
   ['oasis', 4],
   ['tarpit', 4],
+  ['labourcamp', 4],
   ['refinery', 5],
   ['spark', 2], // action cards: one use, only from the shop
   ['demolish', 2],
@@ -304,6 +328,8 @@ export class TileFactory {
   }
 
   create(terrain) {
+    if (terrain === 'raider') return buildRaiderCamp(this.soilGeo, this.soilMat);
+    if (terrain === 'labourcamp') return buildLabourCamp(this.soilGeo, this.soilMat);
     const source = this.models?.get(terrain);
     if (!source) return this.#block(terrain);
     // The fitted model keeps its own offset. A holder takes the cell position

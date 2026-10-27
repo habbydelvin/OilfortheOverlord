@@ -2,8 +2,8 @@ import './ui.css';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { CameraRig } from './controls.js';
-import { Grid } from './grid.js';
-import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, cardDef, cardText, hex } from './tiles.js';
+import { Grid, DIRS } from './grid.js';
+import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, cardDef, cardText, hex, ICONS, isBuilding, iconize } from './tiles.js';
 import { hasBlockout } from './models.js';
 import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
@@ -12,6 +12,8 @@ import { Expansion } from './expansion.js';
 import { Mysteries } from './mystery.js';
 import { computeEconomy, growthCost, FIRST_QUOTA, nextQuota, SEASONS } from './economy.js';
 import { Payout } from './payout.js';
+import { EVENTS, KIND_LABEL, drawEvent } from './events.js';
+import { Dialogue } from './dialogue.js';
 import { loadPayoutConfig } from './payoutConfig.js';
 import { createDebugPanel } from './debugPanel.js';
 
@@ -29,6 +31,7 @@ const frontier = new Frontier(scene);
 const placement = new Placement(scene, grid, factory);
 const expansion = new Expansion(scene);
 const mysteries = new Mysteries(scene);
+const dialogue = new Dialogue(document.getElementById('dialogue'));
 const payoutCfg = loadPayoutConfig();
 const payout = new Payout(camera, document.getElementById('floaters'), payoutCfg);
 const debug = createDebugPanel(document.getElementById('debug'), document.getElementById('btnDebug'), payoutCfg, {
@@ -43,12 +46,12 @@ let piecesPlaced = 0;
 // Turn state: a turn is a season, a round is four seasons, tribute after Winter.
 /** Food in the store at the start, so a bad first year isn't an instant loss. */
 const STARTING_FOOD = 5;
-const turn = { strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, unlocked: new Set(), pinned: [], coins: 0, total: 0, food: STARTING_FOOD, population: 0, quota: FIRST_QUOTA };
+const turn = { strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, event: null, metStreak: 0, lastMissed: false, unlocked: new Set(), pinned: [], coins: 0, total: 0, food: STARTING_FOOD, population: 0, quota: FIRST_QUOTA };
 
 /** This season's economy with the carried-over food store and population. */
-const economyNow = () => computeEconomy(grid, { population: turn.population, foodStore: turn.food });
+const economyNow = () => computeEconomy(grid, { mods: turn.event?.mods, population: turn.population, foodStore: turn.food });
 
-// Tiles that can't be drawn yet: no Cliffs or Pre-war Ruins during the first round.
+// Tiles that can't be drawn yet: no Cliffs during the first round.
 /** Guaranteed opening hand (shuffled). Extra slots, if HAND_SIZE grows, are drawn at random. */
 const OPENING_HAND = ['farm', 'settlement', 'station', 'wasteland', 'wasteland'];
 
@@ -58,7 +61,7 @@ hand.excluded = () => {
   if (turn.round === 1 && turn.season === 0)
     return [...Object.keys(TERRAINS), ...Object.keys(ACTIONS)].filter((k) => !OPENING_TILES.includes(k));
   const locked = SHOP_ITEMS.map(([k]) => k).filter((k) => !turn.unlocked.has(k));
-  return [...locked, ...(turn.round === 1 ? ['cliffs', 'ruins'] : [])];
+  return [...locked, ...(turn.round === 1 ? ['cliffs'] : [])];
 };
 
 // ---------- tiles ----------
@@ -106,7 +109,9 @@ function removeMesh(mesh) {
 
 /** Debug stand-in for the overlord's nuke: turn a random non-capital tile into a Toxic Crater. */
 function nukeRandomTile(quiet = false) {
-  const targets = [...grid.cells.values()].filter((c) => c.terrain !== 'capital' && c.terrain !== 'crater');
+  const targets = [...grid.cells.values()].filter(
+    (c) => c.terrain !== 'capital' && c.terrain !== 'crater' && grid.inTerritory(c.x, c.z),
+  );
   if (!targets.length) {
     if (!quiet) toast('Nothing for the Overlord to nuke');
     return null;
@@ -119,6 +124,64 @@ function nukeRandomTile(quiet = false) {
   placement.cell = null; // force ghost revalidation
   updateHUD();
   return lost;
+}
+
+// ---------- Pre-war Ruins ----------
+/** Ruins can be cleared once a building stands on a side next to them (and they're in your territory). */
+function canClearRuins(c) {
+  return (
+    c.terrain === 'ruins' &&
+    grid.inTerritory(c.x, c.z) &&
+    DIRS.some(([dx, dz]) => isBuilding(grid.get(c.x + dx, c.z + dz)?.terrain))
+  );
+}
+
+/** Clearing ruins empties the cell and tops the hand up to HAND_SIZE with pure-luck draws. */
+function clearRuins(x, z) {
+  const c = grid.get(x, z);
+  if (!c || !canClearRuins(c) || turn.over || payout.active || shopOpen || eventOpen) return;
+  removeMesh(c.mesh);
+  grid.cells.delete(`${x},${z}`);
+  const drawn = hand.refill(HAND_SIZE);
+  placement.cell = null;
+  frontier.rebuild(grid);
+  updateHUD();
+  toast(drawn ? `Ruins cleared: salvaged ${drawn} new piece${drawn === 1 ? '' : 's'}` : 'Ruins cleared (hand already full)', 'good');
+}
+
+const ruinBtns = new Map(); // cell key -> button
+const ruinV = new THREE.Vector3();
+function updateRuinButtons() {
+  const layer = $('ruinBtns');
+  const live = new Set();
+  for (const c of grid.cells.values()) {
+    if (!canClearRuins(c)) continue;
+    const k = `${c.x},${c.z}`;
+    live.add(k);
+    let btn = ruinBtns.get(k);
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.className = 'ruin-btn';
+      btn.textContent = 'Clear ruins';
+      btn.title = 'Clear these ruins: refill your hand to 5 with random pieces';
+      btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clearRuins(c.x, c.z);
+      });
+      layer.appendChild(btn);
+      ruinBtns.set(k, btn);
+    }
+    ruinV.set(c.x, 0.55, c.z).project(camera);
+    const px = (ruinV.x * 0.5 + 0.5) * window.innerWidth;
+    const py = (-ruinV.y * 0.5 + 0.5) * window.innerHeight;
+    btn.style.transform = `translate(${px}px, ${py}px) translate(-50%, -100%)`;
+  }
+  for (const [k, btn] of ruinBtns) {
+    if (live.has(k)) continue;
+    btn.remove();
+    ruinBtns.delete(k);
+  }
 }
 
 function updateDropAnims(dt) {
@@ -171,9 +234,24 @@ function setRes(id, amount, change) {
 function updateHUD() {
   const n = grid.size;
   const quota = turn.quota;
-  const left = 3 - turn.season;
+  const left = yearLength() - 1 - turn.season;
   $('seasonLabel').textContent =
-    `Round ${turn.round} · ${SEASONS[turn.season]} · tribute ${left ? `in ${left} season${left === 1 ? '' : 's'}` : 'due this Winter'}`;
+    `Round ${turn.round} · ${SEASONS[turn.season]} · tribute ${left ? `in ${left} season${left === 1 ? '' : 's'}` : `due this ${SEASONS[turn.season]}`}`;
+  const ev = turn.event;
+  $('eventLabel').classList.toggle('hidden', !ev);
+  if (ev) {
+    // Hover card: what the event does and how long it lasts.
+    $('eventLabel').innerHTML =
+      `Year event: <b>${ev.name}</b>` +
+      `<div class="event-tip">` +
+      `<div class="event-tip-kind">${KIND_LABEL[ev.kind]}</div>` +
+      `<div class="event-tip-name">${ev.name}</div>` +
+      `<div class="event-tip-text">${iconize(ev.summary)}</div>` +
+      `<div class="event-tip-foot">Lasts until this year's tribute (after ${SEASONS[yearLength() - 1]}).</div>` +
+      `</div>`;
+    $('eventLabel').className = `event-label ${ev.kind}`;
+    $('eventLabel').removeAttribute('title');
+  }
   showOil(turn.stockpile);
   showStrikes();
 
@@ -201,16 +279,13 @@ function updateHUD() {
 
   $('btnReroll').classList.toggle('hidden', hand.isEmpty);
   $('btnReroll').classList.toggle('disabled', turn.stockpile < rerollCost());
-  $('btnRerollSub').textContent = `costs ${rerollCost()} oil`;
-  $('btnNextSub').textContent = hand.placeableForced.length
-    ? 'place your Wasteland first'
-    : turn.season === 3
-      ? `collect oil, pay ${quota} tribute`
-      : 'collect oil, draw a new hand';
+  $('btnRerollSub').innerHTML = `-${rerollCost()}${ICONS.oil}`;
+  $('btnNextSub').textContent =
+    turn.season === yearLength() - 1 ? `collect oil, pay ${quota} tribute` : 'collect oil, draw a new hand';
   if (tipKind) renderResTip(e);
 }
 
-/** Each reroll in a season costs 1 more barrel of oil than the last (1, 2, 3, …); resets every turn. */
+/** Each reroll costs 1 more barrel of oil than the last (1, 2, 3, …) for the whole run; only a new game resets it. */
 const rerollCost = () => turn.rerolls + 1;
 
 // ---------- resource breakdown tooltips ----------
@@ -237,10 +312,13 @@ function breakdown(kind, e) {
     add(`Pump bonus ×${e.bonus.pumpFarms}`, 2 * e.bonus.pumpFarms);
     add(`Oasis bonus ×${e.bonus.oasisFarms}`, 3 * e.bonus.oasisFarms);
     add('Capital doubles', e.bonus.capitalFood);
+    if (turn.event && e.mods.farmMult !== 1)
+      add(turn.event.name, Math.round(e.foodGrown) - (2 * c('farm') + 2 * e.bonus.pumpFarms + 3 * e.bonus.oasisFarms + Math.round(e.bonus.capitalFood)));
     total('Grown', Math.round(e.foodGrown));
     add('Capital eats', -3 * c('capital'));
     add(`Settlements ×${c('settlement')}`, -2 * c('settlement'));
     add(`Population ×${e.population}`, -e.popFood);
+    if (turn.event) add(turn.event.name, -e.mods.foodUpkeep);
     add('Toxic craters', -e.craterFood);
     total('Balance', signed(Math.round(e.foodBalance)));
     if (e.foodBalance < 0) {
@@ -256,8 +334,11 @@ function breakdown(kind, e) {
     add('Capital', 4 * c('capital'));
     add(`Settlements ×${c('settlement')}`, 2 * c('settlement'));
     add('Built on ruins', e.bonus.ruins);
+    add('Labour camps', e.bonus.labourCamps);
     add(`Population`, e.population);
     add('Toxic craters', -e.craterManpower);
+    add(`Raider camps ×${c('raider')}`, -e.raiderManpower);
+    if (turn.event) add(turn.event.name, e.mods.capDelta);
     total('Worker slots', e.cap);
     add(`Hydro-farms ×${c('farm')}`, -c('farm'));
     add(`Stations ×${c('station')}`, -c('station'));
@@ -272,12 +353,14 @@ function breakdown(kind, e) {
     add(`Stations ×${c('station')}`, 2 * c('station'));
     add(`Tar pit bonus ×${e.bonus.tarpitStations}`, 2 * e.bonus.tarpitStations);
     add('Capital doubles', e.bonus.capitalCrude);
+    if (turn.event && e.mods.stationBonus)
+      add(turn.event.name, e.crude - (2 * c('station') + 2 * e.bonus.tarpitStations + e.bonus.capitalCrude));
     total('Crude', e.crude);
     mul(`Refineries (${e.refineryLinks} station link${e.refineryLinks === 1 ? '' : 's'})`, e.refineryMult);
     mul('Hunger', e.fed);
     total('This season', signed(e.oil));
     note(`Stockpile ${turn.stockpile} → ${turn.stockpile + e.oil} / ${turn.quota} tribute`);
-    note('The Overlord takes all of it after Winter.');
+    note(`The Overlord takes all of it after ${SEASONS[yearLength() - 1]}.`);
   }
   return rows;
 }
@@ -331,6 +414,7 @@ function updateInspect(cell) {
     notes.push(`Built on Pre-war Ruins: +${c.terrain === 'settlement' ? 2 : 1} worker slot${c.terrain === 'settlement' ? 's' : ''}`);
   if (economyNow().perCell.find((p) => p.x === c.x && p.z === c.z)?.idle)
     notes.push('Idle: no free workers. Build housing to staff it.');
+  if (c.terrain === 'raider') notes.push('Unhappy citizens. Fix the food shortage to drive them off (one camp leaves per fed season).');
   if (t.buildable) notes.push('A building can be placed on top of this tile');
   el.innerHTML = `
     <div class="card-big">
@@ -346,7 +430,7 @@ function updateInspect(cell) {
 // ---------- turns ----------
 /** Next turn: tiles hop and flash what they produce, then the turn is settled. */
 function endTurn() {
-  if (turn.over || shopOpen) return;
+  if (turn.over || shopOpen || eventOpen) return;
   if (payout.active) {
     if (previewing) cancelPreview();
     else {
@@ -498,13 +582,48 @@ function splitTriggers(p) {
 }
 
 /** Tiles that hop even without a number of their own (they boost their neighbours). */
-const EFFECT_TILES = new Set(['pump', 'oasis', 'tarpit', 'refinery']);
+const EFFECT_TILES = new Set(['pump', 'oasis', 'tarpit', 'refinery', 'raider']);
 
-/** Why the city collapses at the end of the year (checked after Winter only), or null. Food: the store is emptied by a shortfall. Manpower: no worker slots left at all. */
-function collapseReason(e) {
-  if (e.foodBalance < 0 && e.storeAfter <= 0) return 'Your food ran out. The people starved.';
-  if (e.cap <= 0) return 'Your manpower ran out. The city could not be worked.';
-  return null;
+/** True when this season's food shortfall empties the store: the people are starving. */
+const starving = (e) => e.foodBalance < 0 && e.storeAfter <= 0;
+
+/**
+ * A starving year draws raiders. They camp on an empty territory slot first, then on a Wasteland,
+ * and only raze a building (never the Capital) when there is nowhere else. Returns a report line or null.
+ */
+function spawnRaider() {
+  const pick = (a) => a[Math.floor(Math.random() * a.length)];
+  const empty = [...grid.emptyTerritoryKeys()].map((k) => k.split(',').map(Number));
+  const cells = [...grid.cells.values()];
+  const waste = cells.filter((c) => c.terrain.startsWith('wasteland'));
+  const buildings = cells.filter((c) => TERRAINS[c.terrain].category === 'building' && c.terrain !== 'capital');
+  let x, z, text;
+  if (empty.length) {
+    [x, z] = pick(empty);
+    text = 'Raiders made camp on open ground.';
+  } else if (waste.length) {
+    ({ x, z } = pick(waste));
+    text = 'Raiders made camp in the wasteland.';
+  } else if (buildings.length) {
+    ({ x, z } = pick(buildings));
+    text = `Raiders razed your ${TERRAINS[grid.get(x, z).terrain].name} and made camp.`;
+  } else return null;
+  addTile(x, z, 'raider');
+  grid.get(x, z).onRuins = false;
+  placement.cell = null;
+  frontier.rebuild(grid);
+  return text;
+}
+
+/** A fed season drives off the oldest raider camp, leaving the cell empty. True if one left. */
+function departRaider() {
+  const camp = [...grid.cells.values()].find((c) => c.terrain === 'raider');
+  if (!camp) return false;
+  removeMesh(camp.mesh);
+  grid.cells.delete(`${camp.x},${camp.z}`);
+  placement.cell = null;
+  frontier.rebuild(grid);
+  return true;
 }
 
 /** Failed tributes allowed: the third one ends the game. */
@@ -532,13 +651,7 @@ function gameOver(reason) {
 
 function settleTurn(e) {
   // The year ends after Winter, or early as soon as this season's oil meets the quota.
-  const yearEnds = turn.season === 3 || turn.stockpile + e.oil >= turn.quota;
-  // The city can only fall at the end of the year; earlier shortfalls just cut output.
-  const reason = yearEnds ? collapseReason(e) : null;
-  if (reason) {
-    gameOver(reason);
-    return;
-  }
+  const yearEnds = turn.season >= yearLength() - 1 || turn.stockpile + e.oil >= turn.quota;
   const label = `${SEASONS[turn.season]}, round ${turn.round}`;
   turn.stockpile += e.oil;
   turn.total += e.oil;
@@ -561,18 +674,38 @@ function settleTurn(e) {
     msg += ` · Population +${e.popGrowth}`;
   }
 
+  // Raiders: a fed season drives one camp off; a starving year brings a new one.
+  if (e.foodBalance >= 0 && departRaider()) {
+    lines.push('<span class="good">Your people are fed: a raider camp packed up and left.</span>');
+    msg += ' · Raiders left';
+  }
+  if (yearEnds && starving(e)) {
+    const raid = spawnRaider();
+    if (raid) {
+      lines.push(`<span class="bad">The food ran out and the people turned on you. ${raid} (-2 worker slots)</span>`);
+      msg += ' · Starvation: raiders arrived!';
+      kind = 'bad';
+    }
+  }
+
   // Tribute at the end of the year (after Winter, or early once the quota is met).
   if (yearEnds) {
-    if (turn.season < 3) {
+    if (turn.season < yearLength() - 1) {
       lines.push(`<span class="good">Quota met in ${SEASONS[turn.season]}: the year ends early.</span>`);
       msg += ` · Quota met early: skipping to the next year.`;
     }
     const quota = turn.quota;
     const delivered = turn.stockpile;
-    turn.coins = Math.max(0, delivered - quota); // excess oil is spent in the shop
+    // Excess oil is spent in the shop (some events multiply it).
+    turn.coins = Math.round(Math.max(0, delivered - quota) * (turn.event?.mods?.coinMult ?? 1));
     turn.stockpile = 0; // the Overlord takes everything; the new year starts from empty
     // The Overlord's greed grows with what he receives: excess raises next year's quota.
-    turn.quota = nextQuota(quota, delivered);
+    // An event's quota change only lasts the year: next year grows from the un-modified quota.
+    const base = turn.event?.baseQuota ?? quota;
+    turn.quota = nextQuota(base, base + (delivered - quota));
+    turn.metStreak = delivered >= quota ? turn.metStreak + 1 : 0;
+    turn.lastMissed = delivered < quota;
+    turn.event = null;
     const rise = turn.quota - quota;
     if (delivered >= quota) {
       lines.push(`<span class="good">Tribute of ${quota} met. The Overlord seized all ${delivered} barrels.</span>`);
@@ -602,13 +735,67 @@ function settleTurn(e) {
 
   turn.season = yearEnds ? 0 : turn.season + 1;
   if (yearEnds) turn.round++;
-  turn.rerolls = 0;
   toast(msg, kind, 3200);
   // A new year opens with the shop; the hand is dealt when it closes.
   if (turn.season === 0) {
     updateHUD();
     openShop();
   } else dealNewHand();
+}
+
+// ---------- year events ----------
+/** Seasons before tribute this year (4, or fewer/more under an event). */
+const yearLength = () => turn.event?.mods?.yearLength ?? 4;
+let eventOpen = false;
+
+/** Draw this year's event (none in year 1), show it, apply the result, then continue. */
+async function startYearEvent(then) {
+  const key = drawEvent(turn);
+  if (!key) return then();
+  const ev = EVENTS[key];
+  eventOpen = true;
+  hand.select(-1);
+  const choice = await playEventDialogue(ev);
+  eventOpen = false;
+  applyYearEvent(key, ev, choice);
+  then();
+}
+
+/**
+ * The Overlord announces the event. His last line comes with your replies: for choice events
+ * those are the real options (with their effect in the tag), otherwise flavour that he answers.
+ */
+async function playEventDialogue(ev) {
+  const OVERLORD = 'The Overlord';
+  dialogue.open({
+    kind: ev.kind,
+    kindLabel: `Year event · ${KIND_LABEL[ev.kind]}`,
+    title: ev.name,
+    effect: iconize(ev.choices ? 'Your answer decides what happens.' : ev.text),
+  });
+  const lines = ev.lines?.length ? ev.lines : [ev.text];
+  for (const line of lines.slice(0, -1)) await dialogue.say(OVERLORD, line);
+  const options = ev.choices
+    ? ev.choices.map((c) => ({ text: c.say ?? c.label, tag: iconize(c.text) }))
+    : (ev.replies ?? [{ say: 'Understood.' }]).map((r) => ({ text: r.say }));
+  const i = await dialogue.ask(OVERLORD, lines[lines.length - 1], options);
+  const picked = ev.choices ? ev.choices[i] : ev.replies?.[i];
+  if (picked?.retort) await dialogue.say(OVERLORD, picked.retort);
+  dialogue.close();
+  return ev.choices ? picked : null;
+}
+
+function applyYearEvent(key, ev, choice) {
+  const mods = { ...(ev.mods ?? {}), ...(choice?.mods ?? {}) };
+  const summary = choice ? `${choice.label}: ${choice.text}` : ev.text;
+  turn.event = { key, name: ev.name, kind: ev.kind, mods, summary, baseQuota: turn.quota };
+  if (mods.quotaMult) turn.quota = Math.round(turn.quota * mods.quotaMult);
+  const ctx = { turn, spawnRaider };
+  const extra = [ev.apply?.(ctx), choice?.apply?.(ctx)].filter(Boolean).join(' ');
+  const line = `<span class="${ev.kind === 'fortune' ? 'good' : ev.kind === 'choice' ? '' : 'bad'}">Year event: <b>${ev.name}</b>. ${summary}${extra ? ` ${extra}` : ''}</span>`;
+  $('report').innerHTML = `${$('report').innerHTML}<br />${line}`;
+  toast(`${ev.name}${choice ? `: ${choice.label}` : ''}${extra ? ` · ${extra}` : ''}`, ev.kind === 'fortune' ? 'good' : 'bad', 3200);
+  frontier.rebuild(grid);
 }
 
 function dealNewHand() {
@@ -646,6 +833,14 @@ function openShop() {
   void el.offsetWidth;
   el.classList.add('opening');
   document.body.classList.add('shopping');
+}
+
+/** Debug (V): play a random year event now (it replaces the current one until the next tribute). */
+function debugEvent() {
+  if (shopOpen || payout.active || turn.over || eventOpen) return;
+  const round = turn.round;
+  turn.round = Math.max(2, round); // events are never drawn in year 1
+  startYearEvent(updateHUD).finally(() => (turn.round = round));
 }
 
 /** Debug (P): open the shop now with some spending money. Continue deals a fresh hand. */
@@ -710,7 +905,7 @@ $('btnShopDone').addEventListener('click', () => {
   turn.coins = 0; // unspent excess goes to the Overlord
   $('shop').classList.add('hidden');
   document.body.classList.remove('shopping');
-  dealNewHand();
+  startYearEvent(dealNewHand);
 });
 
 // ---------- input ----------
@@ -738,8 +933,15 @@ function hoveredCell() {
 }
 
 // ---------- territory expansion ----------
+/**
+ * Offer expansion whenever the territory is full, however it got that way (a placed piece, a raider
+ * camp landing in the last slot, a mystery reveal...). Runs every frame; withdraws the offer if a slot opens up.
+ */
 function checkExpansion() {
-  if (!grid.isFull() || expansion.active) return;
+  if (turn.over || shopOpen || eventOpen || payout.active) return;
+  const full = grid.isFull();
+  if (!full && expansion.active) expansion.clear();
+  if (!full || expansion.active) return;
   expansion.show(grid);
   toast('Territory full: pick a plot on the edge to expand', 'good');
 }
@@ -763,7 +965,7 @@ function expand(option) {
 }
 
 function tryPlace() {
-  if (turn.over || shopOpen) return;
+  if (turn.over || shopOpen || eventOpen) return;
   if (payout.active) {
     payout.skip(); // clicking the board during the payout fast-forwards it
     return;
@@ -811,6 +1013,24 @@ function spark(cells) {
   const hit = e.perCell
     .filter((p) => area.has(`${p.x},${p.z}`) && (p.oil > 0 || p.food > 0))
     .map((p) => ({ x: p.x, z: p.z, mesh: grid.get(p.x, p.z).mesh, oil: Math.max(0, p.oil), food: Math.max(0, p.food) }));
+  // A sparked Capital triggers too: it hops, then every producing building next to it fires once more
+  // (one trigger's worth: its season output divided by how many times it triggers).
+  for (const cap of e.perCell.filter((p) => p.terrain === 'capital' && area.has(`${p.x},${p.z}`))) {
+    hit.push({ x: cap.x, z: cap.z, mesh: grid.get(cap.x, cap.z).mesh, oil: 0, food: 0, terrain: 'capital' });
+    for (const [dx, dz] of DIRS) {
+      const n = e.perCell.find((p) => p.x === cap.x + dx && p.z === cap.z + dz);
+      if (!n || n.idle || (n.oil <= 0 && n.food <= 0)) continue;
+      const per = n.triggers ?? 1;
+      hit.push({
+        x: n.x,
+        z: n.z,
+        mesh: grid.get(n.x, n.z).mesh,
+        oil: Math.round(Math.max(0, n.oil) / per),
+        food: Math.round(Math.max(0, n.food) / per),
+        finale: true, // after the area pays out, like a chain reaction from the Capital
+      });
+    }
+  }
   if (!hit.length) {
     toast('Spark fizzled: nothing in range produces oil or food', 'bad');
     updateHUD();
@@ -875,15 +1095,19 @@ window.addEventListener('keydown', (e) => {
     hand.select(hand.selected === i ? -1 : i);
   } else if (k === 'r') hand.rotate(e.shiftKey ? -1 : 1);
   else if (k === 'f') hand.rotate(-1);
-  else if (k === 'escape') hand.select(-1);
-  else if (k === 'c') rig.focus(...grid.centroid());
+  else if (k === 'escape') {
+    if (helpOpen()) setHelp(false);
+    else hand.select(-1);
+  }
+  else if (k === 'c') rig.focus(...grid.territoryCenter());
   else if (k === 'n') nukeRandomTile();
   else if (k === 'p' && !e.repeat) debugShop();
+  else if (k === 'v' && !e.repeat) debugEvent();
   else if (k === 'enter') endTurn();
 });
 
 $('btnReroll').addEventListener('click', () => {
-  if (hand.isEmpty || payout.active || turn.over || shopOpen) return;
+  if (hand.isEmpty || payout.active || turn.over || shopOpen || eventOpen) return;
   const cost = rerollCost();
   if (turn.stockpile < cost) {
     toast(`Not enough oil to reroll (costs ${cost})`, 'bad');
@@ -900,6 +1124,19 @@ $('btnNext').addEventListener('click', (e) => {
   endTurn();
 });
 $('btnReset').addEventListener('click', resetIsland);
+
+// Controls popup: toggled by its button, closed by ✕, Esc or a click elsewhere.
+const helpOpen = () => !$('help').classList.contains('hidden');
+const setHelp = (open) => $('help').classList.toggle('hidden', !open);
+$('btnHelp').addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.currentTarget.blur();
+  setHelp(!helpOpen());
+});
+$('helpClose').addEventListener('click', () => setHelp(false));
+document.addEventListener('pointerdown', (e) => {
+  if (helpOpen() && !$('help').contains(e.target) && e.target !== $('btnHelp')) setHelp(false);
+});
 $('btnRestart').addEventListener('click', resetIsland);
 
 // ---------- lifecycle ----------
@@ -917,6 +1154,9 @@ function resetIsland() {
     season: 0,
     stockpile: 0,
     rerolls: 0,
+    event: null,
+    metStreak: 0,
+    lastMissed: false,
     total: 0,
     food: STARTING_FOOD,
     population: 0,
@@ -928,6 +1168,8 @@ function resetIsland() {
     coins: 0,
   });
   shopOpen = false;
+  eventOpen = false;
+  dialogue.close();
   $('shop').classList.add('hidden');
   document.body.classList.remove('shopping');
   $('gameover').classList.add('hidden');
@@ -941,6 +1183,40 @@ function resetIsland() {
   hand.render();
   rig.focus(0, 0);
   updateHUD();
+  playIntro();
+}
+
+/** Opening scene: the Overlord appoints you Overseer of the Hive City, then leaves you to it. */
+let introRun = 0;
+async function playIntro() {
+  const run = ++introRun; // a reset mid-intro cancels the old one
+  const OVERLORD = 'The Overlord';
+  const say = async (text) => run === introRun && dialogue.say(OVERLORD, text);
+  eventOpen = true;
+  hand.select(-1);
+  dialogue.open({ kind: 'pressure', kindLabel: 'A new Overseer', title: 'The Hive City', effect: 'Year 1 · Spring' });
+  await say('So. You are the new Overseer of the Hive City.');
+  await say('Your predecessor... disappointed me. I trust you will not.');
+  await say('My legions march against the technobarbarians of the Wastelands. Scrap-eaters. Machine-worshippers. Vermin.');
+  await say('War is thirsty work. My tanks, my airships, my engines of conquest: all of them drink oil.');
+  if (run !== introRun) return;
+  const i = await dialogue.ask(OVERLORD, 'You will send me a constant supply. Every year. Without fail.', [
+    { text: 'The oil will flow, Overlord.' },
+    { text: 'And if the wells run dry?' },
+    { text: 'What do I get in return?' },
+  ]);
+  const retorts = [
+    'Of course it will.',
+    'Then you will dig deeper. With your hands, if you must.',
+    'You get to keep your city. And your head.',
+  ];
+  await say(retorts[i]);
+  await say('Good luck, Overseer. You will need it.');
+  if (run !== introRun) return;
+  await dialogue.leave();
+  if (run !== introRun) return;
+  eventOpen = false;
+  toast(`First tribute: ${turn.quota} barrels, due after Winter`, 'bad', 3200);
 }
 
 let last = performance.now();
@@ -955,6 +1231,8 @@ function frame(now) {
   factory.update(dt);
   frontier.update(dt, time);
   mysteries.update(time);
+  updateRuinButtons();
+  checkExpansion();
   const cell = rig.isDragging ? null : hoveredCell();
   expansion.update(cell, dt, time);
   updateInspect(cell);
@@ -970,4 +1248,4 @@ resetIsland();
 requestAnimationFrame(frame);
 
 // Handy for debugging in the console.
-window.tileIsland = { grid, hand, placement, rig, expansion, mysteries, turn, economy: economyNow };
+window.tileIsland = { grid, hand, placement, rig, expansion, mysteries, turn, dialogue, economy: economyNow };

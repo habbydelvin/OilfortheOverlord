@@ -8,7 +8,7 @@ export const WORKERS = { farm: 1, station: 1, refinery: 1 };
  * Calculates one season of the economy from the current grid.
  *
  * Order:
- *  1. Manpower is a capacity, not a resource: cap = capital + settlements + ruins + population - craters.
+ *  1. Manpower is a capacity, not a resource: cap = capital + settlements + ruins + population - craters - raider camps (2 each).
  *     Worker buildings (farms, stations, refineries) are staffed in placement order; past the cap the
  *     newest go idle and produce nothing.
  *  2. Food: staffed farms grow, capital/settlements eat. Not enough food -> fed < 1.
@@ -24,10 +24,13 @@ const POP_PER_FOOD = 2;
 export function computeEconomy(grid, state = {}) {
   const population = state.population ?? 0;
   const foodStore = state.foodStore ?? 0;
+  // Year-event modifiers (see events.js).
+  const mods = { farmMult: 1, stationBonus: 0, capDelta: 0, foodUpkeep: 0, ...(state.mods ?? {}) };
   const neighbours = (x, z) => DIRS.map(([dx, dz]) => grid.get(x + dx, z + dz)?.terrain);
 
   let capBase = 0;
   let craterManpower = 0;
+  let raiderManpower = 0;
   let farmFood = 0;
   let foodEaten = 0;
   let craterFood = 0;
@@ -35,7 +38,7 @@ export function computeEconomy(grid, state = {}) {
   let refineryLinks = 0;
   const counts = {};
   // Bonus counts for the HUD breakdown tooltips.
-  const bonus = { ruins: 0, pumpFarms: 0, oasisFarms: 0, tarpitStations: 0, capitalFood: 0, capitalCrude: 0 };
+  const bonus = { labourCamps: 0, ruins: 0, pumpFarms: 0, oasisFarms: 0, tarpitStations: 0, capitalFood: 0, capitalCrude: 0 };
   // What each tile contributes, for the end-of-turn payout animation.
   const perCell = [];
 
@@ -49,11 +52,21 @@ export function computeEconomy(grid, state = {}) {
       capBase += ruins;
       bonus.ruins += ruins;
     }
+    if (stats.raiderDrain) raiderManpower += stats.raiderDrain;
+    // Labour Camp: +2 slots if any Settlement is next to it (doesn't stack with more Settlements).
+    if (stats.adjacentManpower) {
+      const near = neighbours(cell.x, cell.z);
+      for (const [n, v] of Object.entries(stats.adjacentManpower)) {
+        if (!near.includes(n)) continue;
+        capBase += v;
+        bonus.labourCamps += v;
+      }
+    }
     if (t === 'crater') {
       craterManpower += neighbours(cell.x, cell.z).filter((n) => n === 'farm' || n === 'settlement').length;
     }
   }
-  const cap = Math.max(0, capBase + population - craterManpower);
+  const cap = Math.max(0, capBase + population - craterManpower - raiderManpower + mods.capDelta);
 
   // Staff worker buildings in placement order; the newest past the cap go idle.
   const idleKeys = new Set();
@@ -92,7 +105,7 @@ export function computeEconomy(grid, state = {}) {
       const oasis = near.includes('oasis');
       if (pump) bonus.pumpFarms++;
       if (oasis) bonus.oasisFarms++;
-      per.rawFood = 2 + (pump ? 2 : 0) + (oasis ? 3 : 0);
+      per.rawFood = (2 + (pump ? 2 : 0) + (oasis ? 3 : 0)) * mods.farmMult;
       // A Capital next door triggers the farm twice: double output (doesn't stack with more Capitals).
       if (near.includes('capital')) {
         bonus.capitalFood += per.rawFood;
@@ -103,7 +116,7 @@ export function computeEconomy(grid, state = {}) {
     } else if (t === 'station') {
       const tarpit = near.includes('tarpit');
       if (tarpit) bonus.tarpitStations++;
-      per.rawCrude = 2 + (tarpit ? 2 : 0);
+      per.rawCrude = 2 + (tarpit ? 2 : 0) + mods.stationBonus;
       if (near.includes('capital')) {
         bonus.capitalCrude += per.rawCrude;
         per.rawCrude *= 2;
@@ -125,10 +138,10 @@ export function computeEconomy(grid, state = {}) {
 
   const free = cap - used;
   const idle = idleKeys.size;
-  const foodGrown = farmFood;
+  const foodGrown = Math.round(farmFood);
   // Citizens eat too: 1 food per 2 population (rounded up).
   const popFood = Math.ceil(population / POP_PER_FOOD);
-  const totalEaten = foodEaten + craterFood + popFood;
+  const totalEaten = foodEaten + craterFood + popFood + mods.foodUpkeep;
   const foodBalance = foodGrown - totalEaten;
   // The store covers a shortfall first; only what it can't cover starves the city.
   const fed = totalEaten > 0 ? Math.min(1, (foodGrown + foodStore) / totalEaten) : 1;
@@ -163,6 +176,8 @@ export function computeEconomy(grid, state = {}) {
     free,
     idle,
     craterManpower,
+    raiderManpower,
+    mods,
     foodGrown,
     foodEaten: totalEaten,
     popFood,

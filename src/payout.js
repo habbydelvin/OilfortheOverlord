@@ -105,7 +105,9 @@ export class Payout {
           )
           .join('') +
           // Idle buildings (no free workers) produce nothing.
-          (tile.idle ? '<div class="row zero"><b>idle</b></div>' : '') ||
+          (tile.idle ? '<div class="row zero"><b>idle</b></div>' : '') +
+          // Raider camps produce nothing; they just stir unrest.
+          (tile.terrain === 'raider' ? '<div class="row neg" style="--c:#e0533f"><b>unrest</b></div>' : '') ||
         // Wasteland triggers too, but produces nothing: a grey 0.
         (tile.terrain?.startsWith('wasteland') ? '<div class="row zero"><b>0</b></div>' : '');
       let el = null;

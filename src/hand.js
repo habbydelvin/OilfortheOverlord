@@ -101,6 +101,15 @@ export class Hand {
   }
 
   /** Use up the selected card. No replacement until next turn. */
+  /** Top the hand up to `count` with pure-luck draws (ignores shop locks). */
+  refill(count) {
+    const start = this.cards.length;
+    while (this.cards.length < count) this.cards.push(randomPiece(this.grid, []));
+    for (let i = start; i < this.cards.length; i++) this.fresh.add(i);
+    this.render();
+    return this.cards.length - start;
+  }
+
   consume() {
     if (this.selected < 0) return;
     this.cards.splice(this.selected, 1);

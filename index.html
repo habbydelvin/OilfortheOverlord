@@ -11,6 +11,7 @@
     <div id="ui">
       <header id="top">
         <div class="level" id="seasonLabel">Round 1 · Spring</div>
+        <div id="eventLabel" class="event-label hidden"></div>
         <div class="bar"><div class="fill" id="quotaFill"></div></div>
         <div class="count" id="quotaCount">0 / 20 barrels</div>
         <div class="strikes" id="strikes" title="Failed tributes: at 3 the Overlord destroys you"><i></i><i></i><i></i></div>
@@ -67,7 +68,7 @@
           Next turn<span id="btnNextSub">collect oil, draw a new hand</span>
         </button>
         <button id="btnReroll" class="btn blue">
-          Reroll hand<span id="btnRerollSub">costs 1 oil</span>
+          Reroll hand<span id="btnRerollSub">-1</span>
         </button>
         <button id="btnReset" class="btn red">
           Reset<span>back to the capital</span>
@@ -76,7 +77,9 @@
 
       <div id="leftcol">
         <a id="libraryLink" href="/library.html">Tile library</a>
-        <div id="help">
+        <button id="btnHelp" type="button">Controls (?)</button>
+        <div id="help" class="hidden">
+          <div class="help-head">Controls<span id="helpClose">✕</span></div>
           <b>1–5</b> / click card · select piece<br />
           <b>R</b> / right-click · rotate &nbsp; <b>F</b> · rotate back<br />
           <b>Click</b> · place &nbsp; <b>Esc</b> · cancel<br />
@@ -85,6 +88,7 @@
           <b>Q / E</b> · turn camera &nbsp; <b>C</b> · recenter<br />
           <b>N</b> · debug: overlord nuke (toxic crater)<br />
           <b>P</b> · debug: open the shop<br />
+          <b>V</b> · debug: year event<br />
           <b>Space</b> · debug: replay payout &nbsp; <b>`</b> · tuning panel
         </div>
         <button id="btnDebug" class="hidden">Payout tuning</button>
@@ -113,6 +117,8 @@
         </div>
       </div>
       <div id="floaters"></div>
+      <div id="ruinBtns"></div>
+      <div id="dialogue" class="hidden"></div>
       <div id="toast"></div>
       <div id="hand"></div>
     </div>

@@ -47,6 +47,8 @@ function bonusText(bonus) {
 function availability(key, terrain) {
   if (key === 'capital') return 'Starting tile';
   if (key === 'crater') return 'Overlord only';
+  if (key === 'raider') return 'Starvation only';
+  if (key === 'ruins') return 'Mystery site only';
   if (terrain.weight <= 0) return 'Never';
   if (PRICE[key]) return `Locked until bought (${PRICE[key]} barrels) · then ${terrain.weight}`;
   const share = Math.round((terrain.weight / bagWeight) * 1000) / 10;
@@ -66,6 +68,10 @@ function statLines(stats) {
   if (stats.manpower > 0) lines.push(`Worker slots +${stats.manpower}`);
   if (stats.manpower < 0) lines.push(`Needs ${-stats.manpower} worker`);
   if (stats.oil) lines.push(`Oil ${signed(stats.oil)}`);
+  if (stats.adjacentManpower) {
+    for (const [n, v] of Object.entries(stats.adjacentManpower)) lines.push(`Next to ${NAME[n] ?? n}: Worker slots +${v}`);
+  }
+  if (stats.raiderDrain) lines.push(`Worker slots -${stats.raiderDrain}`);
   if (stats.ruinsBonusManpower) lines.push(`On ruins, +${stats.ruinsBonusManpower} extra worker slot`);
   if (stats.adjacent) {
     for (const [neighbour, bonus] of Object.entries(stats.adjacent)) {

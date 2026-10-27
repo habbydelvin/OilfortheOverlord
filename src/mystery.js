@@ -7,12 +7,13 @@ export const MYSTERY_POOL = [
   ['tarpit', 3],
   ['refinery', 2],
   ['pump', 2],
+  ['ruins', 4], // Pre-war Ruins: build next to them to clear and refill your hand
 ];
 
 /** Sites are scattered over plots up to this many plots from the start (Chebyshev distance). */
 const MAX_RING = 4;
 /** Total number of sites per game. */
-const SITE_COUNT = 8;
+const SITE_COUNT = 10;
 /** Two site plots must be at least this many plots apart (2 = never touching, even diagonally). */
 const MIN_PLOT_GAP = 2;
 
@@ -60,14 +61,12 @@ function questionTexture() {
  * site in it as a tile (a free Capital, a Tar Pit or a special building), decided on reveal.
  */
 export class Mysteries {
-  sites = new Map(); // cell key -> { x, z, sprite, plate }
+  sites = new Map(); // cell key -> { x, z, sprite }
 
   constructor(scene) {
     this.group = new THREE.Group();
     scene.add(this.group);
     this.spriteMat = new THREE.SpriteMaterial({ map: questionTexture(), depthWrite: false });
-    this.plateGeo = new THREE.PlaneGeometry(0.9, 0.9).rotateX(-Math.PI / 2);
-    this.plateMat = new THREE.MeshBasicMaterial({ color: 0xe8bf68, transparent: true, opacity: 0.18, depthWrite: false });
   }
 
   /**
@@ -100,10 +99,8 @@ export class Mysteries {
     const sprite = new THREE.Sprite(this.spriteMat);
     sprite.scale.set(0.7, 0.7, 1);
     sprite.position.set(x, 0.6, z);
-    const plate = new THREE.Mesh(this.plateGeo, this.plateMat);
-    plate.position.set(x, -0.03, z);
-    this.group.add(sprite, plate);
-    this.sites.set(key(x, z), { x, z, sprite, plate });
+    this.group.add(sprite);
+    this.sites.set(key(x, z), { x, z, sprite });
   }
 
   has(x, z) {
@@ -115,7 +112,7 @@ export class Mysteries {
     const out = [];
     for (const [k, s] of this.sites) {
       if (plotOf(s.x) !== px || plotOf(s.z) !== pz) continue;
-      this.group.remove(s.sprite, s.plate);
+      this.group.remove(s.sprite);
       this.sites.delete(k);
       out.push({ x: s.x, z: s.z, terrain: pickReveal() });
     }
