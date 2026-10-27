@@ -85,8 +85,9 @@ export class Placement {
       return { ok: true, reason: '' };
     }
     const building = this.piece && isBuilding(this.piece.terrain);
-    if (cells.some(([x, z]) => !this.grid.inTerritory(x, z)))
-      return { ok: false, reason: 'Outside your territory' };
+    if (cells.some(([x, z]) => !this.grid.allowed(x, z))) return { ok: false, reason: 'Outside your territory' };
+    if (!this.grid.expansionMode && this.mysteries && cells.some(([x, z]) => this.mysteries.has(x, z)))
+      return { ok: false, reason: 'Build next to a ? site to uncover it' };
     for (const [x, z] of cells) {
       const cell = this.grid.get(x, z);
       if (!cell) continue;

@@ -8,8 +8,8 @@ import { hasBlockout, loadProgress } from './models.js';
 import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
 import { Hand } from './hand.js';
-import { Expansion } from './expansion.js';
 import { Mysteries } from './mystery.js';
+import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
 import { computeEconomy, growthCost, FIRST_QUOTA, nextQuota, SEASONS } from './economy.js';
 import { Payout } from './payout.js';
@@ -30,14 +30,20 @@ const tiles = new THREE.Group();
 scene.add(tiles);
 const frontier = new Frontier(scene);
 const placement = new Placement(scene, grid, factory);
-const expansion = new Expansion(scene);
 const mysteries = new Mysteries(scene);
 const dust = new Dust(scene);
+const expansion = new Expansion(scene);
+// Debug: territory expansion mode (the old fill-the-3×3-then-expand rules), saved across reloads.
+const MODE_KEY = 'oftoMode';
+grid.expansionMode = localStorage.getItem(MODE_KEY) === 'expansion';
+placement.mysteries = mysteries; // "?" cells can't be built on, only next to (free-placement mode)
 const dialogue = new Dialogue(document.getElementById('dialogue'));
 const payoutCfg = loadPayoutConfig();
 const payout = new Payout(camera, document.getElementById('floaters'), payoutCfg);
 const debug = createDebugPanel(document.getElementById('debug'), document.getElementById('btnDebug'), payoutCfg, {
   onPlay: () => previewPayout(),
+  expansionMode: () => grid.expansionMode,
+  onExpansionMode: (on) => setExpansionMode(on),
 });
 const hand = new Hand(document.getElementById('hand'), HAND_SIZE, (piece) => placement.setPiece(piece), grid);
 
@@ -112,7 +118,7 @@ function removeMesh(mesh) {
 /** Debug stand-in for the overlord's nuke: turn a random non-capital tile into a Toxic Crater. */
 function nukeRandomTile(quiet = false) {
   const targets = [...grid.cells.values()].filter(
-    (c) => c.terrain !== 'capital' && c.terrain !== 'crater' && grid.inTerritory(c.x, c.z),
+    (c) => c.terrain !== 'capital' && c.terrain !== 'crater' && grid.allowed(c.x, c.z),
   );
   if (!targets.length) {
     if (!quiet) toast('Nothing for the Overlord to nuke');
@@ -129,11 +135,11 @@ function nukeRandomTile(quiet = false) {
 }
 
 // ---------- Pre-war Ruins ----------
-/** Ruins can be cleared once a building stands on a side next to them (and they're in your territory). */
+/** Ruins can be cleared once a building stands on a side next to them (and, in expansion mode, they're in your territory). */
 function canClearRuins(c) {
   return (
     c.terrain === 'ruins' &&
-    grid.inTerritory(c.x, c.z) &&
+    grid.allowed(c.x, c.z) &&
     DIRS.some(([dx, dz]) => isBuilding(grid.get(c.x + dx, c.z + dz)?.terrain))
   );
 }
@@ -632,12 +638,12 @@ const EFFECT_TILES = new Set(['pump', 'oasis', 'tarpit', 'refinery', 'raider']);
 const starving = (e) => e.foodBalance < 0 && e.storeAfter <= 0;
 
 /**
- * A starving year draws raiders. They camp on an empty territory slot first, then on a Wasteland,
+ * A starving year draws raiders. They camp on an empty cell next to your land first, then on a Wasteland,
  * and only raze a building (never the Capital) when there is nowhere else. Returns a report line or null.
  */
 function spawnRaider() {
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
-  const empty = [...grid.emptyTerritoryKeys()].map((k) => k.split(',').map(Number));
+  const empty = [...grid.openKeys()].filter((k) => !mysteries.has(...k.split(',').map(Number))).map((k) => k.split(',').map(Number));
   const cells = [...grid.cells.values()];
   const waste = cells.filter((c) => c.terrain.startsWith('wasteland'));
   const buildings = cells.filter((c) => TERRAINS[c.terrain].category === 'building' && c.terrain !== 'capital');
@@ -733,6 +739,7 @@ function settleTurn(e) {
   }
 
   // Tribute at the end of the year (after Winter, or early once the quota is met).
+  let failure = null; // set when the tribute is missed: the Overlord comes to speak instead of the shop
   if (yearEnds) {
     if (turn.season < yearLength() - 1) {
       lines.push(`<span class="good">Quota met in ${SEASONS[turn.season]}: the year ends early.</span>`);
@@ -763,6 +770,7 @@ function settleTurn(e) {
       );
       msg += ` · Tribute short by ${short}! ${lost ? `The Overlord nuked your ${lost}.` : ''}`;
       kind = 'bad';
+      failure = { quota, delivered, short, lost, nextQuota: turn.quota };
     }
     const greed = delivered > quota ? "Your excess whetted the Overlord's appetite. " : '';
     lines.push(`<span class="bad">${greed}Next tribute: ${turn.quota} (+${rise}).</span>`);
@@ -770,6 +778,24 @@ function settleTurn(e) {
   }
 
   $('report').innerHTML = lines.join('<br />');
+
+  // Missed tribute: no shop this year. The Overlord comes in person; on the last strike he razes the city.
+  if (failure) {
+    const final = turn.strikes >= MAX_STRIKES;
+    if (!final) {
+      turn.season = 0;
+      turn.round++;
+    }
+    turn.coins = 0;
+    updateHUD();
+    playTributeFailure({ ...failure, strikes: turn.strikes, final }).then(() => {
+      if (final) {
+        showStrikes(true);
+        gameOver('Three tributes missed. The Overlord has lost his patience and razed your city.');
+      } else startYearEvent(dealNewHand);
+    });
+    return;
+  }
 
   if (turn.strikes >= MAX_STRIKES) {
     showStrikes(true);
@@ -976,13 +1002,23 @@ function hoveredCell() {
   return [Math.round(hit.x), Math.round(hit.z)];
 }
 
-// ---------- territory expansion ----------
+// ---------- mystery sites ----------
+/** "?" sites touching the newly placed cells turn into their tiles. */
+function revealMysteries(cells) {
+  const found = mysteries.revealAround(cells);
+  if (!found.length) return;
+  found.forEach(({ x, z, terrain }, i) => addTile(x, z, terrain, 0.25 + i * 0.15));
+  toast(`Uncovered ${found.map((f) => `a ${TERRAINS[f.terrain].name}`).join(', ')}!`, 'good', 2400);
+}
+
+// ---------- territory expansion (debug mode) ----------
 /**
- * Offer expansion whenever the territory is full, however it got that way (a placed piece, a raider
- * camp landing in the last slot, a mystery reveal...). Runs every frame; withdraws the offer if a slot opens up.
+ * Expansion mode only: offer expansion whenever the territory is full, however it got that way
+ * (a placed piece, a raider camp landing in the last slot...). Runs every frame; withdraws the
+ * offer if a slot opens up.
  */
 function checkExpansion() {
-  if (turn.over || shopOpen || eventOpen || payout.active) return;
+  if (!grid.expansionMode || turn.over || shopOpen || eventOpen || payout.active) return;
   const full = grid.isFull();
   if (!full && expansion.active) expansion.clear();
   if (!full || expansion.active) return;
@@ -1006,6 +1042,15 @@ function expand(option) {
     'good',
   );
   updateHUD();
+}
+
+/** Debug toggle: switch rules and restart the run in the chosen mode. */
+function setExpansionMode(on) {
+  grid.expansionMode = on;
+  localStorage.setItem(MODE_KEY, on ? 'expansion' : 'free');
+  debug.refreshMode?.();
+  resetIsland();
+  toast(on ? 'Expansion mode on: fill your territory, then expand (new run)' : 'Free placement on: build anywhere next to your land (new run)', 'good', 2600);
 }
 
 function tryPlace() {
@@ -1044,10 +1089,10 @@ function tryPlace() {
   cells.forEach(([x, z], i) => addTile(x, z, piece.terrain, i * 0.05));
   piecesPlaced++;
   hand.consume();
+  if (!grid.expansionMode) revealMysteries(cells);
   frontier.rebuild(grid);
   updateHUD();
   if (economyNow().idle > idleBefore) toast('No free workers: this building sits idle until you add housing', 'bad', 2400);
-  checkExpansion();
 }
 
 /** Spark: tiles in the area pay out their oil and food right now (upkeep isn't charged). */
@@ -1144,10 +1189,11 @@ window.addEventListener('keydown', (e) => {
     if (helpOpen()) setHelp(false);
     else hand.select(-1);
   }
-  else if (k === 'c') rig.focus(...grid.territoryCenter());
+  else if (k === 'c') rig.focus(...(grid.expansionMode ? grid.territoryCenter() : grid.centroid()));
   else if (k === 'n') nukeRandomTile();
   else if (k === 'p' && !e.repeat) debugShop();
   else if (k === 'v' && !e.repeat) debugEvent();
+  else if (k === 'x' && !e.repeat) setExpansionMode(!grid.expansionMode);
   else if (k === 'enter') endTurn();
 });
 
@@ -1231,6 +1277,79 @@ function resetIsland() {
   rig.focus(0, 0);
   updateHUD();
   playIntro();
+}
+
+/**
+ * A missed tribute: the Overlord comes to speak. What he says depends on how many strikes are
+ * left: a warning, a last warning, and on the third miss his judgement (the game over follows).
+ */
+async function playTributeFailure({ quota, delivered, short, lost, nextQuota: next, strikes, final }) {
+  const OVERLORD = 'The Overlord';
+  const left = MAX_STRIKES - strikes;
+  eventOpen = true;
+  hand.select(-1);
+  dialogue.open({
+    kind: 'disaster',
+    kindLabel: `Tribute missed · strike ${strikes} of ${MAX_STRIKES}`,
+    title: final ? "The Overlord's Judgement" : strikes === MAX_STRIKES - 1 ? 'Last Warning' : 'The Overlord Is Displeased',
+    effect: final
+      ? `Short by ${short} barrels · the Hive City falls`
+      : `Short by ${short} barrels · no market this year · ${left} more miss${left === 1 ? '' : 'es'} and the city falls`,
+  });
+  const reminder = lost ? `I have left a reminder where your ${lost} used to stand.` : null;
+  let script;
+  if (final) {
+    script = {
+      lines: [
+        'Three times.',
+        `${delivered} barrels, when I asked for ${quota}. Three years, three failures.`,
+        'I gave you a city, its workers and my patience. You squandered all three.',
+      ],
+      ask: 'Do you have any last words, Overseer?',
+      replies: [
+        ['I did everything I could.', 'Then everything was not enough.'],
+        ['The wastes will take you too, one day.', 'Perhaps. But not today. Burn it.'],
+        ['Please...', 'Begging. How fitting. Burn it to the sand.'],
+      ],
+    };
+  } else if (left === 1) {
+    script = {
+      lines: [
+        'Again. You have failed me again.',
+        `${delivered} barrels. My generals no longer say your name; they just call you "the shortfall".`,
+        reminder,
+      ],
+      ask: `This is your last warning. Next year I want ${next} barrels. Fail me once more, and I will raze the Hive City to the sand.`,
+      replies: [
+        ["You'll have your oil. All of it.", 'Words. Bring me barrels.'],
+        ['Give me more time.', 'Time is the one thing I have stopped giving you.'],
+        ['Then do it now.', 'Ha! No. I want to watch you try first.'],
+      ],
+    };
+  } else {
+    script = {
+      lines: [
+        `Short. ${delivered} barrels, when I asked for ${quota}.`,
+        'My tanks sat idle in the dunes while the technobarbarians laughed. Because of you, Overseer.',
+        reminder,
+      ],
+      ask: `There will be no market for you this year. Next year: ${next} barrels. Fail me twice more and your city burns.`,
+      replies: [
+        ["It won't happen again.", "See that it doesn't."],
+        ['The wells ran dry.', 'Then dig new ones. With your bare hands, if you must.'],
+        ['...', 'Silence will not fill my tanks.'],
+      ],
+    };
+  }
+  for (const line of script.lines.filter(Boolean)) await dialogue.say(OVERLORD, line);
+  const i = await dialogue.ask(
+    OVERLORD,
+    script.ask,
+    script.replies.map(([text]) => ({ text })),
+  );
+  await dialogue.say(OVERLORD, script.replies[i][1]);
+  await dialogue.leave();
+  eventOpen = false;
 }
 
 /** Opening scene: the Overlord appoints you Overseer of the Hive City, then leaves you to it. */

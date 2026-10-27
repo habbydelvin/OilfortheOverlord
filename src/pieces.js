@@ -83,17 +83,15 @@ function randomShape(fits) {
 
 /**
  * True if a junk/land shape can be placed somewhere right now: in some rotation, every cell is
- * empty and inside the territory, and at least one cell touches existing land.
+ * empty and at least one cell touches existing land. The board has no edge, so this is almost always true.
  */
 export function shapeFits(grid, shapeKey) {
-  const empty = grid.emptyTerritoryKeys();
-  if (empty.size < SHAPES[shapeKey].cells.length) return false;
-  const free = (x, z) => empty.has(`${x},${z}`);
+  const free = (x, z) => !grid.has(x, z) && grid.allowed(x, z);
   for (let rot = 0; rot < 4; rot++) {
     const cells = rotateCells(SHAPES[shapeKey].cells, rot);
-    for (const k of empty) {
+    for (const k of grid.openKeys()) {
       const [ax, az] = k.split(',').map(Number);
-      // Try each cell of the shape on this empty cell.
+      // Try each cell of the shape on this frontier cell.
       for (const [cx, cz] of cells) {
         const placed = cells.map(([x, z]) => [ax + x - cx, az + z - cz]);
         if (placed.every(([x, z]) => free(x, z)) && placed.some(([x, z]) => grid.touchesIsland(x, z))) return true;

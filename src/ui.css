@@ -1702,3 +1702,13 @@ body.dialogue #inspect {
   opacity: 0;
 }
 
+
+/* Debug: game-mode checkbox row. */
+#debug .dbg-check {
+  align-items: center;
+  cursor: pointer;
+}
+#debug .dbg-check input {
+  pointer-events: auto;
+  accent-color: var(--gold);
+}

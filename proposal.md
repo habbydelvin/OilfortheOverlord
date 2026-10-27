@@ -158,11 +158,11 @@ Food balance is food grown minus food eaten. Below zero, the store covers the ga
 
 ### Pre-war Ruins
 
-Ruins are hidden on the map as "?" mystery sites; expanding into the plot reveals them. They can't be built on. Once a building stands next to a ruin inside your territory, a **Clear ruins** button appears above it. Clearing empties the cell and tops your hand back up to 5 with random pieces that ignore shop unlocks: pure luck.
+Ruins are hidden on the map as "?" mystery sites; building next to a site reveals it. They can't be built on. Once a building stands next to a ruin, a **Clear ruins** button appears above it. Clearing empties the cell and tops your hand back up to 5 with random pieces that ignore shop unlocks: pure luck.
 
 ### Raiders
 
-Starving doesn't end the run. If the year ends while the people are starving, a **Raider Camp** appears: on an empty territory slot if there is one, otherwise on a Wasteland, otherwise it razes a building (never the Capital). Each camp drains 2 worker slots, so your newest buildings go idle. Every season with a non-negative food balance, the oldest camp leaves and its cell is empty again. Running out of manpower doesn't end the run either; only three missed tributes do.
+Starving doesn't end the run. If the year ends while the people are starving, a **Raider Camp** appears: on an empty cell next to your land if there is one, otherwise on a Wasteland, otherwise it razes a building (never the Capital). Each camp drains 2 worker slots, so your newest buildings go idle. Every season with a non-negative food balance, the oldest camp leaves and its cell is empty again. Running out of manpower doesn't end the run either; only three missed tributes do.
 
 Manpower is a cap: worker slots come from housing and population. Worker buildings are staffed in the order they were placed; any beyond the cap are idle and produce nothing (an idle derrick doesn't feed a refinery either).
 

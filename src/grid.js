@@ -7,8 +7,10 @@ export const DIRS = [
 ];
 
 /**
- * Territory is made of 3×3 plots. Plot (0,0) covers cells -1..1 on both axes,
- * so the capital at (0,0) sits in the middle of the starting plot.
+ * 3×3 plots. Plot (0,0) covers cells -1..1, so the capital at (0,0) sits in the middle of it.
+ * Free placement (default): plots only spread mystery sites; pieces go anywhere touching your land.
+ * Expansion mode (debug toggle): placement is limited to unlocked plots, and a full territory
+ * offers neighbouring plots to unlock.
  */
 export const PLOT = 3;
 export const plotOf = (v) => Math.floor((v + 1) / PLOT);
@@ -18,6 +20,7 @@ export const plotCenter = (p) => p * PLOT;
 export class Grid {
   cells = new Map();
   plots = new Set([key(0, 0)]);
+  expansionMode = false;
 
   has(x, z) {
     return this.cells.has(key(x, z));
@@ -40,22 +43,28 @@ export class Grid {
     return this.cells.size;
   }
 
-  // ---------- territory ----------
+  /** Cells a piece may use right now: territory cells in expansion mode, anywhere otherwise. */
+  allowed(x, z) {
+    return !this.expansionMode || this.inTerritory(x, z);
+  }
+
+  /** Empty cells you can build on: inside the territory (expansion mode) or next to your land. */
+  openKeys() {
+    return this.expansionMode ? this.emptyTerritoryKeys() : this.frontierKeys();
+  }
+
+  // ---------- territory (expansion mode) ----------
 
   /** True if the cell lies inside an unlocked plot. */
   inTerritory(x, z) {
     return this.plots.has(key(plotOf(x), plotOf(z)));
   }
 
-  get capacity() {
-    return this.plots.size * PLOT * PLOT;
-  }
-
   unlock(px, pz) {
     this.plots.add(key(px, pz));
   }
 
-  /** Empty cells inside the territory (where pieces can go). */
+  /** Empty cells inside the territory. */
   emptyTerritoryKeys() {
     const out = new Set();
     for (const k of this.plots) {
@@ -97,6 +106,19 @@ export class Grid {
       sz += plotCenter(pz);
     }
     return [sx / this.plots.size, sz / this.plots.size];
+  }
+
+  // ---------- free placement ----------
+
+  /** Empty cells that touch your land on a side: everywhere a piece can attach. */
+  frontierKeys() {
+    const out = new Set();
+    for (const { x, z } of this.cells.values()) {
+      for (const [dx, dz] of DIRS) {
+        if (!this.has(x + dx, z + dz)) out.add(key(x + dx, z + dz));
+      }
+    }
+    return out;
   }
 
   // ---------- adjacency ----------

@@ -31,7 +31,7 @@ Every event uses systems the game already has: worker slots, the food store, rai
 | **Dust Storm** | Every hand this year has one extra Wasteland. |
 | **Plague** | Lose 2 population, and settlements eat 1 extra food. |
 | **Pipeline Fire** | Each refinery link counts for half this year. |
-| **Earthquake** | 3 random empty cells in your territory turn into Cliffs. |
+| **Earthquake** | 3 random empty cells next to your land turn into Cliffs. |
 
 ## Good fortune
 

@@ -3,7 +3,7 @@ import { key } from './grid.js';
 
 const BASE_OPACITY = 0.22;
 
-/** Translucent slots marking the empty cells of your territory. */
+/** Translucent slots marking every empty cell next to your land (where pieces can attach). */
 export class Frontier {
   slots = new Map(); // key -> { mesh, age }
 
@@ -20,7 +20,7 @@ export class Frontier {
   }
 
   rebuild(grid) {
-    const keys = grid.emptyTerritoryKeys();
+    const keys = grid.openKeys();
     for (const [k, slot] of this.slots) {
       if (!keys.has(k)) {
         this.group.remove(slot.mesh);

@@ -6,7 +6,7 @@ const decimals = (step) => (String(step).split('.')[1] ?? '').length;
  * Debug panel for tuning the payout animation. Edits `cfg` in place (the Payout reads it live)
  * and saves to localStorage so tweaks survive a reload.
  */
-export function createDebugPanel(root, toggleBtn, cfg, { onPlay }) {
+export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode }) {
   const fmt = (p, v) => (p.type === 'select' ? v : Number(v).toFixed(decimals(p.step)));
 
   function render() {
@@ -32,7 +32,14 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay }) {
         <b>Payout tuning</b>
         <button class="dbg-x" data-act="close" title="Hide (\`)">×</button>
       </div>
-      <div class="dbg-body">${rows}</div>
+      <div class="dbg-body">
+        <div class="dbg-group">Game mode</div>
+        <label class="dbg-row dbg-check" title="Old rules: fill your 3×3 territory, then pick a plot to expand. Toggling restarts the run. (X)">
+          <span class="dbg-name">Territory expansion <small>(X)</small></span>
+          <input type="checkbox" data-act="mode"${expansionMode?.() ? ' checked' : ''} />
+        </label>
+        ${rows}
+      </div>
       <div class="dbg-actions">
         <button data-act="play">Play <small>(Space)</small></button>
         <button data-act="copy">Copy JSON</button>
@@ -47,6 +54,10 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay }) {
     clearTimeout(status.t);
     status.t = setTimeout(() => (el.textContent = ''), 1800);
   };
+
+  root.addEventListener('change', (e) => {
+    if (e.target.dataset.act === 'mode') onExpansionMode?.(e.target.checked);
+  });
 
   root.addEventListener('input', (e) => {
     const k = e.target.dataset.k;
@@ -131,5 +142,12 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay }) {
 
   render();
   setOpen(localStorage.getItem('oto.debugOpen') === '1');
-  return { toggle: () => setOpen(root.classList.contains('hidden')) };
+  return {
+    toggle: () => setOpen(root.classList.contains('hidden')),
+    /** Sync the mode checkbox after the X hotkey changes it. */
+    refreshMode: () => {
+      const box = root.querySelector('[data-act="mode"]');
+      if (box) box.checked = Boolean(expansionMode?.());
+    },
+  };
 }

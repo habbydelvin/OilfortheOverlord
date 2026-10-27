@@ -57,8 +57,8 @@ function questionTexture() {
 }
 
 /**
- * Mystery sites: "?" markers scattered in locked plots. Expanding into a plot reveals each
- * site in it as a tile (a free Capital, a Tar Pit or a special building), decided on reveal.
+ * Mystery sites: "?" markers scattered over the map. Building next to one reveals it
+ * as a tile (a free Capital, Pre-war Ruins, a Tar Pit or a special building), decided on reveal.
  */
 export class Mysteries {
   sites = new Map(); // cell key -> { x, z, sprite }
@@ -81,7 +81,7 @@ export class Mysteries {
     for (let px = -MAX_RING; px <= MAX_RING; px++)
       for (let pz = -MAX_RING; pz <= MAX_RING; pz++) if (ring(px, pz) > 0) plots.push([px, pz]);
     shuffle(plots);
-    // One site right next to the start so the first expansion can find something.
+    // One site close to the start so the first few pieces can find something.
     plots.sort((a, b) => (ring(...a) === 1 ? 0 : 1) - (ring(...b) === 1 ? 0 : 1));
     const chosen = [];
     for (const [px, pz] of plots) {
@@ -107,11 +107,23 @@ export class Mysteries {
     return this.sites.has(key(x, z));
   }
 
-  /** Removes the sites inside plot (px, pz) and returns [{ x, z, terrain }] for each. */
+  /** Expansion mode: removes the sites inside plot (px, pz) and returns [{ x, z, terrain }] for each. */
   reveal(px, pz) {
     const out = [];
     for (const [k, s] of this.sites) {
       if (plotOf(s.x) !== px || plotOf(s.z) !== pz) continue;
+      this.group.remove(s.sprite);
+      this.sites.delete(k);
+      out.push({ x: s.x, z: s.z, terrain: pickReveal() });
+    }
+    return out;
+  }
+
+  /** Free placement: removes the sites touching any of `cells` on a side and returns [{ x, z, terrain }] for each. */
+  revealAround(cells) {
+    const out = [];
+    for (const [k, s] of this.sites) {
+      if (!cells.some(([x, z]) => Math.abs(x - s.x) + Math.abs(z - s.z) === 1)) continue;
       this.group.remove(s.sprite);
       this.sites.delete(k);
       out.push({ x: s.x, z: s.z, terrain: pickReveal() });
