@@ -1,8 +1,6 @@
 import { pieceOf, randomPiece, rotateCells, shapeFits, SHAPES } from './pieces.js';
-import { ACTIONS, ICONS, TERRAINS, cardDef, cardText, hex } from './tiles.js';
+import { ACTIONS, ICONS, TERRAINS, cardDef, cardText, hex, shapeGridHTML, snapHTML } from './tiles.js';
 import { WORKERS } from './economy.js';
-
-const CELL_PX = 20;
 
 const MP_ICON = ICONS.manpower;
 const FOOD_ICON = ICONS.food;
@@ -126,19 +124,6 @@ export class Hand {
     this.onChange?.(p);
   }
 
-  #shapeHTML(piece, color, edge) {
-    const cells = rotateCells(SHAPES[piece.shape].cells, piece.rot);
-    const w = Math.max(...cells.map((c) => c[0])) + 1;
-    const h = Math.max(...cells.map((c) => c[1])) + 1;
-    const squares = cells
-      .map(
-        ([x, z]) =>
-          `<i style="left:${x * CELL_PX}px;top:${z * CELL_PX}px;background:${color};box-shadow:inset 0 -4px 0 ${edge}"></i>`,
-      )
-      .join('');
-    return `<div class="shape" style="width:${w * CELL_PX}px;height:${h * CELL_PX}px">${squares}</div>`;
-  }
-
   render() {
     this.el.innerHTML = this.cards
       .map((p, i) => {
@@ -156,7 +141,8 @@ export class Hand {
         <div class="${cls}" data-i="${i}" style="--top:${hex(t.top)};--edge:${hex(t.edge)};animation-delay:${i * 50}ms">
           ${costBadge(p, t)}
           <div class="hotkey">${i + 1}</div>
-          <div class="art">${t.symbol ? `<div class="symbol">${t.symbol}</div>` : this.#shapeHTML(p, hex(t.top), hex(t.edge))}</div>
+          <div class="art">${t.symbol ? '' : shapeGridHTML(rotateCells(SHAPES[p.shape].cells, p.rot))}</div>
+          ${snapHTML(t)}
           <div class="name">${t.name}</div>
           <div class="rule">${cardText(t)}</div>
         </div>`;

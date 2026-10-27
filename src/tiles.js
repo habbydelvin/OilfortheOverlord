@@ -12,6 +12,7 @@ import { buildLabourCamp } from './labourCampMesh.js';
  * rule:      card text, effects separated by ' · ' (one per line)
  * trigger:   heading above the rule ('On trigger' for anything that produces each season)
  * stats:     data for the future economy pass (not calculated yet)
+ * snapshot:  optional image URL shown in the card's picture slot (e.g. '/cards/snapshots/refinery.jpg')
  */
 export const TERRAINS = {
   // ---- buildings ----
@@ -256,6 +257,27 @@ export const iconize = (line) =>
 export const cardText = (t) =>
   (t.trigger ? `<div class="trigger">${t.trigger}</div>` : '') +
   t.rule.split(' · ').map((l) => `<div>${iconize(l)}</div>`).join('');
+
+/**
+ * A piece shape on the card's LED panel (top right): every square of the 3×3 grid is drawn, and the ones the
+ * piece covers light up in the card colour (--top from the card). The 4-long I piece gets a 4×4 grid.
+ * cells: [[x, z], ...] already rotated, starting at 0,0.
+ */
+export function shapeGridHTML(cells) {
+  const w = Math.max(...cells.map((c) => c[0])) + 1;
+  const h = Math.max(...cells.map((c) => c[1])) + 1;
+  const n = Math.max(3, w, h);
+  const ox = Math.floor((n - w) / 2);
+  const oz = Math.floor((n - h) / 2);
+  const lit = new Set(cells.map(([x, z]) => `${x + ox},${z + oz}`));
+  let squares = '';
+  for (let z = 0; z < n; z++) for (let x = 0; x < n; x++) squares += lit.has(`${x},${z}`) ? '<i class="on"></i>' : '<i></i>';
+  return `<div class="shape" style="grid-template-columns:repeat(${n},1fr)">${squares}</div>`;
+}
+
+/** The picture slot above the card text: a tile snapshot when one is set, the symbol for action cards, else empty. */
+export const snapHTML = (t) =>
+  `<div class="snap">${t.symbol ? `<div class="symbol">${t.symbol}</div>` : t.snapshot ? `<img src="${t.snapshot}" alt="">` : ''}</div>`;
 
 export const isAction = (key) => key in ACTIONS;
 /** Tile or action-card definition for a card key. */

@@ -35,7 +35,7 @@ export function createScene(container) {
   // Shift the projection centre so the look-at point sits in the middle of the
   // open play area (left of the 300px side panel, above the card hand).
   const PANEL_W = 300;
-  const HAND_H = 170;
+  const HAND_H = 250; // visible height of the hand cards
   function fitViewport() {
     const w = window.innerWidth;
     const h = window.innerHeight;

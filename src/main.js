@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS } from './grid.js';
-import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, cardDef, cardText, hex, ICONS, isBuilding, iconize } from './tiles.js';
+import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML } from './tiles.js';
 import { hasBlockout, loadProgress } from './models.js';
 import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
@@ -468,7 +468,8 @@ function updateInspect(cell) {
   if (t.buildable) notes.push('A building can be placed on top of this tile');
   el.innerHTML = `
     <div class="card-big">
-      <div class="art"><div class="swatch"></div></div>
+      <div class="art">${shapeGridHTML([[0, 0]])}</div>
+      ${snapHTML(t)}
       <div class="name">${t.name}</div>
       <div class="rule">${cardText(t)}</div>
       <div class="kind">${t.category}</div>
@@ -933,12 +934,11 @@ function renderShop(animate = false) {
     const t = cardDef(k);
     const inHand = turn.pinned.filter((p) => p === k).length;
     const can = turn.coins >= price && turn.pinned.length < HAND_SIZE;
-    const square = `<i style="left:0;top:0;background:${hex(t.top)};box-shadow:inset 0 -4px 0 ${hex(t.edge)}"></i>`;
-    const art = t.symbol ? `<div class="symbol">${t.symbol}</div>` : `<div class="shape" style="width:20px;height:20px">${square}</div>`;
     return `
       <div class="shop-item">
         <div class="card${can ? '' : ' cant'}${animate ? ' deal' : ''}" data-k="${k}" style="--top:${hex(t.top)};--edge:${hex(t.edge)};animation-delay:${0.15 + i * 0.07}s">
-          <div class="art">${art}</div>
+          <div class="art">${t.symbol ? '' : shapeGridHTML([[0, 0]])}</div>
+          ${snapHTML(t)}
           <div class="name">${t.name}</div>
           <div class="rule">${cardText(t)}</div>
         </div>
