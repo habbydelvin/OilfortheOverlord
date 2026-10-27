@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { pieceOffsets } from './pieces.js';
 import { hasBlockout } from './models.js';
-import { TERRAINS, TILE, isBuilding } from './tiles.js';
+import { ACTIONS, TERRAINS, TILE, cardDef, isBuilding } from './tiles.js';
 
 const OK_COLOR = new THREE.Color(0x8be39a);
 const BAD_COLOR = new THREE.Color(0xe0563f);
@@ -43,6 +43,19 @@ export class Placement {
       this.blocks.visible = this.feet.visible = false;
       return;
     }
+    const action = ACTIONS[piece.terrain];
+    if (action) {
+      // Action cards: no blocks, just a footprint over the cells they affect.
+      const r = action.range;
+      this.offsets = [];
+      for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) this.offsets.push([dx, dz]);
+      for (const [ox, oz] of this.offsets) {
+        const f = new THREE.Mesh(this.footGeo, this.footMat);
+        f.position.set(ox, 0.015, oz);
+        this.feet.add(f);
+      }
+      return;
+    }
     this.offsets = pieceOffsets(piece);
     const blockout = hasBlockout(piece.terrain) && this.factory?.models?.has(piece.terrain);
     for (const [ox, oz] of this.offsets) {
@@ -61,6 +74,16 @@ export class Placement {
   }
 
   validate(cells) {
+    if (this.piece?.terrain === 'spark') {
+      if (!cells.some(([x, z]) => this.grid.has(x, z))) return { ok: false, reason: 'No tiles in range' };
+      return { ok: true, reason: '' };
+    }
+    if (this.piece?.terrain === 'demolish') {
+      const cell = this.grid.get(...cells[0]);
+      if (!cell) return { ok: false, reason: 'Nothing to demolish here' };
+      if (cell.terrain === 'capital') return { ok: false, reason: "A Capital can't be demolished" };
+      return { ok: true, reason: '' };
+    }
     const building = this.piece && isBuilding(this.piece.terrain);
     if (cells.some(([x, z]) => !this.grid.inTerritory(x, z)))
       return { ok: false, reason: 'Outside your territory' };
@@ -97,7 +120,7 @@ export class Placement {
 
     const ok = this.result.ok;
     this.footMat.color.copy(ok ? OK_COLOR : BAD_COLOR);
-    this.blockMat.color.set(TERRAINS[this.piece.terrain].top);
+    this.blockMat.color.set(cardDef(this.piece.terrain).top);
     if (!ok) this.blockMat.color.lerp(BAD_COLOR, 0.55);
     this.blockMat.emissive.copy(ok ? OK_COLOR : BAD_COLOR).multiplyScalar(0.08);
     // Blockout ghosts keep the atlas. Only push them toward red when the spot is illegal.

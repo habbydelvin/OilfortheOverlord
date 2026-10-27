@@ -1,13 +1,14 @@
-import { TERRAINS, TERRAIN_KEYS } from './tiles.js';
+import { ACTIONS, TERRAINS, TERRAIN_KEYS, cardDef } from './tiles.js';
 
-const DRAWABLE = TERRAIN_KEYS.filter((k) => TERRAINS[k].weight > 0);
+// Tiles plus action cards with a draw weight.
+const DRAWABLE = [...TERRAIN_KEYS, ...Object.keys(ACTIONS)].filter((k) => (cardDef(k).weight ?? 0) > 0);
 
 /** Weighted tile pick. `exclude`: tile keys that can't be drawn right now (e.g. no cliffs in round 1). */
 function randomTerrain(exclude = []) {
   const pool = DRAWABLE.filter((k) => !exclude.includes(k));
-  let r = Math.random() * pool.reduce((s, k) => s + TERRAINS[k].weight, 0);
+  let r = Math.random() * pool.reduce((s, k) => s + cardDef(k).weight, 0);
   for (const k of pool) {
-    r -= TERRAINS[k].weight;
+    r -= cardDef(k).weight;
     if (r <= 0) return k;
   }
   return pool[pool.length - 1];
@@ -106,6 +107,11 @@ export function shapeFits(grid, shapeKey) {
  * Only Wasteland comes in multi-block shapes; every other tile is a single block.
  * `grid` (optional) limits Wasteland to shapes that fit in the space you have left.
  */
+/** A single-tile piece of a given terrain (e.g. a card bought in the shop). */
+export function pieceOf(terrain) {
+  return { id: nextId++, shape: 'mono', terrain, rot: 0 };
+}
+
 export function randomPiece(grid = null, exclude = []) {
   const terrain = randomTerrain(exclude);
   const shape = terrain.startsWith('wasteland') ? randomShape(grid && ((k) => shapeFits(grid, k))) : 'mono';

@@ -1,7 +1,7 @@
 import './library.css';
 import * as THREE from 'three';
 import { SHAPES } from './pieces.js';
-import { TERRAINS, TERRAIN_KEYS, TileFactory, hex } from './tiles.js';
+import { ACTIONS, SHOP_ITEMS, TERRAINS, TERRAIN_KEYS, TileFactory, cardText, hex } from './tiles.js';
 
 const GROUPS = [
   {
@@ -15,6 +15,11 @@ const GROUPS = [
     blurb: 'Terrain with an effect on whatever is placed next to it, or on top of it.',
   },
   {
+    id: 'action',
+    title: 'Action cards',
+    blurb: 'Played on the board for a one-off effect, then gone; never become tiles. Bought in the shop, or drawn now and then at random (not in the opening hand).',
+  },
+  {
     id: 'junk',
     title: 'Junk',
     blurb: 'Clogs the hand. Only Wasteland is drawn as a polyomino. The four Wasteland colours share one look and split a draw weight of about 5.4 (≈30% of draws). Wasteland must be placed before ending the turn and can never be built on.',
@@ -23,7 +28,11 @@ const GROUPS = [
 
 const NAME = Object.fromEntries(TERRAIN_KEYS.map((k) => [k, TERRAINS[k].name]));
 
-const bagWeight = TERRAIN_KEYS.reduce((sum, key) => sum + TERRAINS[key].weight, 0);
+const PRICE = Object.fromEntries(SHOP_ITEMS);
+
+const bagWeight =
+  TERRAIN_KEYS.reduce((sum, key) => sum + TERRAINS[key].weight, 0) +
+  Object.values(ACTIONS).reduce((sum, a) => sum + (a.weight ?? 0), 0);
 
 function signed(n) {
   return n > 0 ? `+${n}` : `${n}`;
@@ -39,6 +48,7 @@ function availability(key, terrain) {
   if (key === 'capital') return 'Starting tile';
   if (key === 'crater') return 'Overlord only';
   if (terrain.weight <= 0) return 'Never';
+  if (PRICE[key]) return `Locked until bought (${PRICE[key]} barrels) · then ${terrain.weight}`;
   const share = Math.round((terrain.weight / bagWeight) * 1000) / 10;
   return `${terrain.weight} · ${share}%`;
 }
@@ -143,13 +153,37 @@ function cardHTML(key, thumb) {
       </div>
       <h3>${terrain.name}</h3>
       <p class="key">${key}</p>
-      <p class="rule">${terrain.rule}</p>
+      <div class="rule">${cardText(terrain)}</div>
       <ul class="stats">${lines}</ul>
       <dl>
         <div><dt>Category</dt><dd>${terrain.category}</dd></div>
         <div><dt>Buildable</dt><dd>${terrain.buildable ? 'Yes' : 'No'}</dd></div>
         <div><dt>Shape</dt><dd>${shapeNote(key)}</dd></div>
         <div><dt>Draw</dt><dd>${availability(key, terrain)}</dd></div>
+      </dl>
+    </article>`;
+}
+
+function actionHTML(key) {
+  const a = ACTIONS[key];
+  const area = a.range ? `${2 * a.range + 1}×${2 * a.range + 1} around the target` : 'The target cell';
+  return `
+    <article class="tile action" id="tile-${key}">
+      <div class="thumb symbol-thumb" style="--top:${hex(a.top)};--edge:${hex(a.edge)}"><span>${a.symbol}</span></div>
+      <div class="swatches" title="Card colours">
+        <i style="background:${hex(a.top)}"></i>
+        <i style="background:${hex(a.edge)}"></i>
+        <span>${hex(a.top)} · ${hex(a.edge)}</span>
+      </div>
+      <h3>${a.name}</h3>
+      <p class="key">${key}</p>
+      <div class="rule">${cardText(a)}</div>
+      <dl>
+        <div><dt>Category</dt><dd>action</dd></div>
+        <div><dt>Area</dt><dd>${area}</dd></div>
+        <div><dt>Uses</dt><dd>One, then discarded</dd></div>
+        <div><dt>Shop</dt><dd>${PRICE[key]} barrels</dd></div>
+        <div><dt>Draw</dt><dd>${a.weight} · ${Math.round((a.weight / bagWeight) * 1000) / 10}%</dd></div>
       </dl>
     </article>`;
 }
@@ -183,9 +217,19 @@ document.getElementById('lede').textContent = 'Loading blockouts…';
 
 const thumbs = await renderThumbs();
 document.getElementById('lede').textContent =
-  `${TERRAIN_KEYS.length} tiles · bag weight ${bagWeight}. Weights are relative. Capital and the toxic crater are never drawn.`;
+  `${TERRAIN_KEYS.length} tiles, ${Object.keys(ACTIONS).length} action cards · bag weight ${bagWeight}. Weights are relative. Capital and the toxic crater are never drawn; shop tiles are locked until bought.`;
 
 root.innerHTML = GROUPS.map((group) => {
+  if (group.id === 'action') {
+    return `
+    <section class="group">
+      <header>
+        <h2>${group.title}</h2>
+        <p>${group.blurb}</p>
+      </header>
+      <div class="grid">${Object.keys(ACTIONS).map(actionHTML).join('')}</div>
+    </section>`;
+  }
   const keys = TERRAIN_KEYS.filter((key) => TERRAINS[key].category === group.id);
   const extra = group.id === 'junk' ? `<div class="shapes"><h3>Wasteland shapes</h3><div class="shape-row">${shapeStrip()}</div></div>` : '';
   return `

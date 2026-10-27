@@ -25,13 +25,6 @@ export const PAYOUT_DEFAULTS = {
 /** Slider definitions for the debug panel, grouped by heading. */
 export const PAYOUT_PARAMS = [
   { group: 'Stagger' },
-  {
-    key: 'order',
-    label: 'Order',
-    type: 'select',
-    options: ['ripple', 'sweep', 'random', 'together'],
-    hint: 'ripple = out from capital, sweep = left to right',
-  },
   { key: 'stagger', label: 'Delay per tile (s)', min: 0, max: 0.4, step: 0.005 },
   { key: 'maxRipple', label: 'Max total ripple (s)', min: 0.2, max: 6, step: 0.05, hint: 'caps delay on big maps' },
 

@@ -1,9 +1,11 @@
-import { randomPiece, rotateCells, shapeFits, SHAPES } from './pieces.js';
-import { TERRAINS, hex } from './tiles.js';
+import { pieceOf, randomPiece, rotateCells, shapeFits, SHAPES } from './pieces.js';
+import { TERRAINS, cardDef, cardText, hex } from './tiles.js';
 
 const CELL_PX = 20;
 
 /** Wasteland has to be placed: it can't be rerolled away or left in hand at the end of a turn. */
+const ALL_BUT_WASTELAND = Object.keys(TERRAINS).filter((k) => !k.startsWith('wasteland'));
+
 export const isForced = (piece) => piece.terrain.startsWith('wasteland');
 
 /** The row of piece cards along the bottom of the screen. */
@@ -46,9 +48,18 @@ export class Hand {
   }
 
   /** Deal a fresh hand of `count` pieces (start of a turn). */
-  deal(count = this.size) {
+  /**
+   * pinned: tile keys guaranteed in the hand (shop purchases, the opening hand).
+   * Pinned Wasteland still gets a random shape that fits.
+   */
+  deal(count = this.size, pinned = []) {
     const exclude = this.excluded?.() ?? [];
-    this.cards = Array.from({ length: count }, () => randomPiece(this.grid, exclude));
+    // Pinned cards (bought in the shop) are guaranteed; the rest of the hand is random.
+    const fixed = pinned.slice(0, count).map((t) => {
+      if (t === 'wasteland') return randomPiece(this.grid, ALL_BUT_WASTELAND);
+      return { ...pieceOf(t), pinned: true };
+    });
+    this.cards = [...fixed, ...Array.from({ length: count - fixed.length }, () => randomPiece(this.grid, exclude))];
     this.fresh = new Set(this.cards.map((_, i) => i));
     this.selected = -1;
     this.render();
@@ -60,9 +71,10 @@ export class Hand {
     return this.cards.filter(isForced);
   }
 
-  /** Redraw every card still in hand, Wasteland included (same number of cards). */
+  /** Redraw every card still in hand, Wasteland included; bought (pinned) cards are kept. */
   reroll() {
-    this.deal(this.cards.length);
+    const pinned = this.cards.filter((p) => p.pinned).map((p) => p.terrain);
+    this.deal(this.cards.length, pinned);
   }
 
   /** Wasteland cards that still fit somewhere: these block the end of the turn. */
@@ -103,10 +115,11 @@ export class Hand {
   render() {
     this.el.innerHTML = this.cards
       .map((p, i) => {
-        const t = TERRAINS[p.terrain];
+        const t = cardDef(p.terrain);
         const cls = [
           'card',
           t.category === 'junk' ? 'junk' : '',
+          t.category === 'action' ? 'action' : '',
           i === this.selected ? 'selected' : '',
           this.fresh.has(i) ? 'deal' : '',
         ]
@@ -116,9 +129,9 @@ export class Hand {
         <div class="${cls}" data-i="${i}" style="--top:${hex(t.top)};--edge:${hex(t.edge)};animation-delay:${i * 50}ms">
           <div class="badge" title="tiles in piece">${SHAPES[p.shape].cells.length}</div>
           <div class="hotkey">${i + 1}</div>
-          <div class="art">${this.#shapeHTML(p, hex(t.top), hex(t.edge))}</div>
+          <div class="art">${t.symbol ? `<div class="symbol">${t.symbol}</div>` : this.#shapeHTML(p, hex(t.top), hex(t.edge))}</div>
           <div class="name">${t.name}</div>
-          <div class="rule">${t.rule}</div>
+          <div class="rule">${cardText(t)}</div>
         </div>`;
       })
       .join('');

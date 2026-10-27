@@ -229,3 +229,27 @@ h1 {
   font-size: 11px;
   color: var(--muted);
 }
+
+/* Action cards have no 3D tile: a big glowing symbol instead. */
+.symbol-thumb {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 3 / 2;
+  background: radial-gradient(ellipse at 50% 45%, rgba(255, 255, 255, 0.08), transparent 70%), #1c2325;
+}
+
+.symbol-thumb span {
+  font-size: 96px;
+  line-height: 1;
+  color: var(--top);
+  filter: brightness(1.7);
+  text-shadow: 0 0 22px var(--top);
+}
+
+.rule .trigger {
+  font-size: 0.8em;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #e8bf68;
+}

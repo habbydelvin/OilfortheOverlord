@@ -104,16 +104,17 @@ The Overlord takes the whole stockpile after Winter; nothing carries over. The n
 
 ```
 excess    = max(0, delivered - quota)
-nextQuota = round(quota × 1.10 + excess × 0.75)
+nextQuota = round(quota × 1.5 + 20 + excess × 0.75)
 ```
 
-The first quota is 24. The quota always grows by 10%, even if you fall short, and every barrel of excess raises it further. Numbers to be tuned.
+The first quota is 20. The quota always grows (×1.5 + 20), even if you fall short, and every barrel of excess raises it further. Numbers to be tuned.
 
 | Delivered vs quota | Next quota |
 | --- | --- |
-| 24 / 24 (exactly met) | 26 |
-| 40 / 24 (16 excess) | 38 |
-| 15 / 24 (missed, plus a nuke) | 26 |
+| 20 / 20 (exactly met) | 50 |
+| 30 / 20 (10 excess) | 58 |
+| 15 / 20 (missed, plus a strike) | 50 |
+| 50 / 50 (exactly met) | 95 |
 
 ## Build phase
 

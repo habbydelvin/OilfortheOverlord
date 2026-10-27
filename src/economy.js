@@ -2,15 +2,15 @@ import { DIRS } from './grid.js';
 import { TERRAINS } from './tiles.js';
 
 /** Workers each building needs to run. */
-const WORKERS = { farm: 1, station: 1, refinery: 2 };
+const WORKERS = { station: 1, refinery: 1 };
 
 /**
  * Calculates one season of the economy from the current grid.
  *
  * Order (single pass, no loops):
- *  1. Manpower: supplied (capital, settlements, ruins bonus, crater penalty) vs employed (farms, stations, refineries)
+ *  1. Manpower: supplied (capital, settlements, ruins bonus, crater penalty) vs employed (stations, refineries)
  *     minus manpower spent on rerolls. Short of workers -> staffing < 1, spare workers -> oil boost.
- *  2. Food: farms grow (scaled by staffing), capital/settlements eat. Not enough food -> fed < 1.
+ *  2. Food: farms grow (no workers needed), capital/settlements eat. Not enough food -> fed < 1.
  *  3. Oil: crude × refinery multiplier × boost × staffing × fed.
  *  4. Food store: spare food is banked; a shortfall is covered from the store before `fed` drops.
  *     Each time the store reaches growthCost(population), it converts into +1 population.
@@ -32,7 +32,7 @@ export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
   let refineryLinks = 0;
   const counts = {};
   // Bonus counts for the HUD breakdown tooltips.
-  const bonus = { ruins: 0, pumpFarms: 0, oasisFarms: 0, tarpitStations: 0 };
+  const bonus = { ruins: 0, pumpFarms: 0, oasisFarms: 0, tarpitStations: 0, capitalFood: 0, capitalCrude: 0 };
   // What each tile contributes, for the end-of-turn payout animation.
   const perCell = [];
 
@@ -70,11 +70,22 @@ export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
       if (pump) bonus.pumpFarms++;
       if (oasis) bonus.oasisFarms++;
       per.rawFood = 2 + (pump ? 2 : 0) + (oasis ? 3 : 0);
+      // A Capital next door triggers the farm twice: double output (doesn't stack with more Capitals).
+      if (near.includes('capital')) {
+        bonus.capitalFood += per.rawFood;
+        per.rawFood *= 2;
+        per.triggers = 2;
+      }
       farmFood += per.rawFood;
     } else if (t === 'station') {
       const tarpit = near.includes('tarpit');
       if (tarpit) bonus.tarpitStations++;
       per.rawCrude = 2 + (tarpit ? 2 : 0);
+      if (near.includes('capital')) {
+        bonus.capitalCrude += per.rawCrude;
+        per.rawCrude *= 2;
+        per.triggers = 2;
+      }
       crude += per.rawCrude;
     } else if (t === 'refinery') {
       refineryLinks += near.filter((n) => n === 'station').length;
@@ -93,7 +104,7 @@ export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
   const staffing = spare >= 0 ? 1 : employed > 0 ? Math.max(0, employed + spare) / employed : 1;
   const boost = 1 + 0.1 * Math.max(0, spare);
 
-  const foodGrown = farmFood * staffing;
+  const foodGrown = farmFood; // farms need no workers, so understaffing doesn't touch them
   const totalEaten = foodEaten + craterFood;
   const foodBalance = foodGrown - totalEaten;
   // The store covers a shortfall first; only what it can't cover starves the city.
@@ -175,18 +186,23 @@ export function growthCost(population) {
 }
 
 /** Tribute quota for the first year. */
-export const FIRST_QUOTA = 24;
-/** The quota always grows by this much per year, even if you only just meet it (or miss it). */
-const QUOTA_GROWTH = 1.1;
+export const FIRST_QUOTA = 20;
+/** Each year the quota is multiplied by this, then QUOTA_STEP is added (20 → 50 → 95 → 163 …). */
+const QUOTA_GROWTH = 1.5;
+const QUOTA_STEP = 20;
+/** After a missed tribute the quota only grows by this much (the strike is the punishment). */
+const MISSED_GROWTH = 1.1;
 /** Each barrel delivered above the quota raises the next quota by this much. */
 const EXCESS_FACTOR = 0.75;
 
 /**
- * Next year's quota: the Overlord's greed grows with what you hand over.
- * A shortfall counts as zero excess (the quota still grows by QUOTA_GROWTH).
+ * Next year's quota: the Overlord's greed grows every year, and faster with what you hand over.
+ * A missed tribute only raises it by MISSED_GROWTH.
  */
 export function nextQuota(quota, delivered) {
-  return Math.round(quota * QUOTA_GROWTH + Math.max(0, delivered - quota) * EXCESS_FACTOR);
+  // Missed: the Overlord asks a little more, not the full jump, so you can catch up.
+  if (delivered < quota) return Math.round(quota * MISSED_GROWTH);
+  return Math.round(quota * QUOTA_GROWTH + QUOTA_STEP + Math.max(0, delivered - quota) * EXCESS_FACTOR);
 }
 
 export const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter'];

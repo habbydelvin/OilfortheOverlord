@@ -47,18 +47,12 @@ function hop(t, c) {
   return { y: 0, sy: 1 - s, sx: 1 + s * 0.5 };
 }
 
-const dist = (t) => Math.abs(t.x) + Math.abs(t.z);
-function ordered(tiles, order) {
-  const out = [...tiles];
-  if (order === 'sweep') return out.sort((a, b) => a.x - b.x || a.z - b.z);
-  if (order === 'random') {
-    for (let i = out.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [out[i], out[j]] = [out[j], out[i]];
-    }
-    return out;
-  }
-  return out.sort((a, b) => dist(a) - dist(b) || a.x - b.x); // ripple / together
+/**
+ * Scoring order: like reading, top row first, left to right, then down (z grows downward on
+ * screen at the default camera). A tile that triggers twice keeps its two triggers back to back.
+ */
+function ordered(tiles) {
+  return tiles.map((t, i) => [t, i]).sort(([a, i], [b, j]) => a.z - b.z || a.x - b.x || i - j).map(([t]) => t);
 }
 
 /**
@@ -92,17 +86,15 @@ export class Payout {
     const c = this.cfg;
     // `finale` tiles (e.g. population growth) always go last, after a short beat.
     const finale = tiles.filter((t) => t.finale);
-    tiles = ordered(
-      tiles.filter((t) => !t.finale),
-      c.order,
-    );
-    const stagger = c.order === 'together' || !tiles.length ? 0 : Math.min(c.stagger, c.maxRipple / tiles.length);
+    tiles = ordered(tiles.filter((t) => !t.finale));
+    const stagger = !tiles.length ? 0 : Math.min(c.stagger, c.maxRipple / tiles.length);
     const finaleAt = (tiles.length ? (tiles.length - 1) * stagger : 0) + c.hopDuration + FINALE_BEAT;
     tiles = [...tiles, ...finale];
     this.layer.style.setProperty('--floater-size', `${c.labelSize}px`);
     this.time = 0;
     this.onFire = onFire;
     this.done = onDone;
+    let delay = 0;
     tiles.forEach((tile, i) => {
       const rows = ['population', 'oil', 'food', 'manpower']
         .filter((r) => tile[r])
@@ -111,7 +103,9 @@ export class Payout {
             `<div class="row${tile[r] < 0 ? ' neg' : ''}" style="--c:${RES[r].color}">` +
             `<b>${tile[r] > 0 ? '+' : ''}${tile[r]}</b>${RES[r].word ? `<span>${RES[r].word}</span>` : ''}</div>`,
         )
-        .join('');
+        .join('') ||
+        // Wasteland triggers too, but produces nothing: a grey 0.
+        (tile.terrain?.startsWith('wasteland') ? '<div class="row zero"><b>0</b></div>' : '');
       let el = null;
       if (rows) {
         el = document.createElement('div');
@@ -120,7 +114,10 @@ export class Payout {
         el.style.opacity = 0;
         this.layer.appendChild(el);
       }
-      const start = tile.finale ? finaleAt + (i - (tiles.length - finale.length)) * FINALE_GAP : i * stagger;
+      // A second trigger of the same tile waits for its first hop to land, and pushes the rest back.
+      const prev = this.items[this.items.length - 1];
+      if (!tile.finale && prev && prev.tile.mesh === tile.mesh) delay += c.hopDuration;
+      const start = tile.finale ? finaleAt + delay + (i - (tiles.length - finale.length)) * FINALE_GAP : i * stagger + delay;
       this.items.push({ tile, el, start, fired: false });
     });
     if (!this.items.length) this.#finish();
