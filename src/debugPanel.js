@@ -71,20 +71,53 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay }) {
       render();
       status('Reset to defaults');
     } else if (act === 'copy') {
-      const json = JSON.stringify(cfg, null, 2);
-      try {
-        await navigator.clipboard.writeText(json);
-      } catch {
-        const ta = document.createElement('textarea');
-        ta.value = json;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
-      }
-      status('Copied: paste over PAYOUT_DEFAULTS in src/payoutConfig.js');
+      // Only the current settings (old saved keys, e.g. a removed option, are left out).
+      const clean = Object.fromEntries(Object.keys(PAYOUT_DEFAULTS).map((k) => [k, cfg[k]]));
+      const json = JSON.stringify(clean, null, 2);
+      if (await copyText(json)) status('Copied: paste over PAYOUT_DEFAULTS in src/payoutConfig.js');
+      else showJson(json);
     }
   });
+
+  /** Clipboard API first (needs https or localhost), then the old execCommand route. True if it worked. */
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;user-select:text';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      let ok = false;
+      try {
+        ok = document.execCommand('copy');
+      } catch {
+        ok = false;
+      }
+      ta.remove();
+      return ok;
+    }
+  }
+
+  /** If the browser blocks copying, show the JSON selected in the panel so it can be copied by hand. */
+  function showJson(json) {
+    root.querySelector('.dbg-json')?.remove();
+    const ta = document.createElement('textarea');
+    ta.className = 'dbg-json';
+    ta.value = json;
+    ta.readOnly = true;
+    ta.rows = 8;
+    ta.style.cssText = 'width:100%;margin-top:6px;font:11px monospace;user-select:text;pointer-events:auto';
+    root.appendChild(ta);
+    ta.focus();
+    ta.select();
+    status('Copy blocked by the browser: press Cmd/Ctrl+C to copy the selected JSON');
+  }
 
   function setOpen(open) {
     root.classList.toggle('hidden', !open);

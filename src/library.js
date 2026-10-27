@@ -17,7 +17,7 @@ const GROUPS = [
   {
     id: 'action',
     title: 'Action cards',
-    blurb: 'Played on the board for a one-off effect, then gone; never become tiles. Bought in the shop, or drawn now and then at random (not in the opening hand).',
+    blurb: 'Played on the board for a one-off effect, then gone; never become tiles. Locked until bought in the shop; after that they are also drawn now and then at random.',
   },
   {
     id: 'junk',
@@ -183,7 +183,7 @@ function actionHTML(key) {
         <div><dt>Area</dt><dd>${area}</dd></div>
         <div><dt>Uses</dt><dd>One, then discarded</dd></div>
         <div><dt>Shop</dt><dd>${PRICE[key]} barrels</dd></div>
-        <div><dt>Draw</dt><dd>${a.weight} · ${Math.round((a.weight / bagWeight) * 1000) / 10}%</dd></div>
+        <div><dt>Draw</dt><dd>Locked until bought · then ${a.weight} · ${Math.round((a.weight / bagWeight) * 1000) / 10}%</dd></div>
       </dl>
     </article>`;
 }

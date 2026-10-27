@@ -3,23 +3,23 @@
  * To make a tweak permanent: use "Copy JSON" in the debug panel and paste it over PAYOUT_DEFAULTS.
  */
 export const PAYOUT_DEFAULTS = {
-  order: 'ripple',
-  stagger: 0.09,
-  maxRipple: 1.8,
-  hopHeight: 0.45,
+  order: 'sweep',
+  stagger: 0.4,
+  maxRipple: 3.1,
+  hopHeight: 0.26,
   hopDuration: 0.62,
-  squash: 0.72,
+  squash: 0.62,
   stretch: 1.18,
-  landSquish: 0.14,
+  landSquish: 0.16,
   labelDelay: 0.14,
   labelLife: 1.25,
-  labelStartY: 0.75,
+  labelStartY: 1.45,
   labelRise: 0.85,
   labelPop: 1.15,
   labelPopTime: 0.22,
   labelWobble: 18,
-  labelSize: 30,
-  fadeStart: 0.7,
+  labelSize: 18,
+  fadeStart: 0.25,
 };
 
 /** Slider definitions for the debug panel, grouped by heading. */

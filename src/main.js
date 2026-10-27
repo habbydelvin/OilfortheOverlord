@@ -671,7 +671,7 @@ function renderShop(animate = false) {
           <div class="rule">${cardText(t)}</div>
         </div>
         <div class="price">${price} barrels</div>
-        <div class="tag">${ACTIONS[k] ? 'Action · one use' : turn.unlocked.has(k) ? 'Unlocked' : 'Locked'}${inHand ? ` · ${inHand} in next hand` : ''}</div>
+        <div class="tag">${turn.unlocked.has(k) ? 'Unlocked' : 'Locked'}${ACTIONS[k] ? ' · one use' : ''}${inHand ? ` · ${inHand} in next hand` : ''}</div>
       </div>`;
   }).join('');
 }
@@ -681,7 +681,7 @@ function buy(k) {
   if (turn.coins < price) return toast('Not enough excess oil', 'bad');
   if (turn.pinned.length >= HAND_SIZE) return toast('Your next hand is full', 'bad');
   turn.coins -= price;
-  if (!ACTIONS[k]) turn.unlocked.add(k);
+  turn.unlocked.add(k); // action cards too: once bought, they can be drawn at random
   turn.pinned.push(k);
   renderShop();
 }
