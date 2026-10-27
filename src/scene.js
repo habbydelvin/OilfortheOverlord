@@ -29,6 +29,8 @@ export function createScene(container) {
   Object.assign(sun.shadow.camera, { near: 0.5, far: 60 });
   scene.add(sun, sun.target);
 
+  const ground = createGround(renderer);
+  scene.add(ground);
 
   // Shift the projection centre so the look-at point sits in the middle of the
   // open play area (left of the 300px side panel, above the card hand).
@@ -61,7 +63,82 @@ export function createScene(container) {
     }
     scene.fog.near = distance + 4;
     scene.fog.far = distance + 45;
+    // The ground follows the camera so it never runs out. It moves in whole
+    // texture tiles, so the sand stays put relative to the board.
+    ground.position.x = Math.round(target.x / GROUND.tile) * GROUND.tile;
+    ground.position.z = Math.round(target.z / GROUND.tile) * GROUND.tile;
+    // Fade to the black background around the look-at point. The radius grows with zoom,
+    // so the screen edges (behind the HUD and help text) stay dark.
+    const fade = ground.material.alphaMap;
+    const reach = (GROUND.fadeRadius * distance) / GROUND.size; // fade radius as a share of the plane
+    fade.repeat.setScalar(1 / (2 * reach));
+    fade.offset.set(
+      0.5 - fade.repeat.x * (0.5 + (target.x - ground.position.x) / GROUND.size),
+      0.5 - fade.repeat.y * (0.5 - (target.z - ground.position.z) / GROUND.size),
+    );
   }
 
   return { renderer, scene, camera, followTarget };
+}
+
+/**
+ * Sand ground under the board. Sits just below the plot overlays (frontier
+ * slots at -0.04, plot fills at -0.03), so they still draw on top of it.
+ * Wide enough to reach past the fog at full zoom-out (fog ends at distance + 45, max distance 48).
+ */
+const GROUND = {
+  url: '/textures/sand08.jpg?v=20261027-1602', // bump when the texture file changes, so browsers drop the cached copy
+  y: -0.05,
+  size: 240,
+  tile: 4, // world units per texture repeat (just over one 3×3 plot)
+  // The board lights (hemisphere 1.3 + sun 2.2, ACES) push the painted sand to bright orange.
+  // This tint brings it back to about the texture's own muted brown.
+  tint: 0xb4b6ba,
+  fadeRadius: 0.75, // sand fades out by camera distance × this, measured from the look-at point
+};
+
+/** Radial alpha: solid in the middle, clear before the edge (the map clamps, so outside stays clear). */
+function createFadeTexture() {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2 - 2);
+  g.addColorStop(0, '#fff');
+  g.addColorStop(0.45, '#fff');
+  g.addColorStop(0.8, '#555');
+  g.addColorStop(1, '#000');
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+  return texture;
+}
+
+function createGround(renderer) {
+  const map = new THREE.TextureLoader().load(GROUND.url);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.repeat.setScalar(GROUND.size / GROUND.tile);
+  map.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(GROUND.size, GROUND.size).rotateX(-Math.PI / 2),
+    new THREE.MeshStandardMaterial({
+      map,
+      color: GROUND.tint,
+      alphaMap: createFadeTexture(),
+      transparent: true,
+      depthWrite: false,
+      roughness: 1,
+      metalness: 0,
+    }),
+  );
+  ground.name = 'ground';
+  ground.position.y = GROUND.y;
+  ground.receiveShadow = true;
+  // Draw first among see-through objects, so the plot overlays (which also skip depth writes) land on top.
+  ground.renderOrder = -1;
+  return ground;
 }

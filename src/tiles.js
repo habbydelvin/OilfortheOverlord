@@ -309,9 +309,43 @@ export class TileFactory {
     // The fitted model keeps its own offset. A holder takes the cell position
     // so placing or animating the tile does not undo that fit.
     const holder = new THREE.Group();
-    holder.add(source.clone(true));
+    const model = source.clone(true);
+    holder.add(model);
     holder.userData.blockout = true;
+    if (model.animations.length) this.#animate(model);
     return holder;
+  }
+
+  /** @type {Set<{ mixer: THREE.AnimationMixer, root: THREE.Object3D, idle: number }>} */
+  #mixers = new Set();
+
+  /** Loop every clip baked into the model (for example, the Capital's sky traffic). */
+  #animate(model) {
+    const mixer = new THREE.AnimationMixer(model);
+    for (const clip of model.animations) {
+      const action = mixer.clipAction(clip);
+      action.play();
+      // Start each copy at a random point so two copies never fly in sync.
+      action.time = Math.random() * clip.duration;
+    }
+    this.#mixers.add({ mixer, root: model, idle: 0 });
+  }
+
+  /** Advance tile animations. Copies that leave the scene (replaced, nuked, old ghosts) get dropped. */
+  update(dt) {
+    for (const entry of this.#mixers) {
+      let node = entry.root;
+      while (node.parent) node = node.parent;
+      if (node.isScene) {
+        entry.idle = 0;
+        entry.mixer.update(dt);
+      } else if (++entry.idle > 120) {
+        // About two seconds detached. The copy has been thrown away.
+        entry.mixer.stopAllAction();
+        entry.mixer.uncacheRoot(entry.root);
+        this.#mixers.delete(entry);
+      }
+    }
   }
 
   /** Transparent copy for the placement ghost. Materials are not shared. */
@@ -320,12 +354,14 @@ export class TileFactory {
     mesh.traverse((obj) => {
       if (!obj.isMesh) return;
       const material = obj.material.clone();
+      // Already see-through parts (refinery smoke) keep their own, lower opacity and cast no shadow.
+      const seeThrough = material.transparent;
       material.transparent = true;
-      material.opacity = 0.86;
+      material.opacity = Math.min(material.opacity, 0.86);
       material.depthWrite = false;
       material.userData.base = material.color.clone();
       obj.material = material;
-      obj.castShadow = true;
+      obj.castShadow = !seeThrough;
     });
     return mesh;
   }

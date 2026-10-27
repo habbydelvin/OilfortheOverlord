@@ -952,6 +952,7 @@ function frame(now) {
   rig.update(dt);
   followTarget(rig.target, rig.distance, dt);
   updateDropAnims(dt);
+  factory.update(dt);
   frontier.update(dt, time);
   mysteries.update(time);
   const cell = rig.isDragging ? null : hoveredCell();
