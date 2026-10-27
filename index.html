@@ -4,8 +4,66 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Oil for the Overlord</title>
+    <!--
+      Needed before ui.css arrives: in dev, Vite injects CSS from JavaScript, so the raw page shows for a moment.
+      Without a size, the inline SVG icons fill the screen (the big apple on refresh).
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #000;
+      }
+      svg.ico {
+        width: 1em;
+        height: 1em;
+      }
+      #loading {
+        position: fixed;
+        inset: 0;
+        z-index: 10000;
+        display: grid;
+        place-items: center;
+        background: #000;
+        color: #e8bf68;
+        font-family: 'Avenir Next', 'Nunito', 'Segoe UI', system-ui, sans-serif;
+        transition: opacity 0.6s ease;
+      }
+      #loading.done {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #loading .title {
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        text-align: center;
+      }
+      #loading .bar {
+        width: 240px;
+        height: 4px;
+        margin: 16px auto 0;
+        border-radius: 2px;
+        background: #2a2a2a;
+        overflow: hidden;
+      }
+      #loading .bar i {
+        display: block;
+        width: 0;
+        height: 100%;
+        background: #e8bf68;
+        transition: width 0.25s ease;
+      }
+    </style>
   </head>
   <body>
+    <div id="loading">
+      <div>
+        <div class="title">Oil for the Overlord</div>
+        <div class="bar"><i id="loadingFill"></i></div>
+      </div>
+    </div>
     <div id="app"></div>
 
     <div id="ui">

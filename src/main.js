@@ -4,12 +4,13 @@ import { createScene } from './scene.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS } from './grid.js';
 import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, cardDef, cardText, hex, ICONS, isBuilding, iconize } from './tiles.js';
-import { hasBlockout } from './models.js';
+import { hasBlockout, loadProgress } from './models.js';
 import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
 import { Hand } from './hand.js';
 import { Expansion } from './expansion.js';
 import { Mysteries } from './mystery.js';
+import { Dust } from './dust.js';
 import { computeEconomy, growthCost, FIRST_QUOTA, nextQuota, SEASONS } from './economy.js';
 import { Payout } from './payout.js';
 import { EVENTS, KIND_LABEL, drawEvent } from './events.js';
@@ -31,6 +32,7 @@ const frontier = new Frontier(scene);
 const placement = new Placement(scene, grid, factory);
 const expansion = new Expansion(scene);
 const mysteries = new Mysteries(scene);
+const dust = new Dust(scene);
 const dialogue = new Dialogue(document.getElementById('dialogue'));
 const payoutCfg = loadPayoutConfig();
 const payout = new Payout(camera, document.getElementById('floaters'), payoutCfg);
@@ -82,7 +84,7 @@ function addTile(x, z, terrain, delay = 0) {
   mesh.visible = false;
   tiles.add(mesh);
   grid.set(x, z, { terrain, mesh, onRuins });
-  anims.push({ mesh, t: -delay, dur: 0.38 });
+  anims.push({ mesh, t: -delay, landed: false });
 }
 
 /** Swap any flat stand-in that now has a loaded blockout, including one still falling. */
@@ -184,24 +186,66 @@ function updateRuinButtons() {
   }
 }
 
+/**
+ * Tile drop: a heavy block falling. It speeds up all the way down (no easing
+ * out), slams in, squashes hard, and settles with a quick damped wobble while
+ * dust rolls out from under it and the camera jolts.
+ */
+const DROP = {
+  height: 2.2, // start height above the board
+  fall: 0.24, // seconds in the air
+  stretch: 0.07, // tall and thin by the time it hits
+  squash: 0.24, // how flat it goes on impact
+  wobbleRate: 24, // squash oscillation (rad/s)
+  wobbleDamp: 10, // how fast the wobble dies
+  rebound: 0.035, // tiny bounce height: heavy things barely leave the ground again
+  settle: 0.42, // seconds after impact until the tile is at rest
+};
+
 function updateDropAnims(dt) {
   for (let i = anims.length - 1; i >= 0; i--) {
     const a = anims[i];
     a.t += dt;
     if (a.t < 0) continue;
     a.mesh.visible = true;
-    const p = Math.min(a.t / a.dur, 1);
-    const fall = 1 - Math.pow(1 - p, 3);
-    a.mesh.position.y = (1 - fall) * 1.4;
-    // little squash on landing
-    const squash = p > 0.7 ? Math.sin(((p - 0.7) / 0.3) * Math.PI) * 0.12 : 0;
-    a.mesh.scale.set(1 + squash * 0.4, 1 - squash, 1 + squash * 0.4);
-    if (p >= 1) {
+    if (a.t < DROP.fall) {
+      // Free fall: y follows gravity (quadratic), so it is fastest at the moment of impact.
+      const p = a.t / DROP.fall;
+      a.mesh.position.y = DROP.height * (1 - p * p);
+      const s = DROP.stretch * p;
+      a.mesh.scale.set(1 - s * 0.4, 1 + s, 1 - s * 0.4);
+      continue;
+    }
+    const u = a.t - DROP.fall; // time since impact
+    if (!a.landed) {
+      a.landed = true;
+      const { x, z } = a.mesh.position;
+      dust.burst(x, z);
+      shake.amount = Math.min(shake.amount + 0.7, 1.2);
+    }
+    // Damped spring around rest: flat on impact, a little tall on the way back, then still.
+    const k = DROP.squash * Math.exp(-DROP.wobbleDamp * u) * Math.cos(DROP.wobbleRate * u);
+    a.mesh.scale.set(1 + k * 0.45, 1 - k, 1 + k * 0.45);
+    const bounce = u < 0.16 ? Math.sin((u / 0.16) * Math.PI) * DROP.rebound : 0;
+    a.mesh.position.y = Math.max(0, bounce);
+    if (u >= DROP.settle) {
       a.mesh.position.y = 0;
       a.mesh.scale.set(1, 1, 1);
       anims.splice(i, 1);
     }
   }
+}
+
+/** Camera jolt on impact. Added after the rig places the camera, so it never builds up. */
+const shake = { amount: 0 };
+function applyShake(dt) {
+  if (shake.amount < 0.001) return;
+  // Scales with zoom so it looks the same size on screen at any distance.
+  const amp = 0.0045 * rig.distance * shake.amount;
+  camera.position.x += (Math.random() * 2 - 1) * amp * 0.5;
+  camera.position.y += (Math.random() * 2 - 1) * amp;
+  camera.position.z += (Math.random() * 2 - 1) * amp * 0.5;
+  shake.amount *= Math.exp(-16 * dt);
 }
 
 // ---------- HUD ----------
@@ -1073,6 +1117,7 @@ function demolish(x, z) {
 rig.onClick = tryPlace;
 
 window.addEventListener('keydown', (e) => {
+  if (document.getElementById('loading')) return; // no shortcuts until the island exists
   const k = e.key.toLowerCase();
   const tgt = e.target;
   // Space: replay the payout sequence (debug). Works even with a debug slider focused.
@@ -1147,6 +1192,8 @@ function resetIsland() {
   tiles.clear();
   grid.clear();
   anims.length = 0;
+  dust.clear();
+  shake.amount = 0;
   expansion.clear();
   piecesPlaced = 0;
   Object.assign(turn, {
@@ -1228,6 +1275,8 @@ function frame(now) {
   rig.update(dt);
   followTarget(rig.target, rig.distance, dt);
   updateDropAnims(dt);
+  applyShake(dt);
+  dust.update(dt);
   factory.update(dt);
   frontier.update(dt, time);
   mysteries.update(time);
@@ -1244,8 +1293,40 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-resetIsland();
-requestAnimationFrame(frame);
+// ---------- startup ----------
+// Loading bar: bytes of the model files downloaded so far. The FBX files are
+// almost all of the download; parsing them after the last byte takes a moment more,
+// so the bar stops at 95% until the models are ready.
+const loadTimer = setInterval(() => {
+  const { loaded, total } = loadProgress;
+  if (total) $('loadingFill').style.width = `${Math.round((loaded / total) * 95)}%`;
+}, 100);
+
+/** Send every model texture to the GPU now, so the first landing doesn't stutter while ~60 MB uploads. */
+function warmUpModels() {
+  for (const model of factory.models?.values() ?? []) {
+    model.traverse((obj) => {
+      if (!obj.isMesh) return;
+      for (const m of [obj.material].flat()) {
+        for (const tex of [m.map, m.normalMap, m.emissiveMap]) if (tex) renderer.initTexture(tex);
+      }
+    });
+  }
+}
+
+// Start once the models are in, so the Capital lands as the real city rather than a
+// stand-in block that swaps a second later. factory.ready also resolves if loading
+// fails (the game then runs on coloured blocks).
+factory.ready.then(() => {
+  clearInterval(loadTimer);
+  $('loadingFill').style.width = '100%';
+  warmUpModels();
+  resetIsland();
+  last = performance.now();
+  requestAnimationFrame(frame);
+  $('loading').classList.add('done');
+  setTimeout(() => $('loading').remove(), 700);
+});
 
 // Handy for debugging in the console.
 window.tileIsland = { grid, hand, placement, rig, expansion, mysteries, turn, dialogue, economy: economyNow };

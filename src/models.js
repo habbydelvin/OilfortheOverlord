@@ -146,6 +146,21 @@ function movingTracksOnly(clip) {
   return new THREE.AnimationClip(clip.name, clip.duration, tracks);
 }
 
+/** Bytes downloaded across all model files, for a loading bar. Totals appear as each download starts. */
+export const loadProgress = { loaded: 0, total: 0 };
+const fileBytes = new Map(); // file -> [loaded, total]
+function trackBytes(file, e) {
+  if (!e.lengthComputable) return;
+  fileBytes.set(file, [e.loaded, e.total]);
+  let loaded = 0;
+  let total = 0;
+  for (const [l, t] of fileBytes.values()) {
+    loaded += l;
+    total += t;
+  }
+  Object.assign(loadProgress, { loaded, total });
+}
+
 /** Loads every blockout once. Rejects only if the atlas or a file is missing. */
 export async function loadBlockouts() {
   const loader = new FBXLoader();
@@ -157,7 +172,7 @@ export async function loadBlockouts() {
   atlas.anisotropy = 8;
 
   const jobs = Object.entries(BLOCKOUTS).map(async ([terrain, file]) => {
-    const raw = await loader.loadAsync(`${MODEL_URL}${file}?v=${MODEL_VERSION}`);
+    const raw = await loader.loadAsync(`${MODEL_URL}${file}?v=${MODEL_VERSION}`, (e) => trackBytes(file, e));
     const finished = FINISHED[terrain];
     if (finished) {
       toStandard(raw);
