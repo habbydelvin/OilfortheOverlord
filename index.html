@@ -24,7 +24,13 @@
 
         <div class="section">This season</div>
         <div class="res food" data-tip="food">
-          <div class="k">Food</div>
+          <div class="k">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 7.5c-1.6-1.3-4.6-1.6-6.4.3C3.4 10.1 4 14.6 6.3 17.9c1.4 2 3 3.4 4.4 2.9.6-.2.9-.4 1.3-.4s.7.2 1.3.4c1.4.5 3-.9 4.4-2.9 2.3-3.3 2.9-7.8.7-10.1-1.8-1.9-4.8-1.6-6.4-.3z" fill="currentColor" />
+              <path d="M12 7.5c0-2 .6-3.6 2-4.8" fill="none" stroke="#8a5a32" stroke-width="1.8" stroke-linecap="round" />
+              <path d="M13 5.2c1.6-1.9 4.2-2 5.4-1.6-.5 1.9-2.8 3.3-5.4 1.6z" fill="#9be36f" />
+            </svg>Food
+          </div>
           <div class="v"><span id="resFood">0</span><small id="resFoodD">(0)</small></div>
           <div class="pop">
             <div class="pop-bar"><div class="pop-fill" id="popFill"></div></div>
@@ -32,11 +38,22 @@
           </div>
         </div>
         <div class="res mp" data-tip="mp">
-          <div class="k">Manpower</div>
+          <div class="k">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="7" r="4" fill="currentColor" />
+              <path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8z" fill="currentColor" />
+            </svg>Manpower
+          </div>
           <div class="v"><span id="resMp">0</span><small id="resMpD">(0)</small></div>
         </div>
         <div class="res oil" data-tip="oil">
-          <div class="k">Oil</div>
+          <div class="k">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 3h12c.6 2.9.9 5.9.9 9s-.3 6.1-.9 9H6c-.6-2.9-.9-5.9-.9-9s.3-6.1.9-9z" fill="currentColor" />
+              <path d="M5.4 8h13.2M5.4 16h13.2" stroke="rgba(0,0,0,.45)" stroke-width="1.6" />
+              <path d="M12 9.6c-1.1 1.5-1.8 2.5-1.8 3.3a1.8 1.8 0 003.6 0c0-.8-.7-1.8-1.8-3.3z" fill="#1c1c1c" />
+            </svg>Oil
+          </div>
           <div class="v"><span id="resOil">0</span><small id="resOilD">(0)</small></div>
         </div>
 
@@ -50,7 +67,7 @@
           Next turn<span id="btnNextSub">collect oil, draw a new hand</span>
         </button>
         <button id="btnReroll" class="btn blue">
-          Reroll hand<span id="btnRerollSub">costs 1 manpower</span>
+          Reroll hand<span id="btnRerollSub">costs 1 oil</span>
         </button>
         <button id="btnReset" class="btn red">
           Reset<span>back to the capital</span>

@@ -43,10 +43,10 @@ let piecesPlaced = 0;
 // Turn state: a turn is a season, a round is four seasons, tribute after Winter.
 /** Food in the store at the start, so a bad first year isn't an instant loss. */
 const STARTING_FOOD = 5;
-const turn = { strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, rerollSpent: 0, unlocked: new Set(), pinned: [], coins: 0, total: 0, food: STARTING_FOOD, population: 0, quota: FIRST_QUOTA };
+const turn = { strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, unlocked: new Set(), pinned: [], coins: 0, total: 0, food: STARTING_FOOD, population: 0, quota: FIRST_QUOTA };
 
 /** This season's economy with the carried-over food store and population. */
-const economyNow = () => computeEconomy(grid, turn.rerollSpent, { population: turn.population, foodStore: turn.food });
+const economyNow = () => computeEconomy(grid, { population: turn.population, foodStore: turn.food });
 
 // Tiles that can't be drawn yet: no Cliffs or Pre-war Ruins during the first round.
 /** Guaranteed opening hand (shuffled). Extra slots, if HAND_SIZE grows, are drawn at random. */
@@ -182,7 +182,11 @@ function updateHUD() {
   // Food / Manpower: big number = how much you produce, small (±n) = excess or shortfall after upkeep.
   // Food shows the balance (grown minus eaten), which is what actually goes into the store.
   setRes('resFood', e.foodBalance, e.foodBalance);
-  setRes('resMp', e.supplied, e.spare);
+  // Manpower is a cap: big number = free slots / total slots, small = idle buildings (if any).
+  $('resMp').textContent = `${e.free}/${e.cap}`;
+  $('resMp').classList.toggle('neg', e.idle > 0);
+  $('resMpD').textContent = e.idle ? `(${e.idle} idle)` : '';
+  $('resMpD').className = e.idle ? 'down' : '';
   // Oil: big number = the stockpile (the Overlord takes it all after Winter), small = this season's yield.
   $('resOilD').textContent = `(+${e.oil})`;
   $('resOilD').className = e.oil > 0 ? 'up' : '';
@@ -196,8 +200,8 @@ function updateHUD() {
     (turn.population ? ` · population ${turn.population}` : '');
 
   $('btnReroll').classList.toggle('hidden', hand.isEmpty);
-  $('btnReroll').classList.toggle('disabled', e.supplied - rerollCost() < 1);
-  $('btnRerollSub').textContent = `costs ${rerollCost()} manpower`;
+  $('btnReroll').classList.toggle('disabled', turn.stockpile < rerollCost());
+  $('btnRerollSub').textContent = `costs ${rerollCost()} oil`;
   $('btnNextSub').textContent = hand.placeableForced.length
     ? 'place your Wasteland first'
     : turn.season === 3
@@ -206,7 +210,7 @@ function updateHUD() {
   if (tipKind) renderResTip(e);
 }
 
-/** Each reroll in a season costs 1 more manpower than the last (1, 2, 3, …); resets every turn. */
+/** Each reroll in a season costs 1 more barrel of oil than the last (1, 2, 3, …); resets every turn. */
 const rerollCost = () => turn.rerolls + 1;
 
 // ---------- resource breakdown tooltips ----------
@@ -254,15 +258,15 @@ function breakdown(kind, e) {
     add('Built on ruins', e.bonus.ruins);
     add(`Population`, e.population);
     add('Toxic craters', -e.craterManpower);
-    add('Rerolls this season', -e.rerollsSpent);
-    total('Supplied', e.supplied);
+    total('Worker slots', e.cap);
+    add(`Hydro-farms ×${c('farm')}`, -c('farm'));
     add(`Stations ×${c('station')}`, -c('station'));
     add(`Refineries ×${c('refinery')}`, -c('refinery'));
-    total('Spare', signed(e.spare));
+    total(e.idle ? 'Idle' : 'Free', e.idle ? e.idle : e.free);
     note(
-      e.spare >= 0
-        ? `Each spare worker: +10% station output (now ${times(e.boost)})`
-        : `Short ${-e.spare} workers: buildings run at ${pct(e.staffing)}`,
+      e.idle
+        ? `Not enough workers: your ${e.idle} newest building${e.idle === 1 ? '' : 's'} sit idle and produce nothing`
+        : 'Each farm, station and refinery needs 1 worker. Housing raises the cap.',
     );
   } else {
     add(`Stations ×${c('station')}`, 2 * c('station'));
@@ -270,8 +274,6 @@ function breakdown(kind, e) {
     add('Capital doubles', e.bonus.capitalCrude);
     total('Crude', e.crude);
     mul(`Refineries (${e.refineryLinks} station link${e.refineryLinks === 1 ? '' : 's'})`, e.refineryMult);
-    mul('Spare workers', e.boost);
-    mul('Understaffed', e.staffing);
     mul('Hunger', e.fed);
     total('This season', signed(e.oil));
     note(`Stockpile ${turn.stockpile} → ${turn.stockpile + e.oil} / ${turn.quota} tribute`);
@@ -326,7 +328,9 @@ function updateInspect(cell) {
   el.style.setProperty('--edge', hex(t.edge));
   const notes = [];
   if (c.onRuins && t.category === 'building')
-    notes.push(`Built on Pre-war Ruins: +${c.terrain === 'settlement' ? 2 : 1} manpower`);
+    notes.push(`Built on Pre-war Ruins: +${c.terrain === 'settlement' ? 2 : 1} worker slot${c.terrain === 'settlement' ? 's' : ''}`);
+  if (economyNow().perCell.find((p) => p.x === c.x && p.z === c.z)?.idle)
+    notes.push('Idle: no free workers. Build housing to staff it.');
   if (t.buildable) notes.push('A building can be placed on top of this tile');
   el.innerHTML = `
     <div class="card-big">
@@ -436,7 +440,7 @@ function showOil(amount, bump = false) {
 
 function runPayout(e, onDone) {
   const tiles = e.perCell
-    .filter((p) => p.food || p.manpower || p.oil || EFFECT_TILES.has(p.terrain) || p.terrain.startsWith('wasteland'))
+    .filter((p) => p.food || p.idle || p.oil || EFFECT_TILES.has(p.terrain) || p.terrain.startsWith('wasteland'))
     .map((p) => ({ ...p, mesh: grid.get(p.x, p.z).mesh }))
     .flatMap(splitTriggers);
 
@@ -451,7 +455,7 @@ function runPayout(e, onDone) {
   let shown = turn.stockpile;
   let store = turn.food;
   let population = turn.population;
-  let mp = e.supplied;
+  let mp = e.cap;
   document.body.classList.add('paying');
   payout.start(
     tiles,
@@ -469,7 +473,8 @@ function runPayout(e, onDone) {
         store -= growthCost(population);
         population++;
         showStore(store, growthCost(population), true, population);
-        $('resMp').textContent = ++mp;
+        mp++;
+        $('resMp').textContent = `${Math.max(0, mp - e.needed)}/${mp}`;
         bump($('resMp'));
       }
     },
@@ -488,17 +493,17 @@ function splitTriggers(p) {
   if (p.triggers !== 2) return [p];
   const half = (v) => Math.ceil(v / 2);
   const first = { ...p, oil: half(p.oil), food: half(p.food) };
-  const second = { ...p, oil: p.oil - first.oil, food: p.food - first.food, manpower: 0 };
+  const second = { ...p, oil: p.oil - first.oil, food: p.food - first.food };
   return [first, second];
 }
 
 /** Tiles that hop even without a number of their own (they boost their neighbours). */
 const EFFECT_TILES = new Set(['pump', 'oasis', 'tarpit', 'refinery']);
 
-/** Why the city collapses at the end of the year (checked after Winter only), or null. Food: the store is emptied by a shortfall. Manpower: none supplied at all. */
+/** Why the city collapses at the end of the year (checked after Winter only), or null. Food: the store is emptied by a shortfall. Manpower: no worker slots left at all. */
 function collapseReason(e) {
   if (e.foodBalance < 0 && e.storeAfter <= 0) return 'Your food ran out. The people starved.';
-  if (e.supplied <= 0) return 'Your manpower ran out. The city could not be worked.';
+  if (e.cap <= 0) return 'Your manpower ran out. The city could not be worked.';
   return null;
 }
 
@@ -547,7 +552,7 @@ function settleTurn(e) {
   const tag = (n) => `<span class="${Math.round(n) < 0 ? 'bad' : 'good'}">${sgn(n)}</span>`;
   const lines = [
     `<b>${label}</b>`,
-    `Food ${tag(e.foodBalance)} · Manpower ${tag(e.spare)} · Oil ${tag(e.oil)}`,
+    `Food ${tag(e.foodBalance)} · Free workers ${e.free}/${e.cap}${e.idle ? ` <span class="bad">(${e.idle} idle)</span>` : ''} · Oil ${tag(e.oil)}`,
   ];
   let msg = `${label}: +${e.oil} oil`;
   let kind = 'good';
@@ -598,7 +603,6 @@ function settleTurn(e) {
   turn.season = yearEnds ? 0 : turn.season + 1;
   if (yearEnds) turn.round++;
   turn.rerolls = 0;
-  turn.rerollSpent = 0;
   toast(msg, kind, 3200);
   // A new year opens with the shop; the hand is dealt when it closes.
   if (turn.season === 0) {
@@ -790,11 +794,13 @@ function tryPlace() {
     else demolish(...cells[0]);
     return;
   }
+  const idleBefore = economyNow().idle;
   cells.forEach(([x, z], i) => addTile(x, z, piece.terrain, i * 0.05));
   piecesPlaced++;
   hand.consume();
   frontier.rebuild(grid);
   updateHUD();
+  if (economyNow().idle > idleBefore) toast('No free workers: this building sits idle until you add housing', 'bad', 2400);
   checkExpansion();
 }
 
@@ -879,15 +885,15 @@ window.addEventListener('keydown', (e) => {
 $('btnReroll').addEventListener('click', () => {
   if (hand.isEmpty || payout.active || turn.over || shopOpen) return;
   const cost = rerollCost();
-  if (economyNow().supplied - cost < 1) {
-    toast(`Not enough manpower to reroll (costs ${cost})`, 'bad');
+  if (turn.stockpile < cost) {
+    toast(`Not enough oil to reroll (costs ${cost})`, 'bad');
     return;
   }
   hand.reroll();
   turn.rerolls++;
-  turn.rerollSpent += cost;
+  turn.stockpile -= cost;
   updateHUD();
-  toast(`Hand rerolled: -${cost} manpower (next reroll costs ${rerollCost()})`);
+  toast(`Hand rerolled: -${cost} oil (next reroll costs ${rerollCost()})`);
 });
 $('btnNext').addEventListener('click', (e) => {
   e.currentTarget.blur(); // so Space doesn't re-click it
@@ -911,7 +917,6 @@ function resetIsland() {
     season: 0,
     stockpile: 0,
     rerolls: 0,
-    rerollSpent: 0,
     total: 0,
     food: STARTING_FOOD,
     population: 0,

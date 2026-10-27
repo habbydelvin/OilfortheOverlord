@@ -73,18 +73,17 @@ Four parts feed each other in a ring: cities, manpower, farms and food. Oil leav
 | Farms | Food | Grow |
 | Food | Cities | Feeds |
 | Manpower | Oil | Run derricks |
-| Manpower | Oil | Spare workers multiply output |
 | Oil | Overlord | Tribute |
 | Overlord | Farms | Retaliation |
 
 - **Cities.** Cities supply the workers, and every city has to be fed. More cities means more manpower, but also more mouths.
-- **Manpower.** Workers run the farms and oil fields. Spare workers multiply oil output, or you can spend them to reroll your hand.
+- **Manpower.** A cap, not a resource you spend. Housing raises the cap; every farm, derrick and refinery takes one slot. Past the cap, the newest buildings sit idle and produce nothing.
 - **Farms.** Farms use manpower to grow food. Placing them next to a windmill gives a food bonus.
 - **Food.** Food feeds the cities. Food and manpower are checked together each turn, so an imbalance stalls the whole economy.
-- **Oil.** Derricks pump crude, refineries multiply it and spare manpower boosts it. Whatever the economy produces goes to the overlord.
+- **Oil.** Derricks pump crude and refineries multiply it. Whatever the economy produces goes to the overlord.
 - **The Overlord.** Collects oil at the end of each round. The better you do, the higher the next quota. Failure to deliver prompts retaliation.
 
-Spare workers aren't wasted. More manpower also multiplies oil output. Every worker not running a tile boosts the cascade, unless you spend them to reroll your hand.
+Manpower decides how many buildings you can support. Free slots are room to grow; idle buildings are wasted tiles.
 
 ## Structure
 
@@ -94,7 +93,7 @@ A round is four turns: Spring, Summer, Autumn, Winter. Tribute is due at the end
 
 1. **Build.** Place tiles from your hand next to existing land. Tiles come in Tetris-like pieces, so you can rotate them to get the adjacency you want. The only rule is that each tile must connect to the other.
 2. **Calculate.** Food, manpower and oil are calculated. The turn ends.
-3. **New hand.** You draw fresh tiles, and you can spend manpower to refresh (reroll) them.
+3. **New hand.** You draw fresh tiles, and you can spend oil to refresh (reroll) them.
 
 ### Tribute to the overlord
 
@@ -127,7 +126,7 @@ The interactive mock-up is an 11×9 grid. It starts with one capital city in the
 - Pick a piece, hover the grid, click to place.
 - **R** rotates. **1–3** select a piece.
 - On touch: tap to preview, tap again to place.
-- Reroll spends 1 manpower and draws three new pieces.
+- Reroll spends oil (1, then 2, 3… within a season) and draws three new pieces.
 - A piece places only if every cell is empty and at least one cell touches existing land on a side.
 
 Each piece is one tile type. Shape draw weights (singles about 32%, dominoes about 16%, trominoes about 16%, tetrominoes about 37%):
@@ -146,8 +145,8 @@ Tile-type draw weights: farm 3, oil derrick 3, village 2, city 1.1, windmill 1, 
 
 | Tile | Rule |
 | --- | --- |
-| City | +4 manpower, eats 3 food |
-| Village | +2 manpower, eats 1 food |
+| City | +4 worker slots, eats 3 food |
+| Village | +2 worker slots, eats 1 food |
 | Farm | 1 worker, +2 food, and +2 more if it touches a windmill |
 | Windmill | No workers. Boosts adjacent farms |
 | Oil derrick | 1 worker, +2 crude |
@@ -157,16 +156,11 @@ Tile-type draw weights: farm 3, oil derrick 3, village 2, city 1.1, windmill 1, 
 
 Food balance is food grown minus food eaten. Below zero, the city is starving.
 
-Manpower spare is workers supplied, minus workers employed, minus manpower spent on rerolls. Below zero, the city is understaffed.
+Manpower is a cap: worker slots come from housing, ruins and population. Worker buildings are staffed in the order they were placed; any beyond the cap are idle and produce nothing (an idle derrick doesn't feed a refinery either).
 
 ```
-staffing = 1                          if spare ≥ 0
-         = max(0, employed + spare) / employed
-                                       if spare < 0 and someone is employed
-
-boost    = 1 + 0.1 × max(0, spare)
-
-oil      = round(crude × refinery multiplier × boost × staffing)
+cap = housing + ruins + population - craters
+oil = round(crude from staffed derricks × refinery multiplier × fed)
 ```
 
 The refinery multiplier starts at 1 and gains 0.5 for each derrick orthogonally adjacent to a refinery. Linked derrick–refinery pairs and linked farm–windmill pairs are what the mock-up highlights.
@@ -179,9 +173,9 @@ Placement matters as much as which tile you draw. The same tiles, grouped around
 
 ### Oil field + refinery
 
-Several oil tiles with a refinery next to them get an oil multiplier. Derricks fire, refineries multiply, spare manpower boosts.
+Several oil tiles with a refinery next to them get an oil multiplier. Derricks fire, refineries multiply.
 
-The comparison uses four derricks, one refinery, and 4 spare workers.
+The comparison uses four derricks and one refinery, all staffed.
 
 District, refinery touching all four derricks:
 
@@ -203,8 +197,7 @@ D . . . D
 | --- | --- | --- |
 | Crude (2 per derrick) | 8 | 8 |
 | Refinery | ×3.0 (four neighbors) | ×1.5 (one neighbor) |
-| Manpower (4 spare, +0.1× each) | ×1.4 | ×1.4 |
-| **Barrels** | **34** | **17** |
+| **Barrels** | **24** | **12** |
 
 Same tiles: the district produces 2× the scattered layout.
 

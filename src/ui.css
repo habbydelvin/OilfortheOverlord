@@ -204,8 +204,27 @@ body {
 }
 
 #panel .res .k {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-size: 14px;
   font-weight: 600;
+}
+
+#panel .res .k .ico {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--ico, var(--c));
+}
+#panel .res.food .k .ico {
+  --ico: #e0533f; /* red apple */
+}
+#panel .res.mp .k .ico {
+  --ico: #f0b27a;
+}
+#panel .res.oil .k .ico {
+  --ico: #e08a3a;
 }
 
 #panel .res .v {
@@ -891,16 +910,30 @@ body.paying #btnReset {
   position: absolute;
   top: -12px;
   left: -12px;
-  width: 34px;
+  min-width: 34px;
   height: 34px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
+  padding: 0 9px 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 17px;
   background: var(--navy);
   border: 2px solid #22304a;
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 600;
   z-index: 1;
+}
+.card .badge .ico {
+  width: 15px;
+  height: 15px;
+  color: #f0b27a;
+}
+.card .badge.free {
+  color: rgba(255, 255, 255, 0.55);
+}
+.card .badge.free .ico {
+  opacity: 0.55;
 }
 
 .card .hotkey {
@@ -1215,4 +1248,16 @@ body.shopping #inspect {
 .shop-reroll.cant {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* Resource icons inside card rule text and badges. */
+.ico.res-mp { color: #f0b27a; }
+.ico.res-food { color: #e0533f; }
+.ico.res-oil { color: #e08a3a; }
+.rule .ico {
+  width: 1.15em;
+  height: 1.15em;
+  margin-left: 2px;
+  vertical-align: -0.22em;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.5));
 }

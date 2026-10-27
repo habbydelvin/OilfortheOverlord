@@ -5,7 +5,6 @@ const TILE_H = 0.62; // cap + soil height, used to squash from the bottom
 // Resources are told apart by colour alone; only population keeps a word.
 const RES = {
   food: { word: '', color: '#9be36f' },
-  manpower: { word: '', color: '#f0b27a' },
   oil: { word: '', color: '#ffb347' },
   population: { word: 'population', color: '#8fe0ff' },
 };
@@ -77,7 +76,7 @@ export class Payout {
   }
 
   /**
-   * tiles: [{ mesh, x, z, food, manpower, oil }]
+   * tiles: [{ mesh, x, z, food, oil, idle }]
    * onFire(tile): called when a tile pops (e.g. to tick counters)
    * onDone(): called after the last label fades
    */
@@ -96,14 +95,17 @@ export class Payout {
     this.done = onDone;
     let delay = 0;
     tiles.forEach((tile, i) => {
-      const rows = ['population', 'oil', 'food', 'manpower']
-        .filter((r) => tile[r])
-        .map(
-          (r) =>
-            `<div class="row${tile[r] < 0 ? ' neg' : ''}" style="--c:${RES[r].color}">` +
-            `<b>${tile[r] > 0 ? '+' : ''}${tile[r]}</b>${RES[r].word ? `<span>${RES[r].word}</span>` : ''}</div>`,
-        )
-        .join('') ||
+      const rows =
+        ['population', 'oil', 'food']
+          .filter((r) => tile[r])
+          .map(
+            (r) =>
+              `<div class="row${tile[r] < 0 ? ' neg' : ''}" style="--c:${RES[r].color}">` +
+              `<b>${tile[r] > 0 ? '+' : ''}${tile[r]}</b>${RES[r].word ? `<span>${RES[r].word}</span>` : ''}</div>`,
+          )
+          .join('') +
+          // Idle buildings (no free workers) produce nothing.
+          (tile.idle ? '<div class="row zero"><b>idle</b></div>' : '') ||
         // Wasteland triggers too, but produces nothing: a grey 0.
         (tile.terrain?.startsWith('wasteland') ? '<div class="row zero"><b>0</b></div>' : '');
       let el = null;

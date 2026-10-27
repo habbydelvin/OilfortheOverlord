@@ -63,9 +63,10 @@ function statLines(stats) {
   if (!stats || Object.keys(stats).length === 0) return ['No direct yield'];
   const lines = [];
   if (stats.food) lines.push(`Food ${signed(stats.food)}`);
-  if (stats.manpower) lines.push(`Manpower ${signed(stats.manpower)}`);
+  if (stats.manpower > 0) lines.push(`Worker slots +${stats.manpower}`);
+  if (stats.manpower < 0) lines.push(`Needs ${-stats.manpower} worker`);
   if (stats.oil) lines.push(`Oil ${signed(stats.oil)}`);
-  if (stats.ruinsBonusManpower) lines.push(`On ruins, +${stats.ruinsBonusManpower} extra manpower`);
+  if (stats.ruinsBonusManpower) lines.push(`On ruins, +${stats.ruinsBonusManpower} extra worker slot`);
   if (stats.adjacent) {
     for (const [neighbour, bonus] of Object.entries(stats.adjacent)) {
       lines.push(`Next to ${NAME[neighbour] ?? neighbour}: ${bonusText(bonus)}`);

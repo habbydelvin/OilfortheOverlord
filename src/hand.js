@@ -1,7 +1,24 @@
 import { pieceOf, randomPiece, rotateCells, shapeFits, SHAPES } from './pieces.js';
-import { ACTIONS, TERRAINS, cardDef, cardText, hex } from './tiles.js';
+import { ACTIONS, ICONS, TERRAINS, cardDef, cardText, hex } from './tiles.js';
+import { WORKERS } from './economy.js';
 
 const CELL_PX = 20;
+
+const MP_ICON = ICONS.manpower;
+const FOOD_ICON = ICONS.food;
+
+/**
+ * Cost badge for a piece (per tile × tiles in the piece): worker buildings show the manpower they need,
+ * housing shows the food it eats each season, everything else is a free 0 manpower.
+ */
+function costBadge(p, t) {
+  const n = SHAPES[p.shape].cells.length;
+  const workers = (WORKERS[p.terrain] ?? 0) * n;
+  if (workers) return `<div class="badge" title="manpower needed">-${workers}${MP_ICON}</div>`;
+  const food = Math.min(0, t.stats?.food ?? 0) * n;
+  if (food) return `<div class="badge" title="food eaten each season">${food}${FOOD_ICON}</div>`;
+  return `<div class="badge free" title="no manpower needed">0${MP_ICON}</div>`;
+}
 
 /** Wasteland has to be placed: it can't be rerolled away or left in hand at the end of a turn. */
 // Everything that isn't Wasteland (tiles and action cards), so a pinned Wasteland slot draws only Wasteland.
@@ -128,7 +145,7 @@ export class Hand {
           .join(' ');
         return `
         <div class="${cls}" data-i="${i}" style="--top:${hex(t.top)};--edge:${hex(t.edge)};animation-delay:${i * 50}ms">
-          <div class="badge" title="tiles in piece">${SHAPES[p.shape].cells.length}</div>
+          ${costBadge(p, t)}
           <div class="hotkey">${i + 1}</div>
           <div class="art">${t.symbol ? `<div class="symbol">${t.symbol}</div>` : this.#shapeHTML(p, hex(t.top), hex(t.edge))}</div>
           <div class="name">${t.name}</div>

@@ -253,3 +253,9 @@ h1 {
   text-transform: uppercase;
   color: #e8bf68;
 }
+
+/* Resource icons in rule text (shared with the game cards). */
+.ico { width: 1.15em; height: 1.15em; vertical-align: -0.22em; margin-left: 2px; }
+.ico.res-mp { color: #f0b27a; }
+.ico.res-food { color: #e0533f; }
+.ico.res-oil { color: #e08a3a; }

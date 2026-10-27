@@ -15,24 +15,24 @@ export const TERRAINS = {
   // ---- buildings ----
   capital: {
     name: 'Capital',
-    trigger: 'On trigger',
+    trigger: 'Passive',
     top: 0x8a8f96,
     edge: 0x5f646b,
     category: 'building',
     buildable: false,
     weight: 0, // only the starting tile
-    rule: '+4 manpower · -3 food · Trigger adjacent buildings twice',
+    rule: '+4 worker slots · Eats 3 food each season · Adjacent buildings trigger twice',
     stats: { food: -3, manpower: 4 },
   },
   settlement: {
     name: 'Settlement',
-    trigger: 'On trigger',
+    trigger: 'Passive',
     top: 0xa0643c,
     edge: 0x74452a,
     category: 'building',
     buildable: false,
     weight: 2,
-    rule: '+2 manpower · -2 food',
+    rule: '+2 worker slots',
     stats: { food: -2, manpower: 2, ruinsBonusManpower: 1 },
   },
   farm: {
@@ -44,7 +44,7 @@ export const TERRAINS = {
     buildable: false,
     weight: 3,
     rule: '+2 food',
-    stats: { food: 2, adjacent: { pump: { food: 2 } } },
+    stats: { food: 2, manpower: -1, adjacent: { pump: { food: 2 } } },
   },
   pump: {
     name: 'Water Pump',
@@ -65,7 +65,7 @@ export const TERRAINS = {
     category: 'building',
     buildable: false,
     weight: 3,
-    rule: '+2 oil · -1 manpower',
+    rule: '+2 oil',
     stats: { manpower: -1, oil: 2, adjacent: { tarpit: { oil: 2 } } },
   },
   refinery: {
@@ -76,7 +76,7 @@ export const TERRAINS = {
     category: 'building',
     buildable: false,
     weight: 1,
-    rule: '+0.5× oil per adjacent station · -1 manpower',
+    rule: '+0.5× oil per adjacent station',
     stats: { manpower: -1, oilMultiplierPerAdjacent: { station: 0.5 } },
   },
 
@@ -168,7 +168,7 @@ export const TERRAINS = {
     category: 'land',
     buildable: true,
     weight: 0.75,
-    rule: 'Built on: +1 manpower (+2 settlement)',
+    rule: 'Built on: +1 worker slot (+2 settlement)',
     stats: { builtOnBonus: { manpower: 1 } }, // permanent, any building
   },
   crater: {
@@ -179,7 +179,7 @@ export const TERRAINS = {
     category: 'junk',
     buildable: false,
     weight: 0, // only created by the overlord
-    rule: '-1 manpower, -1 food per adjacent farm/settlement',
+    rule: '-1 worker slot, -1 food per adjacent farm/settlement',
     stats: { adjacentPenalty: { farm: { manpower: -1, food: -1 }, settlement: { manpower: -1, food: -1 } } },
   },
 };
@@ -212,10 +212,26 @@ export const ACTIONS = {
     rule: 'Remove a tile (not a Capital)',
   },
 };
+/** Resource icons (inline SVG, tinted by CSS via the res-* class). */
+export const ICONS = {
+  manpower:
+    '<svg class="ico res-mp" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="7" r="4" fill="currentColor"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8z" fill="currentColor"/></svg>',
+  food:
+    '<svg class="ico res-food" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7.5c-1.6-1.3-4.6-1.6-6.4.3C3.4 10.1 4 14.6 6.3 17.9c1.4 2 3 3.4 4.4 2.9.6-.2.9-.4 1.3-.4s.7.2 1.3.4c1.4.5 3-.9 4.4-2.9 2.3-3.3 2.9-7.8.7-10.1-1.8-1.9-4.8-1.6-6.4-.3z" fill="currentColor"/><path d="M12 7.5c0-2 .6-3.6 2-4.8" fill="none" stroke="#8a5a32" stroke-width="1.8" stroke-linecap="round"/><path d="M13 5.2c1.6-1.9 4.2-2 5.4-1.6-.5 1.9-2.8 3.3-5.4 1.6z" fill="#9be36f"/></svg>',
+  oil:
+    '<svg class="ico res-oil" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12c.6 2.9.9 5.9.9 9s-.3 6.1-.9 9H6c-.6-2.9-.9-5.9-.9-9s.3-6.1.9-9z" fill="currentColor"/><path d="M5.4 8h13.2M5.4 16h13.2" stroke="rgba(0,0,0,.45)" stroke-width="1.6"/><path d="M12 9.6c-1.1 1.5-1.8 2.5-1.8 3.3a1.8 1.8 0 003.6 0c0-.8-.7-1.8-1.8-3.3z" fill="#1c1c1c"/></svg>',
+};
+
+/** Swap "<amount> food/oil/worker slot(s)" for "<amount> <icon>" in rule text. */
+const iconize = (line) =>
+  line.replace(/([+-]?\d+(?:\.\d+)?×?) (food|oil|worker slots?|manpower)\b/g, (_, n, w) =>
+    `${n}${ICONS[w.startsWith('worker') ? 'manpower' : w]}`,
+  );
+
 /** Card text as HTML: a small trigger heading, then one line per effect. */
 export const cardText = (t) =>
   (t.trigger ? `<div class="trigger">${t.trigger}</div>` : '') +
-  t.rule.split(' · ').map((l) => `<div>${l}</div>`).join('');
+  t.rule.split(' · ').map((l) => `<div>${iconize(l)}</div>`).join('');
 
 export const isAction = (key) => key in ACTIONS;
 /** Tile or action-card definition for a card key. */

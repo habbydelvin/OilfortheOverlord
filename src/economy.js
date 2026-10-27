@@ -2,16 +2,17 @@ import { DIRS } from './grid.js';
 import { TERRAINS } from './tiles.js';
 
 /** Workers each building needs to run. */
-const WORKERS = { station: 1, refinery: 1 };
+export const WORKERS = { farm: 1, station: 1, refinery: 1 };
 
 /**
  * Calculates one season of the economy from the current grid.
  *
- * Order (single pass, no loops):
- *  1. Manpower: supplied (capital, settlements, ruins bonus, crater penalty) vs employed (stations, refineries)
- *     minus manpower spent on rerolls. Short of workers -> staffing < 1, spare workers -> oil boost.
- *  2. Food: farms grow (no workers needed), capital/settlements eat. Not enough food -> fed < 1.
- *  3. Oil: crude × refinery multiplier × boost × staffing × fed.
+ * Order:
+ *  1. Manpower is a capacity, not a resource: cap = capital + settlements + ruins + population - craters.
+ *     Worker buildings (farms, stations, refineries) are staffed in placement order; past the cap the
+ *     newest go idle and produce nothing.
+ *  2. Food: staffed farms grow, capital/settlements eat. Not enough food -> fed < 1.
+ *  3. Oil: crude (staffed stations) × refinery multiplier × fed.
  *  4. Food store: spare food is banked; a shortfall is covered from the store before `fed` drops.
  *     Each time the store reaches growthCost(population), it converts into +1 population.
  *
@@ -20,13 +21,12 @@ const WORKERS = { station: 1, refinery: 1 };
 /** Population needed to eat 1 food per season. */
 const POP_PER_FOOD = 2;
 
-export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
+export function computeEconomy(grid, state = {}) {
   const population = state.population ?? 0;
   const foodStore = state.foodStore ?? 0;
   const neighbours = (x, z) => DIRS.map(([dx, dz]) => grid.get(x + dx, z + dz)?.terrain);
 
-  let supplied = 0;
-  let employed = 0;
+  let capBase = 0;
   let craterManpower = 0;
   let farmFood = 0;
   let foodEaten = 0;
@@ -39,32 +39,52 @@ export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
   // What each tile contributes, for the end-of-turn payout animation.
   const perCell = [];
 
+  // Pass 1: worker capacity (housing, ruins, population, minus craters).
+  for (const cell of grid.cells.values()) {
+    const t = cell.terrain;
+    const stats = TERRAINS[t].stats;
+    if (stats.manpower > 0) capBase += stats.manpower;
+    if (cell.onRuins && TERRAINS[t].category === 'building') {
+      const ruins = 1 + (t === 'settlement' ? stats.ruinsBonusManpower : 0);
+      capBase += ruins;
+      bonus.ruins += ruins;
+    }
+    if (t === 'crater') {
+      craterManpower += neighbours(cell.x, cell.z).filter((n) => n === 'farm' || n === 'settlement').length;
+    }
+  }
+  const cap = Math.max(0, capBase + population - craterManpower);
+
+  // Staff worker buildings in placement order; the newest past the cap go idle.
+  const idleKeys = new Set();
+  let used = 0;
+  let needed = 0;
+  for (const cell of grid.cells.values()) {
+    const w = WORKERS[cell.terrain] ?? 0;
+    if (!w) continue;
+    needed += w;
+    if (used + w <= cap) used += w;
+    else idleKeys.add(`${cell.x},${cell.z}`);
+  }
+  const isIdle = (x, z) => idleKeys.has(`${x},${z}`);
+
+  // Pass 2: food and oil.
   for (const cell of grid.cells.values()) {
     const t = cell.terrain;
     const stats = TERRAINS[t].stats;
     const near = neighbours(cell.x, cell.z);
     counts[t] = (counts[t] ?? 0) + 1;
-    const per = { x: cell.x, z: cell.z, terrain: t, food: 0, manpower: 0, oil: 0, rawFood: 0, rawCrude: 0 };
+    const per = { x: cell.x, z: cell.z, terrain: t, food: 0, oil: 0, rawFood: 0, rawCrude: 0 };
     perCell.push(per);
 
-    // Upkeep / output shared by most buildings.
-    if (stats.manpower > 0) {
-      supplied += stats.manpower;
-      per.manpower += stats.manpower;
-    }
     if (stats.food < 0) {
       foodEaten += -stats.food;
       per.food += stats.food;
     }
-    employed += WORKERS[t] ?? 0;
-    per.manpower -= WORKERS[t] ?? 0;
 
-    // Ruins under any building: +1 manpower, +1 more for a settlement.
-    if (cell.onRuins && TERRAINS[t].category === 'building') {
-      const ruins = 1 + (t === 'settlement' ? stats.ruinsBonusManpower : 0);
-      supplied += ruins;
-      per.manpower += ruins;
-      bonus.ruins += ruins;
+    if (isIdle(cell.x, cell.z)) {
+      per.idle = true;
+      continue;
     }
 
     if (t === 'farm') {
@@ -91,23 +111,21 @@ export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
       }
       crude += per.rawCrude;
     } else if (t === 'refinery') {
-      refineryLinks += near.filter((n) => n === 'station').length;
+      // Only staffed stations feed a refinery.
+      refineryLinks += DIRS.filter(([dx, dz]) => {
+        const n = grid.get(cell.x + dx, cell.z + dz);
+        return n?.terrain === 'station' && !isIdle(n.x, n.z);
+      }).length;
     } else if (t === 'crater') {
       const victims = near.filter((n) => n === 'farm' || n === 'settlement').length;
-      craterManpower += victims;
       craterFood += victims;
-      per.manpower -= victims;
       per.food -= victims;
     }
   }
 
-  // Rerolls are paid out of the manpower pool itself, before anyone is put to work.
-  supplied = Math.max(0, supplied + population - craterManpower - rerollsSpent);
-  const spare = supplied - employed;
-  const staffing = spare >= 0 ? 1 : employed > 0 ? Math.max(0, employed + spare) / employed : 1;
-  const boost = 1 + 0.1 * Math.max(0, spare);
-
-  const foodGrown = farmFood; // farms need no workers, so understaffing doesn't touch them
+  const free = cap - used;
+  const idle = idleKeys.size;
+  const foodGrown = farmFood;
   // Citizens eat too: 1 food per 2 population (rounded up).
   const popFood = Math.ceil(population / POP_PER_FOOD);
   const totalEaten = foodEaten + craterFood + popFood;
@@ -124,7 +142,7 @@ export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
   }
 
   const refineryMult = 1 + 0.5 * refineryLinks;
-  const oil = Math.round(crude * refineryMult * boost * staffing * fed);
+  const oil = Math.round(crude * refineryMult * fed);
 
   // Per-tile: farms grow at the staffing rate; final oil is shared out over stations by their crude
   // (largest remainder, so the per-tile numbers add up exactly to the total).
@@ -139,13 +157,12 @@ export function computeEconomy(grid, rerollsSpent = 0, state = {}) {
 
   return {
     perCell,
-    supplied,
-    employed,
-    rerollsSpent,
+    cap,
+    used,
+    needed,
+    free,
+    idle,
     craterManpower,
-    spare,
-    staffing,
-    boost,
     foodGrown,
     foodEaten: totalEaten,
     popFood,
