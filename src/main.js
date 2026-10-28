@@ -106,8 +106,9 @@ const WASTELAND_VARIANTS = ['wasteland1', 'wasteland2', 'wasteland3', 'wasteland
 /**
  * Places a tile, replacing whatever was there (building over Wasteland / Ruins).
  * It stomps down after `delay` seconds; `instant` puts it straight in place instead (the starting Capital).
+ * bare: the cell gets an empty holder because a whole-piece Wasteland model covers it (see addWastePiece).
  */
-function addTile(x, z, terrain, delay = 0, instant = false) {
+function addTile(x, z, terrain, delay = 0, instant = false, { bare = false } = {}) {
   // Mix wasteland shades per cell so a wasteland piece doesn't look like one flat slab.
   if (WASTELAND_VARIANTS.includes(terrain)) {
     terrain = WASTELAND_VARIANTS[Math.floor(Math.random() * WASTELAND_VARIANTS.length)];
@@ -116,7 +117,7 @@ function addTile(x, z, terrain, delay = 0, instant = false) {
   const onRuins = old?.terrain === 'ruins' || (old?.onRuins ?? false);
   if (old) removeMesh(old.mesh);
 
-  const mesh = factory.create(terrain);
+  const mesh = factory.create(terrain, { bare });
   mesh.position.set(x, 0, z);
   mesh.visible = instant;
   tiles.add(mesh);
@@ -144,6 +145,81 @@ function removeMesh(mesh) {
   tiles.remove(mesh);
   const i = anims.findIndex((a) => a.mesh === mesh);
   if (i >= 0) anims.splice(i, 1);
+  const piece = mesh.userData.piece;
+  if (piece && !piece.broken) breakWastePiece(piece, mesh);
+}
+
+// ---------- Wasteland pieces ----------
+/**
+ * A Wasteland piece lands as one model spanning all its cells (one model per piece shape, turned with the piece).
+ * Every cell still gets its own (empty) holder, so the board rules work per cell as before. Each holder points
+ * at the piece record: { shape, rot, cells: keys, lead: key of the first cell in reading order, group, broken }.
+ * Before the piece models have loaded, the cells get coloured blocks and adoptWastePieces upgrades them later.
+ */
+function addWastePiece(piece, cells) {
+  const [lx, lz] = [...cells].sort((a, b) => a[1] - b[1] || a[0] - b[0])[0];
+  const rec = { shape: piece.shape, rot: piece.rot, cells: cells.map(([x, z]) => plotKey(x, z)), lead: plotKey(lx, lz), group: null, broken: false };
+  const group = factory.createPiece(piece.shape, piece.rot);
+  cells.forEach(([x, z], i) => {
+    addTile(x, z, piece.terrain, i * 0.05, Boolean(group), { bare: Boolean(group) });
+    grid.get(x, z).mesh.userData.piece = rec;
+  });
+  if (group) placeWasteGroup(rec, group, true);
+}
+
+/** Put a piece's model over its cells; `drop` makes it stomp in like a placed tile, with dust under every cell. */
+function placeWasteGroup(rec, group, drop) {
+  const pts = rec.cells.map((k) => k.split(',').map(Number));
+  const xs = pts.map((p) => p[0]);
+  const zs = pts.map((p) => p[1]);
+  group.position.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...zs) + Math.max(...zs)) / 2);
+  rec.group = group;
+  tiles.add(group);
+  if (drop) {
+    group.visible = false;
+    anims.push({ mesh: group, t: 0, landed: false, cells: pts });
+  }
+}
+
+/** A cell of the piece was removed or replaced: the whole-piece model goes, the cells left become single Wasteland. */
+function breakWastePiece(rec, removed) {
+  rec.broken = true;
+  if (rec.group) {
+    tiles.remove(rec.group);
+    const i = anims.findIndex((a) => a.mesh === rec.group);
+    if (i >= 0) anims.splice(i, 1);
+  }
+  for (const k of rec.cells) {
+    const c = grid.cells.get(k);
+    if (!c || c.mesh === removed || c.mesh.userData.piece !== rec) continue;
+    if (rec.group) factory.fillWaste(c.mesh, c.terrain); // (without a model the cells already show blocks)
+    c.mesh.visible = true;
+  }
+}
+
+/** The mesh that hops for a cell in the payout: a whole Wasteland piece hops once, on its first cell. */
+function payoutMesh(c) {
+  const rec = c.mesh.userData.piece;
+  if (rec?.group && !rec.broken && rec.lead === plotKey(c.x, c.z)) return rec.group;
+  return c.mesh;
+}
+
+/** Once the piece models arrive: Wasteland placed as blocks before then becomes the real models. */
+function adoptWastePieces() {
+  const done = new Set();
+  for (const cell of grid.cells.values()) {
+    if (!cell.terrain.startsWith('wasteland')) continue;
+    const rec = cell.mesh.userData.piece;
+    if (rec && !rec.broken) {
+      if (rec.group || done.has(rec)) continue;
+      done.add(rec);
+      const group = factory.createPiece(rec.shape, rec.rot);
+      if (!group) continue;
+      for (const k of rec.cells) grid.cells.get(k)?.mesh.clear();
+      placeWasteGroup(rec, group, false);
+    } else if (!cell.mesh.userData.blockout) factory.fillWaste(cell.mesh, cell.terrain);
+  }
+  if (hand.piece) placement.setPiece(hand.piece);
 }
 
 /** Debug stand-in for the overlord's nuke: turn a random non-capital tile into a Toxic Crater. */
@@ -257,7 +333,9 @@ function updateDropAnims(dt) {
     if (!a.landed) {
       a.landed = true;
       const { x, z } = a.mesh.position;
-      dust.burst(x, z);
+      // A whole Wasteland piece kicks up dust under each of its cells.
+      if (a.cells) for (const [cx, cz] of a.cells) dust.burst(cx, cz, 0.8);
+      else dust.burst(x, z);
       // Free placement: the land around the new tile is uncovered (expansion mode uncovers whole plots).
       if (!grid.expansionMode) fog.openAround(Math.round(x), Math.round(z), fogCfg.openRadius);
       fog.disturb(Math.round(x), Math.round(z)); // the impact blows back and thins the clouds nearby
@@ -630,7 +708,7 @@ function showOil(amount, bump = false) {
 function runPayout(e, onDone) {
   const tiles = e.perCell
     .filter((p) => p.food || p.idle || p.oil || EFFECT_TILES.has(p.terrain) || p.terrain.startsWith('wasteland'))
-    .map((p) => ({ ...p, mesh: grid.get(p.x, p.z).mesh }))
+    .map((p) => ({ ...p, mesh: payoutMesh(grid.get(p.x, p.z)) }))
     .flatMap(splitTriggers);
 
   // Population growth: once the tiles are done, the Capital hops once per population point gained.
@@ -1538,7 +1616,8 @@ function tryPlace() {
     return;
   }
   const idleBefore = economyNow().idle;
-  cells.forEach(([x, z], i) => addTile(x, z, piece.terrain, i * 0.05));
+  if (piece.terrain.startsWith('wasteland')) addWastePiece(piece, cells);
+  else cells.forEach(([x, z], i) => addTile(x, z, piece.terrain, i * 0.05));
   piecesPlaced++;
   hand.consume();
   if (!grid.expansionMode) revealMysteries(cells);
@@ -1894,8 +1973,8 @@ const loadTimer = setInterval(() => {
 }, 100);
 
 /** Send every model texture to the GPU now, so the first landing doesn't stutter while ~60 MB uploads. */
-function warmUpModels() {
-  for (const model of factory.models?.values() ?? []) {
+function warmUpModels(models = factory.models) {
+  for (const model of models?.values() ?? []) {
     model.traverse((obj) => {
       if (!obj.isMesh) return;
       for (const m of [obj.material].flat()) {
@@ -1917,6 +1996,13 @@ factory.ready.then(() => {
   requestAnimationFrame(frame);
   $('loading').classList.add('done');
   setTimeout(() => $('loading').remove(), 700);
+});
+
+// The Wasteland piece models (about 330 MB) load after the buildings, while the intro plays.
+factory.piecesReady.then((pieces) => {
+  if (!pieces) return;
+  warmUpModels(pieces);
+  adoptWastePieces();
 });
 
 // Handy for debugging in the console.

@@ -195,3 +195,228 @@ export async function loadBlockouts() {
 
   return Promise.all(jobs).then((pairs) => new Map(pairs));
 }
+
+// ---------- Wasteland pieces ----------
+/**
+ * One finished model per Wasteland piece shape (keys of SHAPES in pieces.js). Each model spans its whole
+ * piece, authored at 12 Blender units per cell in the shape's default orientation, so it can be laid over
+ * the piece's cells and turned with it. File: Waste<Name>City01.fbx, footprint node: Waste<Name>_HiveCity.
+ */
+export const WASTE_PIECES = {
+  mono: 'Single',
+  domino: 'Pair',
+  i3: 'Line3',
+  v3: 'Corner',
+  i4: 'I',
+  o: 'O',
+  t: 'T',
+  s: 'S',
+  z: 'Z',
+  l: 'L',
+  j: 'J',
+};
+const BLENDER_CELL = 12;
+const TILE_GAP = 0.03; // same seam as single tiles (CELL = 1 - gap)
+
+/** Scale a piece model to its cells (keeping the seam at its outer edge) and centre its footprint on the origin. */
+function fitPiece(raw, base) {
+  raw.position.set(0, 0, 0);
+  raw.rotation.set(0, 0, 0);
+  raw.scale.set(1, 1, 1);
+  raw.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(base);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const w = Math.max(1, Math.round(size.x / BLENDER_CELL));
+  const h = Math.max(1, Math.round(size.z / BLENDER_CELL));
+  const sx = (w - TILE_GAP) / size.x;
+  const sz = (h - TILE_GAP) / size.z;
+  raw.scale.set(sx, (sx + sz) / 2, sz);
+  // Blender ground is y = 0 (pits and the worm sink below it and must not lift the piece).
+  raw.position.set(-center.x * sx, 0, -center.z * sz);
+}
+
+/** Resolves once the texture's image has arrived (FBXLoader hands textures back before their images load). */
+function imageReady(texture, timeout = 30000) {
+  return new Promise((resolve) => {
+    const start = performance.now();
+    const check = () => {
+      const img = texture.image;
+      if ((img && img.width && (img.complete === undefined || img.complete)) || performance.now() - start > timeout) resolve();
+      else setTimeout(check, 50);
+    };
+    check();
+  });
+}
+
+/**
+ * The piece files each embed their own copy of the shared art (rock, sand, salt, worm skin...). Textures with
+ * identical pixels and settings are merged, so each one is decoded onto the GPU once instead of up to 11 times.
+ * Pixels are compared through a 32 × 32 thumbnail plus the full size.
+ */
+async function shareTextures(roots) {
+  const slots = [];
+  for (const root of roots) {
+    root.traverse((obj) => {
+      if (!obj.isMesh) return;
+      for (const m of [obj.material].flat()) {
+        for (const k of ['map', 'normalMap', 'emissiveMap']) if (m[k]) slots.push([m, k]);
+      }
+    });
+  }
+  const unique = [...new Set(slots.map(([m, k]) => m[k]))];
+  await Promise.all(unique.map((t) => imageReady(t)));
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 32;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const firstBySig = new Map();
+  const keep = new Map(); // texture -> texture to use instead
+  for (const t of unique) {
+    const img = t.image;
+    if (!img?.width) {
+      keep.set(t, t);
+      continue;
+    }
+    ctx.clearRect(0, 0, 32, 32);
+    ctx.drawImage(img, 0, 0, 32, 32);
+    const px = ctx.getImageData(0, 0, 32, 32).data;
+    let hash = 2166136261;
+    for (let i = 0; i < px.length; i++) hash = Math.imul(hash ^ px[i], 16777619);
+    const sig = [img.width, img.height, t.colorSpace, t.wrapS, t.wrapT, t.repeat.x, t.repeat.y, t.offset.x, t.offset.y, hash >>> 0].join('|');
+    const first = firstBySig.get(sig);
+    if (first) keep.set(t, first);
+    else {
+      firstBySig.set(sig, t);
+      keep.set(t, t);
+    }
+  }
+  for (const [m, k] of slots) {
+    const use = keep.get(m[k]);
+    if (use && use !== m[k]) {
+      m[k] = use;
+      m.needsUpdate = true;
+    }
+  }
+  let merged = 0;
+  for (const [t, use] of keep) {
+    if (t === use) continue;
+    t.dispose();
+    merged++;
+  }
+  return { textures: unique.length, merged };
+}
+
+/**
+ * Loads every Wasteland piece model, one file at a time with a pause in between, so it can run in the
+ * background (each file blocks the page for about a quarter of a second while it parses).
+ * Resolves to a Map: shape key -> fitted model.
+ */
+export async function loadWastePieces() {
+  const loader = new FBXLoader();
+  const pieces = new Map();
+  for (const [shape, name] of Object.entries(WASTE_PIECES)) {
+    const raw = await loader.loadAsync(`${MODEL_URL}Waste${name}City01.fbx?v=${MODEL_VERSION}`);
+    toStandard(raw);
+    raw.animations = raw.animations.map(movingTracksOnly).filter((clip) => clip.tracks.length);
+    fitPiece(raw, raw.getObjectByName(`Waste${name}_HiveCity`) ?? raw);
+    raw.name = `waste-${shape}`;
+    pieces.set(shape, raw);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  }
+  const { textures, merged } = await shareTextures([...pieces.values()]);
+  console.info(`Wasteland pieces: ${pieces.size} models, ${textures - merged} textures (${merged} duplicates shared).`);
+  for (const [shape, raw] of pieces) matchSaltToSand(raw, WASTE_PIECES[shape]);
+  return pieces;
+}
+
+/** Average colour of a texture's image, in linear RGB (the space material colours multiply in). */
+function averageLinear(texture) {
+  const img = texture?.image;
+  if (!img?.width) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, 64, 64);
+  const px = ctx.getImageData(0, 0, 64, 64).data;
+  const toLinear = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  const sum = [0, 0, 0];
+  for (let i = 0; i < px.length; i += 4) for (let c = 0; c < 3; c++) sum[c] += toLinear(px[i + c] / 255);
+  return sum.map((v) => v / (px.length / 4));
+}
+
+/**
+ * Salt becomes sand-coloured. The white salt flats are painted into each piece's own ground texture, so that
+ * texture is recoloured as it loads: pale, grey (unsaturated) pixels take the ground's average sand colour,
+ * scaled by their own brightness so the crack pattern stays as darker sand. The small Waste<Name>_Salt part
+ * is tinted to the same sand colour. Grounds with almost no salt are left alone (grey pebbles stay grey).
+ */
+function matchSaltToSand(raw, name) {
+  const ground = raw.getObjectByName(`Waste${name}_Ground`);
+  const groundMap = [ground?.material].flat()[0]?.map;
+  const img = groundMap?.image;
+  if (!img?.width) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const px = data.data;
+  const smooth = (a, b, v) => Math.min(1, Math.max(0, (v - a) / (b - a)));
+  // How salty a pixel is: pale and unsaturated. Sand reference: the clearly tan pixels.
+  const weight = new Float32Array(px.length / 4);
+  const sand = [0, 0, 0];
+  let sandN = 0;
+  let saltLum = 0;
+  let saltW = 0;
+  for (let i = 0, j = 0; i < px.length; i += 4, j++) {
+    const r = px[i] / 255;
+    const g = px[i + 1] / 255;
+    const b = px[i + 2] / 255;
+    const max = Math.max(r, g, b);
+    const sat = max > 0 ? (max - Math.min(r, g, b)) / max : 0;
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    const w = (1 - smooth(0.1, 0.22, sat)) * smooth(0.25, 0.45, lum);
+    weight[j] = w;
+    if (w > 0.5) {
+      saltLum += lum;
+      saltW++;
+    } else if (sat > 0.25) {
+      sand[0] += r;
+      sand[1] += g;
+      sand[2] += b;
+      sandN++;
+    }
+  }
+  if (!sandN) return;
+  const ref = sand.map((v) => v / sandN);
+  const share = saltW / weight.length;
+  if (share > 0.02) {
+    const meanLum = saltLum / saltW;
+    for (let i = 0, j = 0; i < px.length; i += 4, j++) {
+      const w = weight[j];
+      if (w <= 0) continue;
+      const lum = (0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]) / 255;
+      const k = lum / meanLum;
+      for (let c = 0; c < 3; c++) px[i + c] = Math.round(px[i + c] * (1 - w) + Math.min(1, ref[c] * k) * 255 * w);
+    }
+    ctx.putImageData(data, 0, 0);
+    groundMap.image = canvas;
+    groundMap.needsUpdate = true;
+  }
+  // The separate salt part: tinted so its texture averages out at the same sand colour (linear RGB).
+  const toLinear = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  const sandLin = ref.map(toLinear);
+  raw.traverse((obj) => {
+    if (!obj.isMesh || obj.name !== `Waste${name}_Salt`) return;
+    const recolour = (m) => {
+      const salt = averageLinear(m.map);
+      if (!salt) return m;
+      const tinted = m.clone();
+      tinted.color.setRGB(...sandLin.map((v, c) => Math.min(1, v / Math.max(salt[c], 1e-4))));
+      return tinted;
+    };
+    obj.material = Array.isArray(obj.material) ? obj.material.map(recolour) : recolour(obj.material);
+  });
+  if (share > 0.02) console.info(`Wasteland ${name}: salt recoloured to sand (${Math.round(share * 100)}% of the ground).`);
+}

@@ -58,11 +58,21 @@ export class Placement {
     }
     this.offsets = pieceOffsets(piece);
     const blockout = hasBlockout(piece.terrain) && this.factory?.models?.has(piece.terrain);
+    // Wasteland previews as its whole-piece model, centred on the piece's cells.
+    const wholePiece = piece.terrain.startsWith('wasteland') ? this.factory?.previewPiece(piece.shape, piece.rot) : null;
+    if (wholePiece) {
+      const xs = this.offsets.map((o) => o[0]);
+      const zs = this.offsets.map((o) => o[1]);
+      wholePiece.position.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...zs) + Math.max(...zs)) / 2);
+      this.blocks.add(wholePiece);
+    }
     for (const [ox, oz] of this.offsets) {
-      const b = blockout ? this.factory.preview(piece.terrain) : new THREE.Mesh(this.blockGeo, this.blockMat);
-      b.position.set(ox, 0, oz);
-      b.castShadow = true;
-      this.blocks.add(b);
+      if (!wholePiece) {
+        const b = blockout ? this.factory.preview(piece.terrain) : new THREE.Mesh(this.blockGeo, this.blockMat);
+        b.position.set(ox, 0, oz);
+        b.castShadow = true;
+        this.blocks.add(b);
+      }
       const f = new THREE.Mesh(this.footGeo, this.footMat);
       f.position.set(ox, 0.015, oz);
       this.feet.add(f);

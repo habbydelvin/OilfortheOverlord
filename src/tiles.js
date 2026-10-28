@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { hasBlockout, loadBlockouts } from './models.js';
+import { hasBlockout, loadBlockouts, loadWastePieces } from './models.js';
 import { buildRaiderCamp } from './raiderMesh.js';
 import { buildLabourCamp } from './labourCampMesh.js';
 
@@ -419,6 +419,9 @@ export class TileFactory {
   /** @type {Map<string, THREE.Object3D> | null} */
   models = null;
   ready;
+  /** Wasteland piece models by shape key, loaded in the background after the buildings. */
+  pieces = null;
+  piecesReady;
 
   constructor() {
     const s = 1 - TILE.gap;
@@ -439,6 +442,13 @@ export class TileFactory {
       .catch((error) => {
         console.error('Blockout models failed to load; coloured blocks stay in place.', error);
       });
+    this.piecesReady = this.ready
+      .then(() => loadWastePieces())
+      .then((pieces) => (this.pieces = pieces))
+      .catch((error) => {
+        console.error('Wasteland piece models failed to load; Wasteland stays as coloured blocks.', error);
+        return null;
+      });
   }
 
   /** Flat stand-in used for land, junk, and buildings before the FBX arrives. */
@@ -454,7 +464,16 @@ export class TileFactory {
     return group;
   }
 
-  create(terrain) {
+  /**
+   * bare: an empty holder, for a cell covered by a whole-piece Wasteland model (the model is added separately).
+   */
+  create(terrain, { bare = false } = {}) {
+    if (bare) return new THREE.Group();
+    if (terrain.startsWith('wasteland')) {
+      const holder = new THREE.Group();
+      this.fillWaste(holder, terrain);
+      return holder;
+    }
     if (isCamp(terrain)) return buildRaiderCamp(this.soilGeo, this.soilMat, TERRAINS[terrain].tent);
     if (terrain === 'labourcamp') return buildLabourCamp(this.soilGeo, this.soilMat);
     const source = this.models?.get(terrain);
@@ -501,9 +520,46 @@ export class TileFactory {
     }
   }
 
+  /** A lone Wasteland cell: the Single wasteland model, or a coloured block until the pieces have loaded. */
+  fillWaste(holder, terrain) {
+    holder.clear();
+    const source = this.pieces?.get('mono');
+    if (source) {
+      const model = source.clone(true);
+      holder.add(model);
+      if (model.animations.length) this.#animate(model);
+    } else holder.add(this.#block(terrain));
+    holder.userData.blockout = Boolean(source);
+  }
+
+  /**
+   * A whole Wasteland piece as one model, turned to the piece's rotation (rot quarter turns clockwise from
+   * above, like rotateCells). Centred on the origin: place it at the centre of the piece's cells.
+   * Null until the piece models have loaded.
+   */
+  createPiece(shape, rot = 0) {
+    const source = this.pieces?.get(shape);
+    if (!source) return null;
+    const group = new THREE.Group();
+    const model = source.clone(true);
+    group.add(model);
+    group.rotation.y = (-rot * Math.PI) / 2;
+    if (model.animations.length) this.#animate(model);
+    return group;
+  }
+
+  /** Ghost copy of a whole Wasteland piece for the placement preview. */
+  previewPiece(shape, rot = 0) {
+    const group = this.createPiece(shape, rot);
+    return group && this.#ghost(group);
+  }
+
   /** Transparent copy for the placement ghost. Materials are not shared. */
   preview(terrain) {
-    const mesh = this.create(terrain);
+    return this.#ghost(this.create(terrain));
+  }
+
+  #ghost(mesh) {
     mesh.traverse((obj) => {
       if (!obj.isMesh) return;
       // A mesh can carry several materials (e.g. the Village02 ship): ghost each of them.
