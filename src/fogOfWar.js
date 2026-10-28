@@ -32,6 +32,8 @@ export const FOG = {
   thicknessRate: 1, // how fast thickness changes (per second)
   revealDuration: 2.25, // seconds for the clouds to part
   revealSpread: 1.8, // how far billows drift outward as they clear
+  openDuration: 1.2, // free placement: seconds for fog to clear around a landed tile
+  openRadius: 1, // free placement: cells uncovered around each landed tile
   margin: 0.2, // gap (world units) kept between the fog and open territory
   fadeRadius: 0.75, // matches the sand's fade-to-black radius (× camera distance)
   // Tile landings: a gust pushes nearby billows back, and the clouds near the land wear thinner.
@@ -67,6 +69,8 @@ export const FOG_PARAMS = [
   { key: 'revealSpread', label: 'Parting distance', min: 0, max: 5, step: 0.05 },
 
   { group: 'Fog · tile landing' },
+  { key: 'openRadius', label: 'Free mode: uncover radius (cells)', min: 0, max: 4, step: 1 },
+  { key: 'openDuration', label: 'Free mode: uncover time (s)', min: 0.1, max: 4, step: 0.05 },
   { key: 'gustRadius', label: 'Gust radius', min: 0.5, max: 6, step: 0.1 },
   { key: 'gustPush', label: 'Gust push', min: 0, max: 3, step: 0.05 },
   { key: 'gustDuration', label: 'Gust duration (s)', min: 0.3, max: 4, step: 0.05 },
@@ -317,7 +321,8 @@ export class FogOfWar {
     this.locked = new Float32Array(MASK * MASK).fill(1);
     this.thick = new Float32Array(MASK * MASK).fill(1);
     this.thickTarget = new Float32Array(MASK * MASK).fill(1);
-    this.wear = new Float32Array(MASK * MASK).fill(1); // per-cell thickness cap from tile landings
+    this.wear = new Float32Array(MASK * MASK).fill(1);
+    this.lockedTarget = new Float32Array(MASK * MASK).fill(1); // cells easing open (free placement)
     this.gusts = []; // { x, z, age }
     this.data = new Uint8Array(MASK * MASK * 4);
     this.mask = new THREE.DataTexture(this.data, MASK, MASK, THREE.RGBAFormat);
@@ -508,7 +513,8 @@ export class FogOfWar {
     this.thickTarget.fill(1);
     this.wear.fill(1);
     this.gusts.length = 0;
-    for (const k of grid.plots) this.#plotCells(k, (i) => (this.locked[i] = 0));
+    this.lockedTarget.fill(1);
+    for (const k of grid.plots) this.#plotCells(k, (i) => (this.locked[i] = this.lockedTarget[i] = 0));
     this.dirty = true;
   }
 
@@ -551,6 +557,19 @@ export class FogOfWar {
       }
     }
     this.#refreshThickness();
+  }
+
+  /**
+   * Free placement: uncover every cell within `radius` (Chebyshev) of cell (x, z). The fog eases
+   * away over `openDuration` seconds; uncovered land stays uncovered.
+   */
+  openAround(x, z, radius = 1) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        const i = this.#index(x + dx, z + dz);
+        if (i >= 0) this.lockedTarget[i] = 0;
+      }
+    }
   }
 
   /** Part the clouds over plot (px, pz). Returns the animation length in seconds. */
@@ -596,6 +615,14 @@ export class FogOfWar {
       const d = this.thickTarget[i] - this.thick[i];
       if (d === 0) continue;
       this.thick[i] += Math.abs(d) <= stepMax ? d : Math.sign(d) * stepMax;
+      this.dirty = true;
+    }
+
+    // Free placement: cells easing open.
+    const openStep = dt / this.s.openDuration;
+    for (let i = 0; i < this.locked.length; i++) {
+      if (this.lockedTarget[i] >= this.locked[i]) continue;
+      this.locked[i] = Math.max(this.lockedTarget[i], this.locked[i] - openStep);
       this.dirty = true;
     }
 

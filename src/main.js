@@ -41,7 +41,6 @@ const fog = new FogOfWar(scene, fogCfg);
 // Debug: territory expansion mode (the old fill-the-3×3-then-expand rules), saved across reloads.
 const MODE_KEY = 'oftoMode';
 grid.expansionMode = localStorage.getItem(MODE_KEY) === 'expansion';
-fog.setVisible(grid.expansionMode);
 placement.mysteries = mysteries; // "?" cells can't be built on, only next to (free-placement mode)
 const dialogue = new Dialogue(document.getElementById('dialogue'));
 const payoutCfg = loadPayoutConfig();
@@ -258,6 +257,8 @@ function updateDropAnims(dt) {
       a.landed = true;
       const { x, z } = a.mesh.position;
       dust.burst(x, z);
+      // Free placement: the land around the new tile is uncovered (expansion mode uncovers whole plots).
+      if (!grid.expansionMode) fog.openAround(Math.round(x), Math.round(z), fogCfg.openRadius);
       fog.disturb(Math.round(x), Math.round(z)); // the impact blows back and thins the clouds nearby
       shake.amount = Math.min(shake.amount + 0.7, 1.2);
     }
@@ -1333,7 +1334,6 @@ function expand(option) {
 /** Debug toggle: switch rules and restart the run in the chosen mode. */
 function setExpansionMode(on) {
   grid.expansionMode = on;
-  fog.setVisible(on);
   localStorage.setItem(MODE_KEY, on ? 'expansion' : 'free');
   debug.refreshMode?.();
   resetIsland();
