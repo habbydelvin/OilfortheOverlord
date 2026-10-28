@@ -45,6 +45,10 @@ export class Expansion {
       const plusMat = new THREE.MeshBasicMaterial({ color: GOLD, transparent: true, opacity: 0 });
       const plus = new THREE.Group();
       plus.add(new THREE.Mesh(this.plusGeoA, plusMat), new THREE.Mesh(this.plusGeoB, plusMat));
+      // Outline and "+" draw after the fog-of-war clouds (which skip depth writes), so they sit on top.
+      // The fill stays underneath and tints the thinned clouds' ground.
+      edge.renderOrder = 10;
+      plus.children.forEach((m) => (m.renderOrder = 10));
 
       group.add(fill, edge, plus);
       this.group.add(group);

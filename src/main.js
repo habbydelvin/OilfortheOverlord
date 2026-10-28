@@ -2,7 +2,8 @@ import './ui.css';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { CameraRig } from './controls.js';
-import { Grid, DIRS } from './grid.js';
+import { Grid, DIRS, key as plotKey } from './grid.js';
+import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
 import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
 import { hasBlockout, loadProgress } from './models.js';
 import { Frontier } from './frontier.js';
@@ -34,9 +35,13 @@ const placement = new Placement(scene, grid, factory);
 const mysteries = new Mysteries(scene);
 const dust = new Dust(scene);
 const expansion = new Expansion(scene);
+// Clouds over locked plots in expansion mode; they part when a plot is unlocked.
+const fogCfg = loadFogConfig(); // saved Game Debug slider values
+const fog = new FogOfWar(scene, fogCfg);
 // Debug: territory expansion mode (the old fill-the-3×3-then-expand rules), saved across reloads.
 const MODE_KEY = 'oftoMode';
 grid.expansionMode = localStorage.getItem(MODE_KEY) === 'expansion';
+fog.setVisible(grid.expansionMode);
 placement.mysteries = mysteries; // "?" cells can't be built on, only next to (free-placement mode)
 const dialogue = new Dialogue(document.getElementById('dialogue'));
 const payoutCfg = loadPayoutConfig();
@@ -46,6 +51,14 @@ const debug = createDebugPanel(document.getElementById('debug'), document.getEle
   expansionMode: () => grid.expansionMode,
   onExpansionMode: (on) => setExpansionMode(on),
   onSkipYear: (met) => debugSkipYear(met),
+  fog: {
+    params: FOG_PARAMS,
+    defaults: FOG_DEFAULTS,
+    cfg: fogCfg,
+    save: saveFogConfig,
+    clear: clearFogConfig,
+    onChange: (p) => fog.applySettings(!p || p.layout), // null = reset all
+  },
 });
 const hand = new Hand(document.getElementById('hand'), HAND_SIZE, (piece) => placement.setPiece(piece), grid);
 
@@ -245,6 +258,7 @@ function updateDropAnims(dt) {
       a.landed = true;
       const { x, z } = a.mesh.position;
       dust.burst(x, z);
+      fog.disturb(Math.round(x), Math.round(z)); // the impact blows back and thins the clouds nearby
       shake.amount = Math.min(shake.amount + 0.7, 1.2);
     }
     // Damped spring around rest: flat on impact, a little tall on the way back, then still.
@@ -1286,18 +1300,24 @@ function revealMysteries(cells) {
 function checkExpansion() {
   if (!grid.expansionMode || turn.over || shopOpen || eventOpen || payout.active) return;
   const full = grid.isFull();
-  if (!full && expansion.active) expansion.clear();
+  if (!full && expansion.active) {
+    expansion.clear();
+    fog.setOptions(null);
+  }
   if (!full || expansion.active) return;
   expansion.show(grid);
+  fog.setOptions(grid.expansionOptions());
   toast('Territory full: pick a plot on the edge to expand', 'good');
 }
 
 function expand(option) {
   grid.unlock(option.px, option.pz);
   expansion.clear();
-  // Mystery sites in the new plot turn into real tiles.
+  fog.setOptions(null);
+  // The clouds part; mystery sites in the new plot drop in as real tiles while they clear.
+  const clearing = fog.visible ? fog.revealPlot(option.px, option.pz) : 0;
   const found = mysteries.reveal(option.px, option.pz);
-  found.forEach(({ x, z, terrain }, i) => addTile(x, z, terrain, 0.25 + i * 0.15));
+  found.forEach(({ x, z, terrain }, i) => addTile(x, z, terrain, 0.25 + clearing * 0.5 + i * 0.15));
   frontier.rebuild(grid);
   placement.cell = null; // force ghost revalidation
   rig.focus(...grid.territoryCenter());
@@ -1313,6 +1333,7 @@ function expand(option) {
 /** Debug toggle: switch rules and restart the run in the chosen mode. */
 function setExpansionMode(on) {
   grid.expansionMode = on;
+  fog.setVisible(on);
   localStorage.setItem(MODE_KEY, on ? 'expansion' : 'free');
   debug.refreshMode?.();
   resetIsland();
@@ -1516,6 +1537,7 @@ function resetIsland() {
   dust.clear();
   shake.amount = 0;
   expansion.clear();
+  fog.reset(grid);
   piecesPlaced = 0;
   Object.assign(turn, {
     round: 1,
@@ -1683,6 +1705,8 @@ function frame(now) {
   checkExpansion();
   const cell = rig.isDragging ? null : hoveredCell();
   expansion.update(cell, dt, time);
+  fog.setHover(expansion.hovered ? plotKey(expansion.hovered.px, expansion.hovered.pz) : null);
+  fog.update(dt, rig.target, rig.distance);
   updateInspect(cell);
   // Hide the ghost while choosing a plot or while the payout plays.
   placement.update(expansion.active || payout.active ? null : cell, dt, time);
@@ -1728,4 +1752,4 @@ factory.ready.then(() => {
 });
 
 // Handy for debugging in the console.
-window.tileIsland = { grid, hand, placement, rig, expansion, mysteries, turn, dialogue, economy: economyNow };
+window.tileIsland = { grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, economy: economyNow };

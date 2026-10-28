@@ -99,6 +99,7 @@ export class Mysteries {
     const sprite = new THREE.Sprite(this.spriteMat);
     sprite.scale.set(0.7, 0.7, 1);
     sprite.position.set(x, 0.6, z);
+    sprite.renderOrder = 10; // drawn after the fog-of-war clouds, so the "?" teases through them
     this.group.add(sprite);
     this.sites.set(key(x, z), { x, z, sprite });
   }

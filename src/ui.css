@@ -566,6 +566,15 @@ body {
   accent-color: var(--gold);
 }
 
+#debug .dbg-row input[type='color'] {
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+}
+
 #debug .dbg-row select {
   margin-top: 2px;
   padding: 2px 4px;
@@ -740,6 +749,7 @@ body.paying #btnReset {
 /* ---------- help ---------- */
 #leftcol {
   position: absolute;
+  z-index: 5; /* keep the Game Debug panel above the card hand */
   left: 22px;
   top: 22px;
   display: flex;

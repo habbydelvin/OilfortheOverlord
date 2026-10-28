@@ -3,33 +3,43 @@ import { PAYOUT_DEFAULTS, PAYOUT_PARAMS, savePayoutConfig, clearPayoutConfig } f
 const decimals = (step) => (String(step).split('.')[1] ?? '').length;
 
 /**
- * Debug panel for tuning the payout animation. Edits `cfg` in place (the Payout reads it live)
- * and saves to localStorage so tweaks survive a reload.
+ * Game Debug panel: game mode, dev shortcuts, and tuning sliders.
+ * Each tuning section edits its `cfg` in place (read live) and saves to localStorage.
+ * `fog` is an optional extra section: { params, defaults, cfg, save, clear, onChange(param) }.
  */
-export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear }) {
-  const fmt = (p, v) => (p.type === 'select' ? v : Number(v).toFixed(decimals(p.step)));
+export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog }) {
+  const fmt = (p, v) => (p.type === 'select' || p.type === 'color' ? v : Number(v).toFixed(decimals(p.step)));
+  const payout = { id: 'payout', params: PAYOUT_PARAMS, defaults: PAYOUT_DEFAULTS, cfg, save: savePayoutConfig, clear: clearPayoutConfig };
+  const sections = [payout, fog && { id: 'fog', ...fog }].filter(Boolean);
+  const sectionOf = (id) => sections.find((s) => s.id === id);
 
-  function render() {
-    const rows = PAYOUT_PARAMS.map((p) => {
+  function rowsFor({ id, params, defaults, cfg }) {
+    return params.map((p) => {
       if (p.group) return `<div class="dbg-group">${p.group}</div>`;
       const title = p.hint ? ` title="${p.hint}"` : '';
       const input =
-        p.type === 'select'
-          ? `<select data-k="${p.key}">${p.options
+        p.type === 'color'
+          ? `<input type="color" data-s="${id}" data-k="${p.key}" value="${cfg[p.key]}" />`
+          : p.type === 'select'
+          ? `<select data-s="${id}" data-k="${p.key}">${p.options
               .map((o) => `<option${o === cfg[p.key] ? ' selected' : ''}>${o}</option>`)
               .join('')}</select>`
-          : `<input type="range" data-k="${p.key}" min="${p.min}" max="${p.max}" step="${p.step}" value="${cfg[p.key]}" />`;
-      const changed = cfg[p.key] !== PAYOUT_DEFAULTS[p.key] ? ' changed' : '';
+          : `<input type="range" data-s="${id}" data-k="${p.key}" min="${p.min}" max="${p.max}" step="${p.step}" value="${cfg[p.key]}" />`;
+      const changed = cfg[p.key] !== defaults[p.key] ? ' changed' : '';
       return `
         <label class="dbg-row${changed}"${title}>
           <span class="dbg-name">${p.label}</span>
-          <span class="dbg-val" data-v="${p.key}">${fmt(p, cfg[p.key])}</span>
+          <span class="dbg-val" data-v="${id}.${p.key}">${fmt(p, cfg[p.key])}</span>
           ${input}
         </label>`;
     }).join('');
+  }
+
+  function render() {
+    const rows = sections.map(rowsFor).join('');
     root.innerHTML = `
       <div class="dbg-head">
-        <b>Payout tuning</b>
+        <b>Game Debug</b>
         <button class="dbg-x" data-act="close" title="Hide (\`)">×</button>
       </div>
       <div class="dbg-body">
@@ -66,12 +76,14 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
 
   root.addEventListener('input', (e) => {
     const k = e.target.dataset.k;
-    if (!k) return;
-    const p = PAYOUT_PARAMS.find((q) => q.key === k);
-    cfg[k] = p.type === 'select' ? e.target.value : Number(e.target.value);
-    root.querySelector(`[data-v="${k}"]`).textContent = fmt(p, cfg[k]);
-    e.target.closest('.dbg-row').classList.toggle('changed', cfg[k] !== PAYOUT_DEFAULTS[k]);
-    savePayoutConfig(cfg);
+    const sec = sectionOf(e.target.dataset.s);
+    if (!k || !sec) return;
+    const p = sec.params.find((q) => q.key === k);
+    sec.cfg[k] = p.type === 'select' || p.type === 'color' ? e.target.value : Number(e.target.value);
+    root.querySelector(`[data-v="${sec.id}.${k}"]`).textContent = fmt(p, sec.cfg[k]);
+    e.target.closest('.dbg-row').classList.toggle('changed', sec.cfg[k] !== sec.defaults[k]);
+    sec.save(sec.cfg);
+    sec.onChange?.(p);
   });
 
   root.addEventListener('click', async (e) => {
@@ -83,15 +95,20 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
     else if (act === 'skipMet' || act === 'skipMiss') status(onSkipYear?.(act === 'skipMet') ?? '');
     else if (act === 'close') setOpen(false);
     else if (act === 'reset') {
-      Object.assign(cfg, PAYOUT_DEFAULTS);
-      clearPayoutConfig();
+      for (const sec of sections) {
+        Object.assign(sec.cfg, sec.defaults);
+        sec.clear();
+        sec.onChange?.(null);
+      }
       render();
       status('Reset to defaults');
     } else if (act === 'copy') {
-      // Only the current settings (old saved keys, e.g. a removed option, are left out).
-      const clean = Object.fromEntries(Object.keys(PAYOUT_DEFAULTS).map((k) => [k, cfg[k]]));
-      const json = JSON.stringify(clean, null, 2);
-      if (await copyText(json)) status('Copied: paste over PAYOUT_DEFAULTS in src/payoutConfig.js');
+      // Every tuning section, current values only (old saved keys are left out).
+      const all = Object.fromEntries(
+        sections.map((sec) => [sec.id, Object.fromEntries(Object.keys(sec.defaults).map((k) => [k, sec.cfg[k]]))]),
+      );
+      const json = JSON.stringify(all, null, 2);
+      if (await copyText(json)) status('Copied all debug values (payout → PAYOUT_DEFAULTS, fog → FOG)');
       else showJson(json);
     }
   });
