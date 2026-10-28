@@ -1,7 +1,5 @@
 import * as THREE from 'three';
 
-const TILE_H = 0.62; // cap + soil height, used to squash from the bottom
-
 // Resources are told apart by colour alone; only population keeps a word.
 const RES = {
   food: { word: '', color: '#9be36f' },
@@ -107,7 +105,8 @@ export class Payout {
           // Idle buildings (no free workers) produce nothing.
           (tile.idle ? '<div class="row zero"><b>idle</b></div>' : '') +
           // Raider camps produce nothing; they just stir unrest.
-          (tile.terrain === 'raider' ? '<div class="row neg" style="--c:#e0533f"><b>unrest</b></div>' : '') ||
+          (tile.terrain === 'raider' || tile.terrain === 'bandit_raider' ? '<div class="row neg" style="--c:#e0533f"><b>unrest</b></div>' : '') +
+          (tile.terrain === 'bandit_smuggle' ? '<div class="row neg" style="--c:#e0533f"><b>-10%</b><span>stockpile</span></div>' : '') ||
         // Wasteland triggers too, but produces nothing: a grey 0.
         (tile.terrain?.startsWith('wasteland') ? '<div class="row zero"><b>0</b></div>' : '');
       let el = null;
@@ -171,12 +170,13 @@ export class Payout {
         continue;
       }
 
-      // Tile hop (pivot at the bottom so squashes look grounded).
+      // Tile hop. Every tile's ground surface sits at y = 0 (its pivot), so squashing about
+      // the pivot flattens it on the sand instead of sinking it, whatever its height.
       const m = it.tile.mesh;
       if (t < c.hopDuration) {
         const { y, sx, sy } = hop(t, c);
         m.scale.set(sx, sy, sx);
-        m.position.y = y + TILE_H * (sy - 1);
+        m.position.y = y;
         alive = true;
       } else {
         m.scale.set(1, 1, 1);

@@ -14,6 +14,10 @@
 export const PORTRAITS = {
   // Bump ?v= when the image file changes, so browsers drop the cached copy.
   'The Overlord': '/portraits/TheOverlord01.png?v=20261027-1828',
+  // No art yet: add an image path here to give them a portrait.
+  'Rebel Leader': '',
+  'Bandit Leader': '',
+  'Field Report': '',
 };
 
 const CHARS_PER_SEC = 55;
@@ -100,7 +104,7 @@ export class Dialogue {
     if (!this.active) this.open();
     this.resolve = resolve;
     this.choices = choices;
-    this.selected = 0;
+    this.selected = Math.max(0, choices?.findIndex((c) => !c.disabled) ?? 0);
     this.$('.dlg-name').textContent = speaker;
     const art = PORTRAITS[speaker];
     const portrait = this.$('.dlg-portrait');
@@ -150,7 +154,7 @@ export class Dialogue {
     box.innerHTML = this.choices
       .map(
         (c, i) =>
-          `<button class="dlg-choice${i === this.selected ? ' on' : ''}" data-i="${i}" style="animation-delay:${i * 60}ms">` +
+          `<button class="dlg-choice${i === this.selected ? ' on' : ''}${c.disabled ? ' off' : ''}" data-i="${i}" style="animation-delay:${i * 60}ms">` +
           `<span class="dlg-label">${c.text}${c.tag ? ` <span class="dlg-tag">[${c.tag}]</span>` : ''}</span></button>`,
       )
       .join('');
@@ -158,7 +162,13 @@ export class Dialogue {
 
   #select(i) {
     if (!this.choices) return;
-    this.selected = (i + this.choices.length) % this.choices.length;
+    const n = this.choices.length;
+    const dir = i < this.selected ? -1 : 1;
+    i = (i + n) % n;
+    // Skip disabled choices (a choice can be disabled, e.g. "not enough food").
+    for (let k = 0; k < n && this.choices[i].disabled; k++) i = (i + dir + n) % n;
+    if (this.choices[i].disabled) return;
+    this.selected = i;
     for (const b of this.$('.dlg-choices').children) b.classList.toggle('on', Number(b.dataset.i) === this.selected);
   }
 
@@ -167,7 +177,11 @@ export class Dialogue {
     if (!this.active || !this.resolve) return;
     if (this.typing) return this.#finishTyping();
     if (this.choices) {
-      if (pick !== null) this.selected = pick;
+      if (pick !== null) {
+        if (this.choices[pick]?.disabled) return;
+        this.selected = pick;
+      }
+      if (this.choices[this.selected]?.disabled) return;
       const done = this.resolve;
       this.resolve = null;
       done(this.selected);

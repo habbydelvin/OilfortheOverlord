@@ -21,8 +21,18 @@ const shadow = (m) => {
   return m;
 };
 
-export function buildRaiderCamp(soilGeo, soilMat) {
+const tintMats = new Map();
+/** Tent/banner material in a camp type's colour (shared per colour). */
+function tinted(color) {
+  if (color == null) return mats.tentA;
+  if (!tintMats.has(color)) tintMats.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.9, flatShading: true }));
+  return tintMats.get(color);
+}
+
+/** `tent`: optional colour for the main tent and banner, so each bandit camp type reads differently. */
+export function buildRaiderCamp(soilGeo, soilMat, tent) {
   const g = new THREE.Group();
+  const tentMat = tinted(tent);
   g.add(shadow(new THREE.Mesh(soilGeo, soilMat)));
 
   const ground = shadow(new THREE.Mesh(new THREE.BoxGeometry(0.97, 0.12, 0.97), mats.ground));
@@ -31,7 +41,7 @@ export function buildRaiderCamp(soilGeo, soilMat) {
 
   // Tents: low square pyramids, slightly tilted.
   const tents = [
-    [-0.22, -0.2, 0.2, mats.tentA, 0.3],
+    [-0.22, -0.2, 0.2, tentMat, 0.3],
     [0.24, -0.16, 0.16, mats.tentB, -0.4],
     [-0.18, 0.24, 0.15, mats.tentB, 0.9],
   ];
@@ -78,7 +88,7 @@ export function buildRaiderCamp(soilGeo, soilMat) {
   const pole = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.36), mats.wood));
   pole.position.set(0.3, 0.18, 0.26);
   g.add(pole);
-  const rag = shadow(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.06, 0.005), mats.tentA));
+  const rag = shadow(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.06, 0.005), tentMat));
   rag.position.set(0.35, 0.32, 0.26);
   g.add(rag);
 

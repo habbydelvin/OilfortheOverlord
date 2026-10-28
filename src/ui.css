@@ -1790,6 +1790,11 @@ body.shopping .ruin-btn {
 .dlg-choice.on .dlg-tag {
   color: var(--ink-splash);
 }
+/* Can't be picked right now (e.g. not enough food). */
+.dlg-choice.off {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
 /* Control hints, bottom-right. */
 .dlg-hints {
   position: absolute;

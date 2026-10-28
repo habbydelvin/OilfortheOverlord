@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { pieceOffsets } from './pieces.js';
 import { hasBlockout } from './models.js';
-import { ACTIONS, TERRAINS, TILE, cardDef, isBuilding } from './tiles.js';
+import { ACTIONS, TERRAINS, TILE, cardDef, isBuilding, isCamp } from './tiles.js';
 
 const OK_COLOR = new THREE.Color(0x8be39a);
 const BAD_COLOR = new THREE.Color(0xe0563f);
@@ -82,6 +82,12 @@ export class Placement {
       const cell = this.grid.get(...cells[0]);
       if (!cell) return { ok: false, reason: 'Nothing to demolish here' };
       if (cell.terrain === 'capital') return { ok: false, reason: "A Capital can't be demolished" };
+      if (isCamp(cell.terrain)) return { ok: false, reason: 'Send in the Militia to clear bandits' };
+      return { ok: true, reason: '' };
+    }
+    if (this.piece?.terrain === 'militia') {
+      const cell = this.grid.get(...cells[0]);
+      if (!cell || !isCamp(cell.terrain)) return { ok: false, reason: 'The militia only clears bandit camps' };
       return { ok: true, reason: '' };
     }
     const building = this.piece && isBuilding(this.piece.terrain);

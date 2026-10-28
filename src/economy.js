@@ -31,6 +31,9 @@ export function computeEconomy(grid, state = {}) {
   let capBase = 0;
   let craterManpower = 0;
   let raiderManpower = 0;
+  let banditOil = 0; // Siphoner camps
+  let banditFood = 0; // Scavenger camps
+  let stockpileTheft = 0; // Smuggler dens: share of the stockpile taken each season
   let farmFood = 0;
   let foodEaten = 0;
   let craterFood = 0;
@@ -53,6 +56,9 @@ export function computeEconomy(grid, state = {}) {
       bonus.ruins += ruins;
     }
     if (stats.raiderDrain) raiderManpower += stats.raiderDrain;
+    if (stats.oilDrain) banditOil += stats.oilDrain;
+    if (stats.foodDrain) banditFood += stats.foodDrain;
+    if (stats.stockpileTheft) stockpileTheft += stats.stockpileTheft;
     // Labour Camp: +2 slots if any Settlement is next to it (doesn't stack with more Settlements).
     if (stats.adjacentManpower) {
       const near = neighbours(cell.x, cell.z);
@@ -94,6 +100,8 @@ export function computeEconomy(grid, state = {}) {
       foodEaten += -stats.food;
       per.food += stats.food;
     }
+    // Bandits: per-tile numbers for the payout.
+    if (stats.foodDrain) per.food -= stats.foodDrain;
 
     if (isIdle(cell.x, cell.z)) {
       per.idle = true;
@@ -141,7 +149,7 @@ export function computeEconomy(grid, state = {}) {
   const foodGrown = Math.round(farmFood);
   // Citizens eat too: 1 food per 2 population (rounded up).
   const popFood = Math.ceil(population / POP_PER_FOOD);
-  const totalEaten = foodEaten + craterFood + popFood + mods.foodUpkeep;
+  const totalEaten = foodEaten + craterFood + popFood + banditFood + mods.foodUpkeep;
   const foodBalance = foodGrown - totalEaten;
   // The store covers a shortfall first; only what it can't cover starves the city.
   const fed = totalEaten > 0 ? Math.min(1, (foodGrown + foodStore) / totalEaten) : 1;
@@ -155,11 +163,22 @@ export function computeEconomy(grid, state = {}) {
   }
 
   const refineryMult = 1 + 0.5 * refineryLinks;
-  const oil = Math.round(crude * refineryMult * fed);
+  const oilMade = Math.round(crude * refineryMult * fed);
+  // Siphoners tap the pipelines: taken off this season's oil (never below 0).
+  const oilStolen = Math.min(oilMade, banditOil);
+  const oil = oilMade - oilStolen;
 
   // Per-tile: farms grow at the staffing rate; final oil is shared out over stations by their crude
   // (largest remainder, so the per-tile numbers add up exactly to the total).
-  shareOut(perCell, 'rawCrude', 'oil', oil);
+  shareOut(perCell, 'rawCrude', 'oil', oilMade);
+  // Each Siphoner camp shows what it took (up to what was there).
+  let siphonLeft = oilStolen;
+  for (const per of perCell) {
+    const d = TERRAINS[per.terrain].stats.oilDrain;
+    if (!d || siphonLeft <= 0) continue;
+    per.oil -= Math.min(d, siphonLeft);
+    siphonLeft -= Math.min(d, siphonLeft);
+  }
   // Grown food (after upkeep was already counted) rounded so the tiles add up to the shown balance.
   const upkeep = perCell.reduce((s, p) => s + p.food, 0);
   shareOut(perCell, 'rawFood', 'food', Math.round(foodBalance) - upkeep);
@@ -177,6 +196,11 @@ export function computeEconomy(grid, state = {}) {
     idle,
     craterManpower,
     raiderManpower,
+    banditFood,
+    banditOil,
+    oilStolen,
+    oilMade,
+    stockpileTheft,
     mods,
     foodGrown,
     foodEaten: totalEaten,

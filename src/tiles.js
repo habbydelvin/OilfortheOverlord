@@ -92,7 +92,7 @@ export const TERRAINS = {
     category: 'junk',
     buildable: false,
     weight: 1.34,
-    rule: 'Must be placed · can\'t be built on',
+    rule: '3×3 Blocks have a chance to spawn Bandit Camps',
     stats: {},
   },
   wasteland2: {
@@ -103,7 +103,7 @@ export const TERRAINS = {
     category: 'junk',
     buildable: false,
     weight: 1.34,
-    rule: 'Must be placed · can\'t be built on',
+    rule: '3×3 Blocks have a chance to spawn Bandit Camps',
     stats: {},
   },
   wasteland3: {
@@ -114,7 +114,7 @@ export const TERRAINS = {
     category: 'junk',
     buildable: false,
     weight: 1.34,
-    rule: 'Must be placed · can\'t be built on',
+    rule: '3×3 Blocks have a chance to spawn Bandit Camps',
     stats: {},
   },
   wasteland4: {
@@ -125,7 +125,7 @@ export const TERRAINS = {
     category: 'junk',
     buildable: false,
     weight: 1.34,
-    rule: 'Must be placed · can\'t be built on',
+    rule: '3×3 Blocks have a chance to spawn Bandit Camps',
     stats: {},
   },
 
@@ -207,7 +207,67 @@ export const TERRAINS = {
     rule: '-2 worker slots · Leaves when your people are fed',
     stats: { raiderDrain: 2 },
   },
+
+  // ---- bandit camps: settle in a full 3×3 block of Wasteland at the end of a season ----
+  // Permanent: only "Send in the Militia" clears them (Demolish can't).
+  bandit_raider: {
+    name: 'Raider Hideout',
+    trigger: 'Passive',
+    top: 0x7a3a2a,
+    edge: 0x52261b,
+    category: 'junk',
+    buildable: false,
+    weight: 0, // only spawned in a 3×3 block of Wasteland
+    bandit: true,
+    tent: 0x8c2f22,
+    rule: '-2 worker slots · Clear it with Send in the Militia',
+    stats: { raiderDrain: 2 },
+  },
+  bandit_siphon: {
+    name: 'Siphoner Camp',
+    trigger: 'Passive',
+    top: 0x2f2a26,
+    edge: 0x1c1916,
+    category: 'junk',
+    buildable: false,
+    weight: 0,
+    bandit: true,
+    tent: 0x22201e,
+    rule: '-2 oil each season · Clear it with Send in the Militia',
+    stats: { oilDrain: 2 },
+  },
+  bandit_scav: {
+    name: 'Scavenger Camp',
+    trigger: 'Passive',
+    top: 0x6b6a2e,
+    edge: 0x47461d,
+    category: 'junk',
+    buildable: false,
+    weight: 0,
+    bandit: true,
+    tent: 0x6f7a2a,
+    rule: '-2 food each season · Clear it with Send in the Militia',
+    stats: { foodDrain: 2 },
+  },
+  bandit_smuggle: {
+    name: 'Smuggler Den',
+    trigger: 'Passive',
+    top: 0x3e4a5c,
+    edge: 0x29313d,
+    category: 'junk',
+    buildable: false,
+    weight: 0,
+    bandit: true,
+    tent: 0x34506e,
+    rule: 'Steals 10% of your oil stockpile each season · Clear it with Send in the Militia',
+    stats: { stockpileTheft: 0.1 },
+  },
 };
+
+/** Bandit camp terrains (the wasteland spawns pick one at random). */
+export const BANDIT_KEYS = Object.keys(TERRAINS).filter((k) => TERRAINS[k].bandit);
+/** Any camp: starvation raiders or wasteland bandits. */
+export const isCamp = (terrain) => terrain === 'raider' || Boolean(TERRAINS[terrain]?.bandit);
 
 /**
  * Action cards: bought in the shop, played on the board for a one-off effect, never become tiles.
@@ -234,7 +294,18 @@ export const ACTIONS = {
     symbol: '✕',
     range: 0,
     weight: 0.4,
-    rule: 'Remove a tile (not a Capital)',
+    rule: 'Remove a tile (not a Capital or a camp)',
+  },
+  militia: {
+    name: 'Send in the Militia',
+    trigger: 'On play',
+    top: 0x4f6b3a,
+    edge: 0x354a26,
+    category: 'action',
+    symbol: '⚔',
+    range: 0,
+    weight: 0, // shop only
+    rule: 'Clear one bandit or raider camp',
   },
 };
 /** Resource icons (inline SVG, tinted by CSS via the res-* class). */
@@ -325,6 +396,7 @@ export const SHOP_ITEMS = [
   ['refinery', 5],
   ['spark', 2], // action cards: one use, only from the shop
   ['demolish', 2],
+  ['militia', 2],
 ];
 
 export const TERRAIN_KEYS = Object.keys(TERRAINS);
@@ -383,7 +455,7 @@ export class TileFactory {
   }
 
   create(terrain) {
-    if (terrain === 'raider') return buildRaiderCamp(this.soilGeo, this.soilMat);
+    if (isCamp(terrain)) return buildRaiderCamp(this.soilGeo, this.soilMat, TERRAINS[terrain].tent);
     if (terrain === 'labourcamp') return buildLabourCamp(this.soilGeo, this.soilMat);
     const source = this.models?.get(terrain);
     if (!source) return this.#block(terrain);

@@ -4,7 +4,7 @@ import { createScene } from './scene.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, key as plotKey } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
-import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
+import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
 import { hasBlockout, loadProgress } from './models.js';
 import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
@@ -19,6 +19,7 @@ import { Dialogue } from './dialogue.js';
 import { TIERS, TIER_ORDER, REWARDS, LOW_STREAK_LIMIT, rollReward, scaledQuota } from './targets.js';
 import { loadPayoutConfig } from './payoutConfig.js';
 import { createDebugPanel } from './debugPanel.js';
+import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
 
 const HAND_SIZE = 5;
 const SEED_TERRAIN = 'capital';
@@ -418,6 +419,7 @@ function breakdown(kind, e) {
     add(`Population ×${e.population}`, -e.popFood);
     if (turn.event) add(turn.event.name, -e.mods.foodUpkeep);
     add('Toxic craters', -e.craterFood);
+    add(`Scavenger camps ×${c('bandit_scav')}`, -e.banditFood);
     total('Balance', signed(Math.round(e.foodBalance)));
     if (e.foodBalance < 0) {
       note(
@@ -435,7 +437,7 @@ function breakdown(kind, e) {
     add('Labour camps', e.bonus.labourCamps);
     add(`Population`, e.population);
     add('Toxic craters', -e.craterManpower);
-    add(`Raider camps ×${c('raider')}`, -e.raiderManpower);
+    add(`Raider camps ×${c('raider') + c('bandit_raider')}`, -e.raiderManpower);
     if (turn.event) add(turn.event.name, e.mods.capDelta);
     total('Worker slots', e.cap);
     add(`Hydro-farms ×${c('farm')}`, -c('farm'));
@@ -456,8 +458,11 @@ function breakdown(kind, e) {
     total('Crude', e.crude);
     mul(`Refineries (${e.refineryLinks} station link${e.refineryLinks === 1 ? '' : 's'})`, e.refineryMult);
     mul('Hunger', e.fed);
+    add(`Siphoner camps ×${c('bandit_siphon')}`, -e.oilStolen);
     total('This season', signed(e.oil));
-    note(`Stockpile ${turn.stockpile} → ${turn.stockpile + e.oil} / ${turn.quota} tribute`);
+    const theft = Math.floor((turn.stockpile + e.oil) * Math.min(1, e.stockpileTheft));
+    add(`Smuggler dens ×${c('bandit_smuggle')}`, -theft);
+    note(`Stockpile ${turn.stockpile} → ${turn.stockpile + e.oil - theft} / ${turn.quota} tribute`);
     note(`The Overlord takes all of it after ${SEASONS[yearLength() - 1]}.`);
   }
   return rows;
@@ -512,7 +517,8 @@ function updateInspect(cell) {
     notes.push(`Built on Pre-war Ruins: +${c.terrain === 'settlement' ? 2 : 1} worker slot${c.terrain === 'settlement' ? 's' : ''}`);
   if (economyNow().perCell.find((p) => p.x === c.x && p.z === c.z)?.idle)
     notes.push('Idle: no free workers. Build housing to staff it.');
-  if (c.terrain === 'raider') notes.push('Unhappy citizens. Fix the food shortage to drive them off (one camp leaves per fed season).');
+  if (c.terrain === 'raider') notes.push('Unhappy citizens. Fix the food shortage to drive them off (one camp leaves per fed season), or Send in the Militia.');
+  if (t.bandit) notes.push('Bandits drawn by a 3×3 block of Wasteland. They stay until you Send in the Militia.');
   if (t.buildable) notes.push('A building can be placed on top of this tile');
   el.innerHTML = `
     <div class="card-big">
@@ -681,7 +687,7 @@ function splitTriggers(p) {
 }
 
 /** Tiles that hop even without a number of their own (they boost their neighbours). */
-const EFFECT_TILES = new Set(['pump', 'oasis', 'tarpit', 'refinery', 'raider']);
+const EFFECT_TILES = new Set(['pump', 'oasis', 'tarpit', 'refinery', 'raider', ...BANDIT_KEYS]);
 
 /** True when this season's food shortfall empties the store: the people are starving. */
 const starving = (e) => e.foodBalance < 0 && e.storeAfter <= 0;
@@ -709,9 +715,126 @@ function spawnRaider() {
   } else return null;
   addTile(x, z, 'raider');
   grid.get(x, z).onRuins = false;
+  spawnRaider.last = { x, z };
   placement.cell = null;
   frontier.rebuild(grid);
   return text;
+}
+
+/** Chance that each full 3×3 block of Wasteland draws a bandit camp at the end of a season. */
+const BANDIT_CHANCE = 1;
+/** What each bandit camp does, for the season report. */
+const BANDIT_EFFECT = {
+  bandit_raider: '-2 worker slots',
+  bandit_siphon: '-2 oil each season',
+  bandit_scav: '-2 food each season',
+  bandit_smuggle: 'steals 10% of the stockpile each season',
+};
+
+/** Centre cells of every exact 3×3 block of Wasteland on the board. */
+function findWasteBlocks() {
+  const waste = (x, z) => grid.get(x, z)?.terrain.startsWith('wasteland');
+  const out = [];
+  for (const c of grid.cells.values()) {
+    if (!waste(c.x, c.z)) continue;
+    let full = true;
+    for (let dx = -1; dx <= 1 && full; dx++) for (let dz = -1; dz <= 1 && full; dz++) full = waste(c.x + dx, c.z + dz);
+    if (full) out.push([c.x, c.z]);
+  }
+  return out;
+}
+
+/**
+ * End of season: each 3×3 block of Wasteland may turn its centre into a random bandit camp.
+ * Rechecks after every camp, so one big field doesn't spawn a pile of camps at once.
+ * Returns [{ name, effect }] for the report.
+ */
+function spawnBandits() {
+  const spawned = [];
+  const skipped = new Set(); // blocks that rolled no camp this season
+  for (;;) {
+    const blocks = findWasteBlocks().filter(([x, z]) => !skipped.has(`${x},${z}`));
+    if (!blocks.length) break;
+    const [x, z] = blocks[Math.floor(Math.random() * blocks.length)];
+    if (Math.random() >= BANDIT_CHANCE) {
+      skipped.add(`${x},${z}`);
+      continue;
+    }
+    const kind = BANDIT_KEYS[Math.floor(Math.random() * BANDIT_KEYS.length)];
+    addTile(x, z, kind);
+    spawned.push({ x, z, name: TERRAINS[kind].name, effect: BANDIT_EFFECT[kind] });
+  }
+  if (spawned.length) {
+    placement.cell = null;
+    frontier.rebuild(grid);
+  }
+  return spawned;
+}
+
+/** Send in the Militia: clears one camp, leaving empty ground. */
+function militia(x, z) {
+  const name = TERRAINS[grid.get(x, z).terrain].name;
+  clearCamp(x, z);
+  toast(`The militia cleared the ${name}`, 'good');
+}
+
+/** Removes a camp (militia, bribe, fed or crushed rebels), leaving empty ground. */
+function clearCamp(x, z) {
+  const cell = grid.get(x, z);
+  if (!cell || !isCamp(cell.terrain)) return;
+  removeMesh(cell.mesh);
+  grid.cells.delete(`${x},${z}`);
+  dust.burst(x, z);
+  frontier.rebuild(grid);
+  placement.cell = null;
+  updateHUD();
+}
+
+// ---------- first-contact scenes (once per run) ----------
+/** Scenes waiting to play: [{ type: 'rebel' | 'bandit', camp }]. */
+const pendingScenes = [];
+
+function queueScene(type, camp) {
+  const flag = type === 'rebel' ? 'seenRebels' : 'seenBandits';
+  if (turn[flag] || !camp) return;
+  turn[flag] = true;
+  pendingScenes.push({ type, camp });
+}
+
+/** Plays the queued scenes in order (bandits before rebels) and returns their report lines. */
+async function playPendingScenes(writeReport = true) {
+  const out = [];
+  pendingScenes.sort((a, b) => (a.type === 'bandit' ? -1 : 1) - (b.type === 'bandit' ? -1 : 1));
+  while (pendingScenes.length) {
+    const { type, camp } = pendingScenes.shift();
+    eventOpen = true;
+    hand.select(-1);
+    const ctx = { dialogue, turn, camp, clearCamp, punish: crushRebels, pinMilitia };
+    out.push(await (type === 'rebel' ? playRebelScene(ctx) : playBanditScene(ctx)));
+    eventOpen = false;
+    updateHUD();
+  }
+  if (writeReport && out.length) $('report').innerHTML = `${$('report').innerHTML}<br />${out.join('<br />')}`;
+  return out;
+}
+
+/** "Crush them": costs population, or food when there is none. Returns what it cost. */
+function crushRebels() {
+  shake.amount = Math.min(shake.amount + 0.9, 1.2);
+  if (turn.population >= LEADER_COSTS.crushPopulation) {
+    turn.population -= LEADER_COSTS.crushPopulation;
+    return `-${LEADER_COSTS.crushPopulation} population`;
+  }
+  const lost = Math.min(turn.food, LEADER_COSTS.crushFoodFallback);
+  turn.food -= lost;
+  return lost ? `-${lost} food` : 'no survivors to spare';
+}
+
+/** "The militia will burn you out": a free Send in the Militia in the next hand. */
+function pinMilitia() {
+  if (turn.pinned.length >= HAND_SIZE) return false;
+  turn.pinned.push('militia');
+  return true;
 }
 
 /** A fed season drives off the oldest raider camp, leaving the cell empty. True if one left. */
@@ -750,9 +873,11 @@ function gameOver(reason) {
 
 function settleTurn(e) {
   // The year ends after Winter, or early as soon as this season's oil meets the quota.
-  const yearEnds = turn.season >= yearLength() - 1 || turn.stockpile + e.oil >= turn.quota;
+  // Smuggler dens take a share of the stockpile (after this season's oil arrives).
+  const stolen = Math.floor((turn.stockpile + e.oil) * Math.min(1, e.stockpileTheft));
+  let yearEnds = turn.season >= yearLength() - 1 || turn.stockpile + e.oil - stolen >= turn.quota;
   const label = `${SEASONS[turn.season]}, round ${turn.round}`;
-  turn.stockpile += e.oil;
+  turn.stockpile += e.oil - stolen;
   turn.total += e.oil;
   turn.food = e.storeAfter;
   turn.population += e.popGrowth;
@@ -773,6 +898,22 @@ function settleTurn(e) {
     msg += ` · Population +${e.popGrowth}`;
   }
 
+  // Bandits already camped: what they took this season.
+  if (e.oilStolen) lines.push(`<span class="bad">Siphoners drained ${e.oilStolen} oil from your pipelines.</span>`);
+  if (e.banditFood) lines.push(`<span class="bad">Scavengers stole ${e.banditFood} food.</span>`);
+  if (stolen) {
+    lines.push(`<span class="bad">Smugglers made off with ${stolen} barrels from the stockpile.</span>`);
+    msg += ` · Smugglers stole ${stolen}`;
+    kind = 'bad';
+  }
+  // A full 3×3 block of Wasteland draws a new bandit camp.
+  for (const camp of spawnBandits()) {
+    queueScene('bandit', camp);
+    lines.push(`<span class="bad">Bandits settled the wasteland: ${camp.name} (${camp.effect}).</span>`);
+    msg += ` · Bandits: ${camp.name}!`;
+    kind = 'bad';
+  }
+
   // Raiders: a fed season drives one camp off; a starving year brings a new one.
   if (e.foodBalance >= 0 && departRaider()) {
     lines.push('<span class="good">Your people are fed: a raider camp packed up and left.</span>');
@@ -781,12 +922,26 @@ function settleTurn(e) {
   if (yearEnds && starving(e)) {
     const raid = spawnRaider();
     if (raid) {
+      queueScene('rebel', spawnRaider.last);
       lines.push(`<span class="bad">The food ran out and the people turned on you. ${raid} (-2 worker slots)</span>`);
       msg += ' · Starvation: raiders arrived!';
       kind = 'bad';
     }
   }
 
+  // First bandit / rebel camp this run: their leader speaks before the season wraps up
+  // (a bribe or fed rebels change the stockpile and food the tribute sees).
+  if (pendingScenes.length) {
+    playPendingScenes(false).then((sceneLines) => {
+      lines.push(...sceneLines);
+      yearEnds = turn.season >= yearLength() - 1 || turn.stockpile >= turn.quota;
+      finishSettle();
+    });
+    return;
+  }
+  finishSettle();
+
+  function finishSettle() {
   // Tribute at the end of the year (after Winter, or early once the quota is met).
   let failure = null; // set when the tribute is missed: the Overlord comes to speak instead of the shop
   if (yearEnds) {
@@ -875,6 +1030,7 @@ function settleTurn(e) {
     updateHUD();
     openShop();
   } else dealNewHand();
+  }
 }
 
 // ---------- year events ----------
@@ -1008,6 +1164,7 @@ async function startYearEvent(then, { continued = false } = {}) {
   await dialogue.leave();
   eventOpen = false;
   applyYearEvent(key, ev, choice);
+  await playPendingScenes(); // turned-away refugees: the Rebel Leader speaks
   then();
 }
 
@@ -1058,7 +1215,14 @@ function applyYearEvent(key, ev, choice) {
   turn.event = { key, name: ev.name, kind: ev.kind, mods, summary };
   // Scales this year's (already target-scaled) quota; next year still grows from turn.quotaBase.
   if (mods.quotaMult) turn.quota = Math.round(turn.quota * mods.quotaMult);
-  const ctx = { turn, spawnRaider };
+  const ctx = {
+    turn,
+    spawnRaider: () => {
+      const raid = spawnRaider();
+      if (raid) queueScene('rebel', spawnRaider.last);
+      return raid;
+    },
+  };
   const extra = [ev.apply?.(ctx), choice?.apply?.(ctx)].filter(Boolean).join(' ');
   const line = `<span class="${ev.kind === 'fortune' ? 'good' : ev.kind === 'choice' ? '' : 'bad'}">Year event: <b>${ev.name}</b>. ${summary}${extra ? ` ${extra}` : ''}</span>`;
   $('report').innerHTML = `${$('report').innerHTML}<br />${line}`;
@@ -1369,6 +1533,7 @@ function tryPlace() {
   if (ACTIONS[piece.terrain]) {
     hand.consume();
     if (piece.terrain === 'spark') spark(cells);
+    else if (piece.terrain === 'militia') militia(...cells[0]);
     else demolish(...cells[0]);
     return;
   }
@@ -1554,12 +1719,15 @@ function resetIsland() {
     over: false,
     strikes: 0,
     unlocked: new Set(),
+    seenRebels: false, // first-contact scenes, once per run
+    seenBandits: false,
     pinned: [],
     coins: 0,
     ...freshTargetState(),
   });
   shopOpen = false;
   eventOpen = false;
+  pendingScenes.length = 0;
   closeCardPick(false);
   dialogue.close();
   $('shop').classList.add('hidden');
@@ -1752,4 +1920,4 @@ factory.ready.then(() => {
 });
 
 // Handy for debugging in the console.
-window.tileIsland = { grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, economy: economyNow };
+window.tileIsland = { grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };

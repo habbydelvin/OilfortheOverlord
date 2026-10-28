@@ -48,6 +48,7 @@ function availability(key, terrain) {
   if (key === 'capital') return 'Starting tile';
   if (key === 'crater') return 'Overlord only';
   if (key === 'raider') return 'Starvation only';
+  if (terrain.bandit) return '3×3 block of Wasteland, end of season';
   if (key === 'ruins') return 'Mystery site only';
   if (terrain.weight <= 0) return 'Never';
   if (PRICE[key]) return `Locked until bought (${PRICE[key]} barrels) · then ${terrain.weight}`;
@@ -72,6 +73,9 @@ function statLines(stats) {
     for (const [n, v] of Object.entries(stats.adjacentManpower)) lines.push(`Next to ${NAME[n] ?? n}: Worker slots +${v}`);
   }
   if (stats.raiderDrain) lines.push(`Worker slots -${stats.raiderDrain}`);
+  if (stats.oilDrain) lines.push(`Oil -${stats.oilDrain} per season`);
+  if (stats.foodDrain) lines.push(`Food -${stats.foodDrain} per season`);
+  if (stats.stockpileTheft) lines.push(`Stockpile -${stats.stockpileTheft * 100}% per season`);
   if (stats.ruinsBonusManpower) lines.push(`On ruins, +${stats.ruinsBonusManpower} extra worker slot`);
   if (stats.adjacent) {
     for (const [neighbour, bonus] of Object.entries(stats.adjacent)) {
