@@ -23,6 +23,20 @@ export class CameraRig {
   keys = new Set();
   drag = null;
   onClick = null;
+  /** Cinematics: no player input moves the camera while locked. */
+  locked = false;
+  /** Ease speeds toward goal / goalDistance (cinematics slow these down). */
+  posRate = 16;
+  zoomRate = 10;
+  static POS_RATE = 16;
+  static ZOOM_RATE = 10;
+
+  /** Back to normal play: unlocked, normal ease speeds. */
+  release() {
+    this.locked = false;
+    this.posRate = CameraRig.POS_RATE;
+    this.zoomRate = CameraRig.ZOOM_RATE;
+  }
 
   constructor(camera, dom) {
     this.camera = camera;
@@ -47,6 +61,18 @@ export class CameraRig {
 
   focus(x, z) {
     this.goal.set(x, 0, z);
+  }
+
+  /**
+   * World offset for the look-at point that moves the view by (dx, dy) screen px at `distance`
+   * (the same as dragging the board by that much).
+   */
+  screenShift(dx, dy, distance = this.goalDistance) {
+    const h = this.dom.clientHeight || 1;
+    const worldPerPx = (2 * distance * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2)) / h;
+    return new THREE.Vector3()
+      .addScaledVector(this.#right(), -dx * worldPerPx)
+      .addScaledVector(this.#forward(), (dy * worldPerPx) / Math.sin(this.pitch));
   }
 
   #rightV = new THREE.Vector3();
@@ -76,6 +102,7 @@ export class CameraRig {
   #onDown = (e) => {
     if (e.button !== 0 && e.button !== 1) return;
     if (e.button === 1) e.preventDefault();
+    if (this.locked) return;
     this.drag = { button: e.button, sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, moved: false };
   };
 
@@ -101,6 +128,7 @@ export class CameraRig {
 
   #onWheel = (e) => {
     e.preventDefault();
+    if (this.locked) return;
     this.goalDistance = THREE.MathUtils.clamp(
       this.goalDistance * Math.exp(e.deltaY * 0.0015),
       this.minDistance,
@@ -111,6 +139,7 @@ export class CameraRig {
   #onKeyDown = (e) => {
     if (e.target.matches?.('input, select, textarea')) return; // debug panel sliders use arrow keys
     if (e.repeat && (e.key === 'q' || e.key === 'e')) return;
+    if (this.locked) return;
     const k = e.key.toLowerCase();
     if (k === 'q') this.rotate(-1);
     else if (k === 'e') this.rotate(1);
@@ -126,15 +155,15 @@ export class CameraRig {
     if (k.has('s') || k.has('arrowdown')) fz -= 1;
     if (k.has('d') || k.has('arrowright')) fx += 1;
     if (k.has('a') || k.has('arrowleft')) fx -= 1;
-    if (fx || fz) {
+    if ((fx || fz) && !this.locked) {
       const speed = this.distance * 0.9 * dt;
       this.goal.addScaledVector(this.#right(), fx * speed);
       this.goal.addScaledVector(this.#forward(), fz * speed);
       this.#clamp();
     }
 
-    this.target.lerp(this.goal, dt ? damp(16, dt) : 1);
-    this.distance += (this.goalDistance - this.distance) * (dt ? damp(10, dt) : 1);
+    this.target.lerp(this.goal, dt ? damp(this.posRate, dt) : 1);
+    this.distance += (this.goalDistance - this.distance) * (dt ? damp(this.zoomRate, dt) : 1);
     this.yaw += (this.goalYaw - this.yaw) * (dt ? damp(9, dt) : 1);
 
     const horiz = Math.cos(this.pitch) * this.distance;

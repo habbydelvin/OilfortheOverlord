@@ -8,9 +8,9 @@ import { TILE, applyTileGap } from './tiles.js';
  *   shadows: shadow map quality.
  */
 export const GFX = {
-  fogQuality: 'High',
-  resolution: 'Auto',
-  shadows: 'High',
+  fogQuality: 'Medium',
+  resolution: '1',
+  shadows: 'Low',
   tileGap: 0, // seam between tiles; 0 = seamless world
 };
 

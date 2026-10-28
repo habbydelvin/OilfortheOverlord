@@ -7,10 +7,10 @@ const decimals = (step) => (String(step).split('.')[1] ?? '').length;
  * Each tuning section edits its `cfg` in place (read live) and saves to localStorage.
  * `fog` and `gfx` are optional extra sections: { params, defaults, cfg, save, clear, onChange(param) }.
  */
-export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog, gfx, onPerf }) {
+export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog, gfx, missiles, onMissiles, onPerf }) {
   const fmt = (p, v) => (p.type === 'select' || p.type === 'color' ? v : Number(v).toFixed(decimals(p.step)));
   const payout = { id: 'payout', params: PAYOUT_PARAMS, defaults: PAYOUT_DEFAULTS, cfg, save: savePayoutConfig, clear: clearPayoutConfig };
-  const sections = [gfx && { id: 'gfx', ...gfx }, payout, fog && { id: 'fog', ...fog }].filter(Boolean);
+  const sections = [gfx && { id: 'gfx', ...gfx }, missiles && { id: 'missiles', ...missiles }, payout, fog && { id: 'fog', ...fog }].filter(Boolean);
   const sectionOf = (id) => sections.find((s) => s.id === id);
 
   function rowsFor({ id, params, defaults, cfg }) {
@@ -52,6 +52,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
         <div class="dbg-actions dbg-dev">
           <button data-act="skipMet" title="Jump to the tribute and deliver exactly the quota">Skip year <small>(meet)</small></button>
           <button data-act="skipMiss" title="Jump to the tribute and deliver nothing (a strike)">Skip year <small>(miss)</small></button>
+          <button data-act="missiles" title="Preview the Overlord's missile strike (settings under Missiles · preview) (M)">Missiles <small>(M)</small></button>
           <button data-act="perf" title="Performance overlay: fps, ms per system, GPU time, A/B toggles (-)">Perf</button>
         </div>
         ${rows}
@@ -96,6 +97,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
     else if (act === 'skipMet' || act === 'skipMiss') status(onSkipYear?.(act === 'skipMet') ?? '');
     else if (act === 'close') setOpen(false);
     else if (act === 'perf') onPerf?.();
+    else if (act === 'missiles') status(onMissiles?.() ?? '');
     else if (act === 'reset') {
       for (const sec of sections) {
         Object.assign(sec.cfg, sec.defaults);
@@ -110,7 +112,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
         sections.map((sec) => [sec.id, Object.fromEntries(Object.keys(sec.defaults).map((k) => [k, sec.cfg[k]]))]),
       );
       const json = JSON.stringify(all, null, 2);
-      if (await copyText(json)) status('Copied all debug values (payout → PAYOUT_DEFAULTS, fog → FOG)');
+      if (await copyText(json)) status('Copied all debug values (payout → PAYOUT_DEFAULTS, fog → FOG, missiles → MISSILE)');
       else showJson(json);
     }
   });

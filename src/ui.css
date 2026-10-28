@@ -1366,6 +1366,37 @@ body.shopping #inspect {
   visibility: hidden;
 }
 
+/* The Overlord's missile strike: the UI slides away like for the shop, so the board is all you see. */
+body.striking #top {
+  translate: 0 -140%;
+}
+
+body.striking #panel {
+  translate: 110% 0;
+}
+
+body.striking #leftcol {
+  translate: -110% 0;
+}
+
+body.striking #hand {
+  translate: 0 140%;
+}
+
+body.striking #top,
+body.striking #panel,
+body.striking #leftcol,
+body.striking #hand {
+  opacity: 0;
+  pointer-events: none;
+}
+
+body.striking #resTip,
+body.striking #inspect,
+body.striking .ruin-btn {
+  visibility: hidden;
+}
+
 /* Action cards: a big symbol in the picture slot instead of a tile shape. */
 .card .symbol {
   font-size: calc(var(--w) * 0.3);

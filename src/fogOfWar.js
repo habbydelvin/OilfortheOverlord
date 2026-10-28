@@ -165,6 +165,36 @@ const RT_ENCODE = /* glsl */ `
   gl_FragColor.rgb = sRGBTransferOETF(gl_FragColor).rgb;
   #endif`;
 
+/**
+ * The fog billow look, shared with the missile mushroom clouds: a lumpy rim (varies per seed),
+ * grain, lit top / shaded underside, two-tone colour, greyer when low. Returns colour + alpha
+ * (alpha 0 outside the puff). rimCS = cos/sin of seed*17 and seed*11. shading / lump / grain
+ * scale the effect (the fog uses 1, 1, 0.18).
+ */
+export const BILLOW_SHADE = /* glsl */ `
+vec4 billowShade(vec2 uv, vec3 colA, vec3 colB, float seed, float up, float height, vec4 rimCS,
+                 float shading, float lump, float grainAmt) {
+  vec2 p = uv * 2.0 - 1.0;
+  float r = length(p);
+  if (r >= 1.0) return vec4(0.0);
+  // rim = 0.8 + 0.12 sin(3a + 17 seed) + 0.08 sin(5a - 11 seed), via multiple-angle formulas (no atan).
+  vec2 cs = r > 1e-4 ? p / r : vec2(1.0, 0.0);
+  float c = cs.x, s = cs.y;
+  float c2 = c * c, s2 = s * s;
+  float s3a = s * (3.0 - 4.0 * s2);
+  float c3a = c * (4.0 * c2 - 3.0);
+  float s5a = s * (16.0 * s2 * s2 - 20.0 * s2 + 5.0);
+  float c5a = c * (16.0 * c2 * c2 - 20.0 * c2 + 5.0);
+  float rim = 0.8 + lump * (0.12 * (s3a * rimCS.x + c3a * rimCS.y) + 0.08 * (s5a * rimCS.z - c5a * rimCS.w));
+  float body = 1.0 - smoothstep(0.25 * rim, rim, r);
+  float grain = (1.0 - grainAmt) + grainAmt * sin(p.x * 6.5 + seed * 23.0) * sin(p.y * 5.5 - seed * 13.0);
+  vec3 color = mix(colA, colB, fract(seed * 7.13));
+  color *= mix(1.0 - 0.34 * shading, 1.0 + 0.06 * shading, smoothstep(-0.9, 0.6, up + 0.35 * (1.0 - r)));
+  color *= mix(0.84, 1.0, clamp(height / 1.5, 0.0, 1.0));
+  return vec4(color, body * body * grain);
+}
+`;
+
 const billowVertex = /* glsl */ `
 #include <fog_pars_vertex>
 ${maskSample}
@@ -300,6 +330,7 @@ void main() {
 
 const billowFragment = /* glsl */ `
 #include <fog_pars_fragment>
+${BILLOW_SHADE}
 uniform vec3 uColorA;
 uniform vec3 uColorB;
 varying vec2 vUv;
@@ -310,28 +341,10 @@ varying float vHeight;
 varying vec4 vRim;
 
 void main() {
-  vec2 p = vUv * 2.0 - 1.0;
-  float r = length(p);
-  if (r >= 1.0) discard; // the rim never reaches past r = 1: skip the quad's corners
-  // rim = 0.8 + 0.12 sin(3a + 17 seed) + 0.08 sin(5a - 11 seed), with the multiple-angle
-  // formulas instead of atan (vRim holds the cos/sin of the seed phases).
-  vec2 cs = r > 1e-4 ? p / r : vec2(1.0, 0.0);
-  float c = cs.x, s = cs.y;
-  float c2 = c * c, s2 = s * s;
-  float s3a = s * (3.0 - 4.0 * s2);
-  float c3a = c * (4.0 * c2 - 3.0);
-  float s5a = s * (16.0 * s2 * s2 - 20.0 * s2 + 5.0);
-  float c5a = c * (16.0 * c2 * c2 - 20.0 * c2 + 5.0);
-  float rim = 0.8 + 0.12 * (s3a * vRim.x + c3a * vRim.y) + 0.08 * (s5a * vRim.z - c5a * vRim.w);
-  float body = 1.0 - smoothstep(0.25 * rim, rim, r);
-  float grain = 0.82 + 0.18 * sin(p.x * 6.5 + vSeed * 23.0) * sin(p.y * 5.5 - vSeed * 13.0);
-  float alpha = body * body * grain * vAlpha;
+  vec4 b = billowShade(vUv, uColorA, uColorB, vSeed, vUp, vHeight, vRim, 1.0, 1.0, 0.18);
+  float alpha = b.a * vAlpha;
   if (alpha < 0.004) discard;
-  vec3 color = mix(uColorA, uColorB, fract(vSeed * 7.13));
-  // Lit tops and centres, shaded undersides, so each billow reads as a rounded lump.
-  color *= mix(0.66, 1.06, smoothstep(-0.9, 0.6, vUp + 0.35 * (1.0 - r)));
-  color *= mix(0.84, 1.0, clamp(vHeight / 1.5, 0.0, 1.0)); // lower layers greyer
-  gl_FragColor = vec4(color, alpha);
+  gl_FragColor = vec4(b.rgb, alpha);
   #include <colorspace_fragment>
   #include <fog_fragment>
   ${RT_ENCODE}

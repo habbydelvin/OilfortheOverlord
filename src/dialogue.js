@@ -127,9 +127,12 @@ export class Dialogue {
     this.shown = 0;
     this.typing = true;
     el.textContent = '';
-    const start = performance.now();
+    // Start time comes from the first frame's own timestamp: rAF's `now` can be slightly earlier
+    // than performance.now(), and a negative count made slice(0, -1) flash almost the whole line.
+    let start = null;
     const step = (now) => {
-      this.shown = Math.min(text.length, Math.floor(((now - start) / 1000) * CHARS_PER_SEC));
+      start ??= now;
+      this.shown = Math.max(0, Math.min(text.length, Math.floor(((now - start) / 1000) * CHARS_PER_SEC)));
       el.textContent = text.slice(0, this.shown);
       if (this.shown < text.length) this.raf = requestAnimationFrame(step);
       else this.#finishTyping();

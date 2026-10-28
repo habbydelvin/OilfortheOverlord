@@ -22,6 +22,7 @@ import { createDebugPanel } from './debugPanel.js';
 import { Perf } from './perfOverlay.js';
 import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig, applyGfx } from './graphics.js';
 import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
+import { MissileStrike, MISSILE_PARAMS, MISSILE_DEFAULTS, loadMissileConfig, saveMissileConfig, clearMissileConfig } from './missiles.js';
 
 const HAND_SIZE = 5;
 const SEED_TERRAIN = 'capital';
@@ -44,6 +45,8 @@ const fogCfg = loadFogConfig(); // saved Game Debug slider values
 const fog = new FogOfWar(scene, fogCfg);
 // Reduced-resolution fog (quality presets); the placed tiles still hide the fog behind them.
 fog.attachRenderer(renderer, scene, [tiles]);
+const missileCfg = loadMissileConfig(); // Game Debug → Missiles
+const missiles = new MissileStrike(scene, camera, missileCfg);
 const gfxCfg = loadGfxConfig();
 const applyGraphics = () => applyGfx(gfxCfg, { renderer, scene, sun, fog });
 applyGraphics();
@@ -60,6 +63,14 @@ const debug = createDebugPanel(document.getElementById('debug'), document.getEle
   onExpansionMode: (on) => setExpansionMode(on),
   onSkipYear: (met) => debugSkipYear(met),
   onPerf: () => perf.setOpen(!perf.enabled),
+  onMissiles: () => previewMissileStrike(),
+  missiles: {
+    params: MISSILE_PARAMS,
+    defaults: MISSILE_DEFAULTS,
+    cfg: missileCfg,
+    save: saveMissileConfig,
+    clear: clearMissileConfig,
+  },
   gfx: {
     params: GFX_PARAMS,
     defaults: GFX_DEFAULTS,
@@ -260,6 +271,154 @@ function nukeRandomTile(quiet = false) {
   placement.cell = null; // force ghost revalidation
   updateHUD();
   return lost;
+}
+
+// ---------- the Overlord's missile strike ----------
+/** Bumped by resetIsland, so a strike or failure speech still running stops where it is. */
+let runId = 0;
+/** True while the strike cinematic plays (camera locked, game keys ignored). */
+let striking = false;
+const wait = (s) => new Promise((r) => setTimeout(r, s * 1000));
+
+/** Missiles for the nth missed tribute (Game Debug → Missiles: 1, 3, 5). */
+const strikeCount = (strikes) => Math.max(1, Math.round(missileCfg[`count${Math.min(Math.max(strikes, 1), 3)}`]));
+
+/** The Hive City the strike centres on: the Capital nearest the middle (a mystery can add more). */
+function mainCapital() {
+  const caps = [...grid.cells.values()].filter((c) => c.terrain === 'capital');
+  return caps.sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z))[0] ?? null;
+}
+
+/** Random building cells (never Wasteland or other land). With `capital`, the main Capital is one of them, hit last. */
+function pickStrikeTargets(count, capital = false) {
+  const cap = capital ? mainCapital() : null;
+  const pool = [...grid.cells.values()].filter((c) => isBuilding(c.terrain) && c !== cap && (capital || c.terrain !== 'capital'));
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const picked = pool.slice(0, cap ? count - 1 : count);
+  if (cap) picked.push(cap);
+  return picked.map(({ x, z }) => ({ x, z }));
+}
+
+/** A missile lands: the tile becomes a Toxic Crater (ruins under it are gone too). Returns the tile's name. */
+function craterAt(x, z) {
+  const cell = grid.get(x, z);
+  if (!cell || cell.terrain === 'crater') return null;
+  const name = TERRAINS[cell.terrain].name;
+  addTile(x, z, 'crater', 0, true);
+  grid.get(x, z).onRuins = false;
+  frontier.rebuild(grid);
+  placement.cell = null; // force ghost revalidation
+  updateHUD();
+  return name;
+}
+
+/** "Refinery and two Hydro-farms". */
+function listLost(names) {
+  const WORDS = ['', 'a', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+  const counts = new Map();
+  for (const n of names) counts.set(n, (counts.get(n) ?? 0) + 1);
+  const parts = [...counts].map(([n, k]) => (k === 1 ? n : `${WORDS[k] ?? k} ${n.endsWith('y') ? `${n.slice(0, -1)}ies` : `${n}s`}`));
+  return parts.length < 2 ? parts[0] ?? '' : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
+}
+
+/** Camera for the strike: centred on the Capital, zoomed out to fit every target, easing slowly. */
+function strikeCamera(targets) {
+  const cap = mainCapital() ?? { x: 0, z: 0 };
+  const reach = Math.max(0, ...targets.map((t) => Math.hypot(t.x - cap.x, t.z - cap.z)));
+  const fit = (reach + 1.5) * 2.5 * missileCfg.camFit;
+  const dist = THREE.MathUtils.clamp(Math.max(missileCfg.camMinDistance, fit), rig.minDistance, rig.maxDistance);
+  rig.posRate = missileCfg.camRate;
+  rig.zoomRate = missileCfg.camRate * 0.8;
+  rig.goalDistance = dist;
+  // The view is normally offset for the side panel and hand (scene.js); they slide away during the
+  // strike, so shift the look-at point to put the Capital in the true middle of the screen, a little
+  // low (camLower) to leave room for the clouds.
+  const view = camera.view?.enabled ? camera.view : { offsetX: 0, offsetY: 0 };
+  const lower = missileCfg.camLower * (renderer.domElement.clientHeight || window.innerHeight);
+  rig.goal.set(cap.x, 0, cap.z).add(rig.screenShift(view.offsetX, view.offsetY + lower, dist));
+}
+
+/**
+ * The strike cinematic: the UI slides away, the camera eases over to the Capital, then the missiles
+ * streak in from the Overlord's side of the world. Each tile turns into a Toxic Crater under its
+ * mushroom cloud (unless `convert` is off: a dry-run preview). The caller owns `eventOpen` afterwards.
+ * Returns the names of the tiles destroyed.
+ */
+async function playMissileStrike(targets, { convert = true, restoreCamera = true } = {}) {
+  const run = runId;
+  const lost = [];
+  if (!targets.length) return lost;
+  striking = true;
+  eventOpen = true;
+  hand.select(-1);
+  if (previewing) cancelPreview();
+  document.body.classList.add('striking');
+  const saved = { goal: rig.goal.clone(), distance: rig.goalDistance };
+  rig.locked = true;
+  strikeCamera(targets);
+  await wait(missileCfg.camLead);
+  if (run !== runId) return lost;
+  await missiles.fire(targets, {
+    onImpact: ({ x, z }) => {
+      if (run !== runId) return;
+      dust.burst(x, z, 1.8);
+      fog.disturb(x, z);
+      shake.amount = Math.min(shake.amount + missileCfg.shake, 1.2);
+    },
+    onCover: ({ x, z }) => {
+      if (!convert || run !== runId) return;
+      const name = craterAt(x, z);
+      if (name) lost.push(name);
+    },
+  });
+  if (run !== runId) return lost;
+  await wait(missileCfg.holdAfter);
+  if (run !== runId) return lost;
+  document.body.classList.remove('striking');
+  if (restoreCamera) {
+    rig.goal.copy(saved.goal);
+    rig.goalDistance = saved.distance;
+    await wait(0.7);
+    if (run !== runId) return lost;
+  }
+  rig.release();
+  striking = false;
+  return lost;
+}
+
+/** Report line once the missiles have landed. */
+function reportStrike(lost) {
+  if (!lost.length) return;
+  $('report').innerHTML += `<br /><span class="bad">Missile strike: your ${listLost(lost)} ${lost.length === 1 ? 'is now a Toxic Crater' : 'are now Toxic Craters'}.</span>`;
+}
+
+/** Debug (M): play a strike right now (Game Debug → Missiles · preview). */
+function previewMissileStrike() {
+  if (turn.over) return 'Game over: restart first';
+  if (striking || shopOpen || eventOpen || payout.active) return 'Finish the current screen first';
+  const n = Math.max(1, Math.round(missileCfg.previewCount));
+  const targets = pickStrikeTargets(n, missileCfg.previewCapital === 'yes');
+  // Not enough buildings yet: the rest land on empty sand near the Capital.
+  const cap = mainCapital() ?? { x: 0, z: 0 };
+  const used = new Set(targets.map((t) => plotKey(t.x, t.z)));
+  for (let tries = 0; targets.length < n && tries < 200; tries++) {
+    const x = cap.x + Math.round((Math.random() * 2 - 1) * 4);
+    const z = cap.z + Math.round((Math.random() * 2 - 1) * 4);
+    if (grid.get(x, z) || used.has(plotKey(x, z))) continue;
+    used.add(plotKey(x, z));
+    targets.push({ x, z });
+  }
+  const run = runId;
+  playMissileStrike(targets, { convert: missileCfg.previewCraters === 'yes' }).then((lost) => {
+    if (run !== runId) return;
+    eventOpen = false;
+    updateHUD();
+    if (lost.length) toast(`The Overlord's missiles destroyed your ${listLost(lost)}`, 'bad', 2600);
+  });
+  return `Missile strike: ${targets.length} missile${targets.length === 1 ? '' : 's'}`;
 }
 
 // ---------- Pre-war Ruins ----------
@@ -1083,13 +1242,13 @@ function settleTurn(e) {
         lines.push(`<span class="bad">${TIERS[target.tier].label} target missed: the reward (${iconize(REWARDS[target.reward].text)}) is lost.</span>`);
       const short = quota - delivered;
       turn.strikes++;
-      const lost = turn.strikes < MAX_STRIKES ? nukeRandomTile(true) : null;
-      lines.push(
-        `<span class="bad">Tribute short by ${short}. ${lost ? `The Overlord nuked your ${lost}.` : ''}</span>`,
-      );
-      msg += ` · Tribute short by ${short}! ${lost ? `The Overlord nuked your ${lost}.` : ''}`;
+      // The missiles themselves fly during the Overlord's speech (playTributeFailure).
+      const count = strikeCount(turn.strikes);
+      const launched = `The Overlord launched ${count} missile${count === 1 ? '' : 's'} at your city.`;
+      lines.push(`<span class="bad">Tribute short by ${short}. ${launched}</span>`);
+      msg += ` · Tribute short by ${short}! ${launched}`;
       kind = 'bad';
-      failure = { quota, delivered, short, lost, nextQuota: turn.quota };
+      failure = { quota, delivered, short, missiles: count, nextQuota: turn.quota };
     }
     const greed = delivered > quota ? "Your excess whetted the Overlord's appetite. " : '';
     lines.push(`<span class="bad">${greed}Next base tribute: ${turn.quota} (+${rise}).</span>`);
@@ -1107,10 +1266,12 @@ function settleTurn(e) {
     }
     turn.coins = 0;
     updateHUD();
+    const run = runId;
     playTributeFailure({ ...failure, strikes: turn.strikes, final }).then(() => {
+      if (run !== runId) return; // the island was reset mid-speech
       if (final) {
         showStrikes(true);
-        gameOver('Three tributes missed. The Overlord has lost his patience and razed your city.');
+        gameOver("Three tributes missed. The Overlord's missiles have turned your Hive City into a toxic crater.");
       } else startNewYear(dealNewHand, { continued: true });
     });
     return;
@@ -1733,6 +1894,7 @@ window.addEventListener('keydown', (e) => {
     perf.setOpen(!perf.enabled); // performance overlay
     return;
   }
+  if (striking) return; // the missile strike cinematic owns the screen
   if (payout.active) {
     if (k === 'enter') endTurn();
     return; // no placing / rotating / nuking mid-payout
@@ -1748,6 +1910,10 @@ window.addEventListener('keydown', (e) => {
   }
   else if (k === 'c') rig.focus(...(grid.expansionMode ? grid.territoryCenter() : grid.centroid()));
   else if (k === 'n') nukeRandomTile();
+  else if (k === 'm' && !e.repeat) {
+    const msg = previewMissileStrike();
+    if (msg.startsWith('Finish') || msg.startsWith('Game over')) toast(msg);
+  }
   else if (k === 'p' && !e.repeat) debugShop();
   else if (k === 'v' && !e.repeat) debugEvent();
   else if (k === 't' && !e.repeat) debugTarget(e.shiftKey);
@@ -1798,6 +1964,11 @@ $('btnRestart').addEventListener('click', resetIsland);
 
 // ---------- lifecycle ----------
 function resetIsland() {
+  runId++; // stops a missile strike / failure speech still running
+  missiles.clear();
+  striking = false;
+  rig.release();
+  document.body.classList.remove('striking');
   payout.cancel(); // stop a running payout without settling it
   previewing = false;
   document.body.classList.remove('paying');
@@ -1854,43 +2025,64 @@ function resetIsland() {
 /**
  * A missed tribute: the Overlord comes to speak. What he says depends on how many strikes are
  * left: a warning, a last warning, and on the third miss his judgement (the game over follows).
+ * Mid-speech he launches the missiles (1, 3, then 5): the dialogue steps aside for the strike,
+ * then he comes back to gloat. On the final strike one of them hits the Capital.
  */
-async function playTributeFailure({ quota, delivered, short, lost, strikes, final }) {
+async function playTributeFailure({ quota, delivered, short, missiles: count, strikes, final }) {
   const OVERLORD = 'The Overlord';
+  const run = runId;
+  const live = () => run === runId;
+  const say = async (text) => live() && text && dialogue.say(OVERLORD, text);
   const left = MAX_STRIKES - strikes;
+  const many = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'][count] ?? String(count);
   eventOpen = true;
   hand.select(-1);
-  dialogue.open({
+  const banner = {
     kind: 'disaster',
     kindLabel: `Tribute missed · strike ${strikes} of ${MAX_STRIKES}`,
     title: final ? "The Overlord's Judgement" : strikes === MAX_STRIKES - 1 ? 'Last Warning' : 'The Overlord Is Displeased',
     effect: final
-      ? `Short by ${short} barrels · the Hive City falls`
-      : `Short by ${short} barrels · no market this year · ${left} more miss${left === 1 ? '' : 'es'} and the city falls`,
-  });
-  const reminder = lost ? `I have left a reminder where your ${lost} used to stand.` : null;
-  let script;
+      ? `Short by ${short} barrels · ${count} missile${count === 1 ? '' : 's'} · the Hive City falls`
+      : `Short by ${short} barrels · ${count} missile${count === 1 ? '' : 's'} · no market this year · ${left} more miss${left === 1 ? '' : 'es'} and the city falls`,
+  };
+  dialogue.open(banner);
+
+  /** Dialogue steps aside, the missiles fly, the report notes the damage. */
+  const strike = async (targets, opts) => {
+    if (!targets.length || !live()) return [];
+    await dialogue.leave();
+    if (!live()) return [];
+    const lost = await playMissileStrike(targets, opts);
+    if (live()) reportStrike(lost);
+    return lost;
+  };
+
   if (final) {
-    script = {
-      lines: [
-        'Three times.',
-        `${delivered} barrels, when I asked for ${quota}. Three years, three failures.`,
-        'I gave you a city, its workers and my patience. You squandered all three.',
-      ],
-      ask: 'Do you have any last words, Overseer?',
-      replies: [
-        ['I did everything I could.', 'Then everything was not enough.'],
-        ['The wastes will take you too, one day.', 'Perhaps. But not today. Burn it.'],
-        ['Please...', 'Begging. How fitting. Burn it to the sand.'],
-      ],
-    };
-  } else if (left === 1) {
+    await say('Three times.');
+    await say(`${delivered} barrels, when I asked for ${quota}. Three years, three failures.`);
+    await say('I gave you a city, its workers and my patience. You squandered all three.');
+    if (!live()) return;
+    const replies = [
+      ['I did everything I could.', 'Then everything was not enough. Launch them all.'],
+      ['The wastes will take you too, one day.', 'Perhaps. But not today. Burn it.'],
+      ['Please...', 'Begging. How fitting. Burn it to the sand.'],
+    ];
+    const i = await dialogue.ask(OVERLORD, 'Do you have any last words, Overseer?', replies.map(([text]) => ({ text })));
+    await say(replies[i][1]);
+    await say(`${many} missiles, Overseer. Watch your city burn.`);
+    await strike(pickStrikeTargets(count, true), { restoreCamera: false });
+    if (live()) eventOpen = false;
+    return;
+  }
+
+  let script;
+  if (left === 1) {
     script = {
       lines: [
         'Again. You have failed me again.',
         `${delivered} barrels. My generals no longer say your name; they just call you "the shortfall".`,
-        reminder,
       ],
+      launch: `${many} missile${count === 1 ? '' : 's'} this time. Look to the sky, Overseer.`,
       ask: 'This is your last warning. Fail me once more, and I will raze the Hive City to the sand.',
       replies: [
         ["You'll have your oil. All of it.", 'Words. Bring me barrels.'],
@@ -1903,8 +2095,8 @@ async function playTributeFailure({ quota, delivered, short, lost, strikes, fina
       lines: [
         `Short. ${delivered} barrels, when I asked for ${quota}.`,
         'My tanks sat idle in the dunes while the technobarbarians laughed. Because of you, Overseer.',
-        reminder,
       ],
+      launch: count === 1 ? 'Perhaps a demonstration will focus your mind. One missile. Watch the sky.' : `Perhaps a demonstration will focus your mind. ${many} missiles. Watch the sky.`,
       ask: 'There will be no market for you this year. Fail me twice more and your city burns.',
       replies: [
         ["It won't happen again.", "See that it doesn't."],
@@ -1913,18 +2105,25 @@ async function playTributeFailure({ quota, delivered, short, lost, strikes, fina
       ],
     };
   }
-  for (const line of script.lines.filter(Boolean)) await dialogue.say(OVERLORD, line);
-  const i = await dialogue.ask(
-    OVERLORD,
-    script.ask,
-    script.replies.map(([text]) => ({ text })),
-  );
-  await dialogue.say(OVERLORD, script.replies[i][1]);
-  // Not the end: he stays on and moves straight on to next year's target (startNewYear).
-  if (final) {
-    await dialogue.leave();
-    eventOpen = false;
+  for (const line of script.lines) await say(line);
+  const targets = pickStrikeTargets(count);
+  let lost = [];
+  if (targets.length) {
+    await say(script.launch);
+    lost = await strike(targets);
+    if (!live()) return;
+    eventOpen = true;
+    dialogue.open(banner); // he comes back to gloat
   }
+  await say(
+    lost.length
+      ? `I have left a reminder where your ${listLost(lost)} used to stand.`
+      : 'You have nothing standing worth one of my missiles. Remember that. I will.',
+  );
+  if (!live()) return;
+  const i = await dialogue.ask(OVERLORD, script.ask, script.replies.map(([text]) => ({ text })));
+  await say(script.replies[i][1]);
+  // Not the end: he stays on and moves straight on to next year's target (startNewYear).
 }
 
 /** Opening scene: the Overlord appoints you Overseer of the Hive City, then leaves you to it. */
@@ -1978,6 +2177,9 @@ function frame(now) {
   perf.begin('dust');
   dust.update(dt);
   perf.end('dust');
+  perf.begin('missiles');
+  missiles.update(dt);
+  perf.end('missiles');
   perf.begin('tile anims');
   factory.update(dt);
   perf.end('tile anims');
@@ -2092,4 +2294,4 @@ factory.piecesReady.then((pieces) => {
 });
 
 // Handy for debugging in the console.
-window.tileIsland = { perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };
+window.tileIsland = { perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };
