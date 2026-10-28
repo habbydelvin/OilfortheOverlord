@@ -14,9 +14,9 @@
 export const PORTRAITS = {
   // Bump ?v= when the image file changes, so browsers drop the cached copy.
   'The Overlord': '/portraits/TheOverlord01.png?v=20261027-1828',
+  'Rebel Leader': '/portraits/TheRebel01.png?v=20261028-2054',
+  'Bandit Leader': '/portraits/TheRaider01.png?v=20261028-2057',
   // No art yet: add an image path here to give them a portrait.
-  'Rebel Leader': '',
-  'Bandit Leader': '',
   'Field Report': '',
 };
 
