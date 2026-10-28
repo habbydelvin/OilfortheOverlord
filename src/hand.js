@@ -71,16 +71,40 @@ export class Hand {
   deal(count = this.size, pinned = []) {
     const exclude = this.excluded?.() ?? [];
     // Pinned cards (bought in the shop) are guaranteed; the rest of the hand is random.
+    // Pinned cards already showing in the hand (bought in the shop) stay put instead of being dealt again.
+    const kept = this.cards.filter((p) => p.pinned);
+    const reused = new Set();
     const fixed = pinned.slice(0, count).map((t) => {
+      const old = kept.find((p) => p.terrain === t && !reused.has(p));
+      if (old) {
+        reused.add(old);
+        return old;
+      }
       if (t === 'wasteland') return randomPiece(this.grid, ALL_BUT_WASTELAND);
       return { ...pieceOf(t), pinned: true };
     });
     this.cards = [...fixed, ...Array.from({ length: count - fixed.length }, () => randomPiece(this.grid, exclude))];
-    this.fresh = new Set(this.cards.map((_, i) => i));
+    this.fresh = new Set(this.cards.map((_, i) => i).filter((i) => !reused.has(this.cards[i])));
     this.selected = -1;
     this.leaveAs = 'discard'; // the old hand slides away
     this.render();
     this.onChange?.(null);
+  }
+
+  /** Empty the hand (the shop opens with an empty hand that fills as cards are bought). */
+  clear() {
+    this.cards = [];
+    this.selected = -1;
+    this.leaveAs = 'discard';
+    this.render();
+    this.onChange?.(null);
+  }
+
+  /** Deal one pinned card into the hand (a shop purchase or a free tile pick). */
+  addPinned(terrain) {
+    this.cards.push({ ...pieceOf(terrain), pinned: true });
+    this.fresh.add(this.cards.length - 1);
+    this.render();
   }
 
   /** Cards that must be placed before the turn can end (Wasteland). */

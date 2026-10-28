@@ -4,7 +4,7 @@ import { createScene } from './scene.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, key as plotKey } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
-import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
+import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
 import { hasBlockout, loadProgress } from './models.js';
 import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
@@ -12,13 +12,15 @@ import { Hand } from './hand.js';
 import { Mysteries } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
-import { computeEconomy, growthCost, FIRST_QUOTA, nextQuota, SEASONS } from './economy.js';
+import { computeEconomy, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS } from './economy.js';
 import { Payout } from './payout.js';
 import { EVENTS, KIND_LABEL, drawEvent } from './events.js';
 import { Dialogue } from './dialogue.js';
 import { TIERS, TIER_ORDER, REWARDS, LOW_STREAK_LIMIT, rollReward, scaledQuota } from './targets.js';
 import { loadPayoutConfig } from './payoutConfig.js';
 import { createDebugPanel } from './debugPanel.js';
+import { SCALE, SCALE_PARAMS, SCALE_DEFAULTS, loadScaleConfig, saveScaleConfig, clearScaleConfig, eventPct, P } from './scalingConfig.js';
+import { ZoomIcons, ICON_PARAMS, ICON_DEFAULTS, loadIconConfig, saveIconConfig, clearIconConfig } from './zoomIcons.js';
 import { Perf } from './perfOverlay.js';
 import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig, applyGfx } from './graphics.js';
 import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
@@ -55,6 +57,9 @@ const MODE_KEY = 'oftoMode';
 grid.expansionMode = localStorage.getItem(MODE_KEY) === 'expansion';
 placement.mysteries = mysteries; // "?" cells can't be built on, only next to (free-placement mode)
 const dialogue = new Dialogue(document.getElementById('dialogue'));
+const scaleCfg = loadScaleConfig(); // Game Debug → Scaling (events and camps)
+const iconCfg = loadIconConfig(); // Game Debug → Map icons
+const zoomIcons = new ZoomIcons(document.getElementById('mapIcons'), camera, rig, iconCfg);
 const payoutCfg = loadPayoutConfig();
 const payout = new Payout(camera, document.getElementById('floaters'), payoutCfg);
 const debug = createDebugPanel(document.getElementById('debug'), document.getElementById('btnDebug'), payoutCfg, {
@@ -81,6 +86,21 @@ const debug = createDebugPanel(document.getElementById('debug'), document.getEle
       applyGraphics();
       perf.refreshToggles();
     },
+  },
+  scaling: {
+    params: SCALE_PARAMS,
+    defaults: SCALE_DEFAULTS,
+    cfg: scaleCfg,
+    save: saveScaleConfig,
+    clear: clearScaleConfig,
+    onChange: () => updateHUD(),
+  },
+  icons: {
+    params: ICON_PARAMS,
+    defaults: ICON_DEFAULTS,
+    cfg: iconCfg,
+    save: saveIconConfig,
+    clear: clearIconConfig,
   },
   fog: {
     params: FOG_PARAMS,
@@ -118,6 +138,37 @@ function freshTargetState() {
 
 /** This season's economy with the carried-over food store and population. */
 const economyNow = () => computeEconomy(grid, { mods: turn.event?.mods, population: turn.population, foodStore: turn.food });
+/** A year event's strength this year, its chosen option and the economy mods it gives. */
+const resolveMods = (m, p) => (typeof m === 'function' ? m(p) : m ?? {});
+function eventSetup(key, choiceIdx = -1, year = turn.round) {
+  const ev = EVENTS[key];
+  const p = ev.scale ? eventPct(ev.scale, year) : 0;
+  const choice = choiceIdx >= 0 ? ev.choices?.[choiceIdx] ?? null : null;
+  const mods = { ...resolveMods(ev.mods, p), ...resolveMods(choice?.mods, p) };
+  return { ev, p, choice, mods };
+}
+/** This season's economy if `mods` were the active event (for the "now" numbers in event text). */
+const previewEconomy = (mods) => computeEconomy(grid, { mods, population: turn.population, foodStore: turn.food });
+/** Effect text for an event (and choice), with this year's percentage and the amount it means right now. */
+function eventText(key, choiceIdx = -1, year = turn.round) {
+  const { ev, p, choice, mods } = eventSetup(key, choiceIdx, year);
+  const e = previewEconomy(mods);
+  return choice ? `${choice.label}: ${choice.text(p, e)}` : ev.text(p, e);
+}
+
+/** What a camp kind does: its percentage, plus what all camps of that kind take right now. */
+function campEffect(kind) {
+  const e = economyNow();
+  const d = TERRAINS[kind].stats.drain;
+  const all = (e.camps[d] ?? 0) > 1 ? ' (all camps)' : '';
+  if (d === 'slots') return `-${P(SCALE.campSlots)} worker slots, -${e.raiderManpower} now${all}`;
+  if (d === 'oil') return `-${P(SCALE.campOil)} of oil made, -${e.oilStolen} now${all}`;
+  if (d === 'food') return `-${P(SCALE.campFood)} of food grown, -${e.banditFood} now${all}`;
+  return `steals ${P(e.stockpileTheft)} of the stockpile each season${all}`;
+}
+
+/** Keeps the food store within what the Capitals can hold (after rewards, Spark, lost Capitals…). */
+const clampFood = () => (turn.food = Math.max(0, Math.min(turn.food, foodCapOf(grid))));
 
 // Tiles that can't be drawn yet: no Cliffs during the first round.
 /** Guaranteed opening hand (shuffled). Extra slots, if HAND_SIZE grows, are drawn at random. */
@@ -128,7 +179,7 @@ const OPENING_TILES = ['wasteland1', 'wasteland2', 'wasteland3', 'wasteland4', '
 hand.excluded = () => {
   if (turn.round === 1 && turn.season === 0)
     return [...Object.keys(TERRAINS), ...Object.keys(ACTIONS)].filter((k) => !OPENING_TILES.includes(k));
-  const locked = SHOP_ITEMS.map(([k]) => k).filter((k) => !turn.unlocked.has(k));
+  const locked = SHOP_ITEMS.map(([k]) => k).filter((k) => !BASIC_SHOP.has(k) && !turn.unlocked.has(k));
   return [...locked, ...(turn.round === 1 ? ['cliffs'] : [])];
 };
 
@@ -627,13 +678,8 @@ function updateHUD() {
   $('resOilD').textContent = `(+${e.oil})`;
   $('resOilD').className = e.oil > 0 ? 'up' : '';
 
-  // Food store progress toward the next population point.
-  const cost = growthCost(turn.population);
-  $('popFill').style.width = `${Math.min(1, turn.food / cost) * 100}%`;
-  $('popText').textContent =
-    `store ${turn.food} / ${cost} → +1 pop` +
-    (e.popGrowth ? ` · growing +${e.popGrowth} this season` : '') +
-    (turn.population ? ` · population ${turn.population}` : '');
+  // Food stores: excess food banked for lean seasons (capacity from the Capitals).
+  showStore(turn.food, e.foodCap);
 
   $('btnReroll').classList.toggle('hidden', hand.isEmpty);
   $('btnReroll').classList.toggle('disabled', !turn.freeRerolls && turn.stockpile < rerollCost());
@@ -670,13 +716,12 @@ function breakdown(kind, e) {
     add(`Pump bonus ×${e.bonus.pumpFarms}`, 2 * e.bonus.pumpFarms);
     add(`Oasis bonus ×${e.bonus.oasisFarms}`, 3 * e.bonus.oasisFarms);
     add('Capital doubles', e.bonus.capitalFood);
-    if (turn.event && e.mods.farmMult !== 1)
-      add(turn.event.name, Math.round(e.foodGrown) - (2 * c('farm') + 2 * e.bonus.pumpFarms + 3 * e.bonus.oasisFarms + Math.round(e.bonus.capitalFood)));
+    if (turn.event) add(turn.event.name, e.eventFood);
     total('Grown', Math.round(e.foodGrown));
     add('Capital eats', -3 * c('capital'));
     add(`Settlements ×${c('settlement')}`, -2 * c('settlement'));
     add(`Population ×${e.population}`, -e.popFood);
-    if (turn.event) add(turn.event.name, -e.mods.foodUpkeep);
+    if (turn.event) add(turn.event.name, -e.eventUpkeep - e.mods.foodUpkeep);
     add('Toxic craters', -e.craterFood);
     add(`Scavenger camps ×${c('bandit_scav')}`, -e.banditFood);
     total('Balance', signed(Math.round(e.foodBalance)));
@@ -687,8 +732,9 @@ function breakdown(kind, e) {
           : `Shortfall covered from the store (${e.foodStore})`,
       );
     }
-    note(`Store ${e.foodStore} → ${e.storeAfter} / ${e.nextGrowthCost} for +1 population`);
-    if (e.popGrowth) note(`Population grows +${e.popGrowth} this season`);
+    note(`Stores ${e.foodStore} → ${e.storeAfter} / ${e.foodCap}`);
+    if (e.foodWasted) note(`${e.foodWasted} food wasted (stores full)`);
+    if (rebelsRise(e)) note('Stores empty: rebels will rise');
   } else if (kind === 'mp') {
     add('Capital', 4 * c('capital'));
     add(`Settlements ×${c('settlement')}`, 2 * c('settlement'));
@@ -697,7 +743,7 @@ function breakdown(kind, e) {
     add(`Population`, e.population);
     add('Toxic craters', -e.craterManpower);
     add(`Raider camps ×${c('raider') + c('bandit_raider')}`, -e.raiderManpower);
-    if (turn.event) add(turn.event.name, e.mods.capDelta);
+    if (turn.event) add(turn.event.name, e.eventCap + e.mods.capDelta);
     total('Worker slots', e.cap);
     add(`Hydro-farms ×${c('farm')}`, -c('farm'));
     add(`Stations ×${c('station')}`, -c('station'));
@@ -712,8 +758,7 @@ function breakdown(kind, e) {
     add(`Stations ×${c('station')}`, 2 * c('station'));
     add(`Tar pit bonus ×${e.bonus.tarpitStations}`, 2 * e.bonus.tarpitStations);
     add('Capital doubles', e.bonus.capitalCrude);
-    if (turn.event && e.mods.stationBonus)
-      add(turn.event.name, e.crude - (2 * c('station') + 2 * e.bonus.tarpitStations + e.bonus.capitalCrude));
+    if (turn.event) add(turn.event.name, e.eventCrude);
     total('Crude', e.crude);
     mul(`Refineries (${e.refineryLinks} station link${e.refineryLinks === 1 ? '' : 's'})`, e.refineryMult);
     mul('Hunger', e.fed);
@@ -778,6 +823,7 @@ function updateInspect(cell) {
     notes.push('Idle: no free workers. Build housing to staff it.');
   if (c.terrain === 'raider') notes.push('Unhappy citizens. Fix the food shortage to drive them off (one camp leaves per fed season), or Send in the Militia.');
   if (t.bandit) notes.push('Bandits drawn by a 3×3 block of Wasteland. They stay until you Send in the Militia.');
+  if (isCamp(c.terrain)) notes.push(`Right now: ${campEffect(c.terrain)}`);
   if (t.buildable) notes.push('A building can be placed on top of this tile');
   el.innerHTML = `
     <div class="card-big">
@@ -834,14 +880,14 @@ function cancelPreview() {
   updateHUD(); // undo the counter / bar filling
 }
 
-/** Draw the food store bar. `amount` may briefly overshoot the cost (bar glows) or go negative (hunger). */
-function showStore(amount, cost, bumpIt = false, population = turn.population) {
-  const shown = Math.max(0, Math.round(amount));
-  $('popFill').style.width = `${Math.min(1, shown / cost) * 100}%`;
-  $('popFill').classList.toggle('full', shown >= cost);
-  $('popFill').classList.toggle('empty', amount < 0);
+/** Draw the food store bar (clamped to the capacity; glows when full, red when empty). */
+function showStore(amount, cap, bumpIt = false) {
+  const shown = Math.max(0, Math.min(cap, Math.round(amount)));
+  $('popFill').style.width = `${cap ? Math.min(1, shown / cap) * 100 : 0}%`;
+  $('popFill').classList.toggle('full', cap > 0 && shown >= cap);
+  $('popFill').classList.toggle('empty', amount <= 0);
   $('popText').textContent =
-    `store ${shown} / ${cost} → +1 pop` + (population ? ` · population ${population}` : '');
+    `Food stores ${shown} / ${cap}` + (turn.population ? ` · population ${turn.population}` : '');
   if (bumpIt) bump($('popText'));
 }
 
@@ -849,27 +895,6 @@ function bump(el) {
   el.classList.remove('bump');
   void el.offsetWidth;
   el.classList.add('bump');
-}
-
-/** A "+1 pop" chip flies from the store bar to the Capital. */
-const chipV = new THREE.Vector3();
-function flyChip(capital) {
-  if (!capital) return;
-  const from = $('popFill').parentElement.getBoundingClientRect();
-  chipV.set(capital.x, 0.8, capital.z).project(camera);
-  const tx = (chipV.x * 0.5 + 0.5) * window.innerWidth;
-  const ty = (-chipV.y * 0.5 + 0.5) * window.innerHeight;
-  const chip = document.createElement('div');
-  chip.className = 'pop-chip';
-  chip.textContent = '+1 pop';
-  chip.style.left = `${from.right - 30}px`;
-  chip.style.top = `${from.top}px`;
-  document.body.appendChild(chip);
-  requestAnimationFrame(() => {
-    chip.style.transform = `translate(${tx - from.right + 30}px, ${ty - from.top}px) scale(0.6)`;
-    chip.style.opacity = '0';
-  });
-  setTimeout(() => chip.remove(), 700);
 }
 
 /** Show an oil amount in the stockpile counter and the quota bar at the top. */
@@ -888,22 +913,13 @@ function showOil(amount, bump = false) {
 
 function runPayout(e, onDone) {
   const tiles = e.perCell
-    .filter((p) => p.food || p.idle || p.oil || EFFECT_TILES.has(p.terrain) || p.terrain.startsWith('wasteland'))
+    .filter((p) => p.food || p.idle || p.oil || EFFECT_TILES.has(p.terrain))
     .map((p) => ({ ...p, mesh: payoutMesh(grid.get(p.x, p.z)) }))
     .flatMap(splitTriggers);
 
-  // Population growth: once the tiles are done, the Capital hops once per population point gained.
-  const capital = [...grid.cells.values()].find((c) => c.terrain === 'capital');
-  if (capital) {
-    for (let i = 0; i < e.popGrowth; i++)
-      tiles.push({ x: capital.x, z: capital.z, mesh: capital.mesh, population: 1, finale: true });
-  }
-
-  // Oil fills the quota bar; food fills the store bar; a full store turns into population.
+  // Oil fills the quota bar; food fills the store bar (up to its capacity).
   let shown = turn.stockpile;
   let store = turn.food;
-  let population = turn.population;
-  let mp = e.cap;
   document.body.classList.add('paying');
   payout.start(
     tiles,
@@ -913,17 +929,8 @@ function runPayout(e, onDone) {
         showOil(shown, true);
       }
       if (tile.food) {
-        store += tile.food;
-        showStore(store, growthCost(population), true);
-      }
-      if (tile.population) {
-        flyChip(capital);
-        store -= growthCost(population);
-        population++;
-        showStore(store, growthCost(population), true, population);
-        mp++;
-        $('resMp').textContent = `${Math.max(0, mp - e.needed)}/${mp}`;
-        bump($('resMp'));
+        store = Math.max(0, Math.min(e.foodCap, store + tile.food));
+        showStore(store, e.foodCap, true);
       }
     },
     () => {
@@ -948,11 +955,11 @@ function splitTriggers(p) {
 /** Tiles that hop even without a number of their own (they boost their neighbours). */
 const EFFECT_TILES = new Set(['pump', 'oasis', 'tarpit', 'refinery', 'raider', ...BANDIT_KEYS]);
 
-/** True when this season's food shortfall empties the store: the people are starving. */
-const starving = (e) => e.foodBalance < 0 && e.storeAfter <= 0;
+/** Rebels rise when a season ends with no food left: nothing gained (net ≤ 0) and the stores empty. */
+const rebelsRise = (e) => Math.round(e.foodBalance) <= 0 && e.storeAfter <= 0;
 
 /**
- * A starving year draws raiders. They camp on an empty cell next to your land first, then on a Wasteland,
+ * A season that ends with no food (net ≤ 0, stores empty) draws raiders. They camp on an empty cell next to your land first, then on a Wasteland,
  * and only raze a building (never the Capital) when there is nowhere else. Returns a report line or null.
  */
 function spawnRaider() {
@@ -974,7 +981,7 @@ function spawnRaider() {
   } else return null;
   addTile(x, z, 'raider');
   grid.get(x, z).onRuins = false;
-  spawnRaider.last = { x, z };
+  spawnRaider.last = { x, z, effect: campEffect('raider') };
   placement.cell = null;
   frontier.rebuild(grid);
   return text;
@@ -982,14 +989,6 @@ function spawnRaider() {
 
 /** Chance that each full 3×3 block of Wasteland draws a bandit camp at the end of a season. */
 const BANDIT_CHANCE = 1;
-/** What each bandit camp does, for the season report. */
-const BANDIT_EFFECT = {
-  bandit_raider: '-2 worker slots',
-  bandit_siphon: '-2 oil each season',
-  bandit_scav: '-2 food each season',
-  bandit_smuggle: 'steals 10% of the stockpile each season',
-};
-
 /** Centre cells of every exact 3×3 block of Wasteland on the board. */
 function findWasteBlocks() {
   const waste = (x, z) => grid.get(x, z)?.terrain.startsWith('wasteland');
@@ -1021,7 +1020,7 @@ function spawnBandits() {
     }
     const kind = BANDIT_KEYS[Math.floor(Math.random() * BANDIT_KEYS.length)];
     addTile(x, z, kind);
-    spawned.push({ x, z, name: TERRAINS[kind].name, effect: BANDIT_EFFECT[kind] });
+    spawned.push({ x, z, name: TERRAINS[kind].name, effect: campEffect(kind) });
   }
   if (spawned.length) {
     placement.cell = null;
@@ -1139,7 +1138,6 @@ function settleTurn(e) {
   turn.stockpile += e.oil - stolen;
   turn.total += e.oil;
   turn.food = e.storeAfter;
-  turn.population += e.popGrowth;
 
   const sgn = (n) => {
     const r = Math.round(n);
@@ -1152,10 +1150,7 @@ function settleTurn(e) {
   ];
   let msg = `${label}: +${e.oil} oil`;
   let kind = 'good';
-  if (e.popGrowth) {
-    lines.push(`<span class="good">Population +${e.popGrowth} (now ${turn.population}).</span>`);
-    msg += ` · Population +${e.popGrowth}`;
-  }
+  if (e.foodWasted) lines.push(`<span class="bad">The stores are full: ${e.foodWasted} food spoiled.</span>`);
 
   // Bandits already camped: what they took this season.
   if (e.oilStolen) lines.push(`<span class="bad">Siphoners drained ${e.oilStolen} oil from your pipelines.</span>`);
@@ -1173,16 +1168,17 @@ function settleTurn(e) {
     kind = 'bad';
   }
 
-  // Raiders: a fed season drives one camp off; a starving year brings a new one.
-  if (e.foodBalance >= 0 && departRaider()) {
+  // Rebels: a season with a food surplus drives one camp off; a season that ends with
+  // no food at all (net ≤ 0 and empty stores) brings a new camp, in place for the next season.
+  if (Math.round(e.foodBalance) > 0 && departRaider()) {
     lines.push('<span class="good">Your people are fed: a raider camp packed up and left.</span>');
     msg += ' · Raiders left';
   }
-  if (yearEnds && starving(e)) {
+  if (rebelsRise(e)) {
     const raid = spawnRaider();
     if (raid) {
       queueScene('rebel', spawnRaider.last);
-      lines.push(`<span class="bad">The food ran out and the people turned on you. ${raid} (-2 worker slots)</span>`);
+      lines.push(`<span class="bad">The food ran out and the people turned on you. ${raid} (${spawnRaider.last.effect})</span>`);
       msg += ' · Starvation: raiders arrived!';
       kind = 'bad';
     }
@@ -1234,6 +1230,7 @@ function settleTurn(e) {
       msg += ` · Tribute of ${quota} met. The Overlord seized all ${delivered} barrels.`;
       if (reward) {
         const extra = reward.grant?.({ turn }) ?? '';
+        clampFood();
         lines.push(`<span class="good">${TIERS[target.tier].label} target met: reward earned (${iconize(reward.text)}). ${extra}</span>`);
         msg += ` · Target reward: ${reward.text}`;
       }
@@ -1421,7 +1418,7 @@ async function startYearEvent(then, { continued = false } = {}) {
   const ev = EVENTS[key];
   eventOpen = true;
   hand.select(-1);
-  const choice = await playEventDialogue(ev, continued);
+  const choice = await playEventDialogue(key, ev, continued);
   await dialogue.leave();
   eventOpen = false;
   applyYearEvent(key, ev, choice);
@@ -1450,38 +1447,58 @@ const EVENT_BRIDGE = {
  * those are the real options (with their effect in the tag), otherwise flavour that he answers.
  * The dialogue is left open; the caller closes it.
  */
-async function playEventDialogue(ev, continued = false) {
+async function playEventDialogue(key, ev, continued = false) {
   const OVERLORD = 'The Overlord';
   dialogue.open({
     kind: ev.kind,
     kindLabel: `Year event · ${KIND_LABEL[ev.kind]}`,
     title: ev.name,
-    effect: iconize(ev.choices ? 'Your answer decides what happens.' : ev.text),
+    effect: iconize(ev.choices ? 'Your answer decides what happens.' : eventText(key)),
   });
+  const { p } = eventSetup(key);
   if (continued && EVENT_BRIDGE[ev.kind]) await dialogue.say(OVERLORD, EVENT_BRIDGE[ev.kind]);
-  const lines = ev.lines?.length ? ev.lines : [ev.text];
+  const evLines = typeof ev.lines === 'function' ? ev.lines(p) : ev.lines;
+  const lines = evLines?.length ? evLines : [eventText(key)];
   for (const line of lines.slice(0, -1)) await dialogue.say(OVERLORD, line);
   const options = ev.choices
-    ? ev.choices.map((c) => ({ text: c.say ?? c.label, tag: iconize(c.text) }))
+    ? ev.choices.map((c, ci) => {
+        const { mods } = eventSetup(key, ci);
+        return { text: c.say ?? c.label, tag: iconize(c.text(p, previewEconomy(mods))) };
+      })
     : (ev.replies ?? [{ say: 'Understood.' }]).map((r) => ({ text: r.say }));
   const i = await dialogue.ask(OVERLORD, lines[lines.length - 1], options);
   const picked = ev.choices ? ev.choices[i] : ev.replies?.[i];
   if (picked?.retort) await dialogue.say(OVERLORD, picked.retort);
-  return ev.choices ? picked : null;
+  return ev.choices ? i : -1;
 }
 
-function applyYearEvent(key, ev, choice) {
-  const mods = { ...(ev.mods ?? {}), ...(choice?.mods ?? {}) };
-  const summary = choice ? `${choice.label}: ${choice.text}` : ev.text;
-  turn.event = { key, name: ev.name, kind: ev.kind, mods, summary };
+function applyYearEvent(key, ev, choiceIdx) {
+  const { mods, choice } = eventSetup(key, choiceIdx);
+  // Mods and text are worked out live from this year's strength (the Scaling sliders apply at once).
+  const round = turn.round;
+  turn.event = {
+    key,
+    choiceIdx,
+    round,
+    name: ev.name,
+    kind: ev.kind,
+    get mods() {
+      return eventSetup(key, choiceIdx, round).mods;
+    },
+    get summary() {
+      return eventText(key, choiceIdx, round);
+    },
+  };
+  const summary = turn.event.summary;
   // Scales this year's (already target-scaled) quota; next year still grows from turn.quotaBase.
   if (mods.quotaMult) turn.quota = Math.round(turn.quota * mods.quotaMult);
   const ctx = {
     turn,
     spawnRaider: () => {
       const raid = spawnRaider();
-      if (raid) queueScene('rebel', spawnRaider.last);
-      return raid;
+      if (!raid) return null;
+      queueScene('rebel', spawnRaider.last);
+      return { text: raid, effect: spawnRaider.last.effect };
     },
   };
   const extra = [ev.apply?.(ctx), choice?.apply?.(ctx)].filter(Boolean).join(' ');
@@ -1494,12 +1511,15 @@ function applyYearEvent(key, ev, choice) {
 function dealNewHand() {
   hand.deal(HAND_SIZE, turn.pinned);
   turn.pinned = [];
+  holdingPurchases = false;
   updateHUD();
   pop($('oilStock'));
 }
 
 // ---------- shop (after Winter) ----------
 let shopOpen = false;
+/** True from the shop opening until the next deal: the hand shows only the cards bought so far. */
+let holdingPurchases = false;
 
 /** How many items the shop offers each visit, picked at random from SHOP_ITEMS. */
 const SHOP_SLOTS = 5;
@@ -1519,6 +1539,10 @@ function openShop() {
   shopRerolls = 0;
   stockShop();
   hand.select(-1);
+  // The old hand is gone; bought cards are dealt into the empty hand as they are bought.
+  hand.clear();
+  turn.pinned.forEach((k) => hand.addPinned(k));
+  holdingPurchases = true;
   renderShop(true);
   // Restart the open animation every time.
   const el = $('shop');
@@ -1580,7 +1604,7 @@ function debugShop() {
 function renderShop(animate = false) {
   $('shopCoins').textContent = `${turn.coins} barrel${turn.coins === 1 ? '' : 's'} of excess oil`;
   $('shopHint').textContent = turn.coins
-    ? 'Buying a tile unlocks it for good and puts it in your next hand.'
+    ? 'Bought cards go straight into your hand. Special tiles unlock for good.'
     : 'Nothing to spend: only oil above the tribute can be spent here.';
   const cost = shopRerollCost();
   $('shopRerollCost').textContent = `· ${cost} barrel${cost === 1 ? '' : 's'}`;
@@ -1598,7 +1622,7 @@ function renderShop(animate = false) {
           <div class="rule">${cardText(t)}</div>
         </div>
         <div class="price">${price} barrels</div>
-        <div class="tag">${turn.unlocked.has(k) ? 'Unlocked' : 'Locked'}${ACTIONS[k] ? ' · one use' : ''}${inHand ? ` · ${inHand} in next hand` : ''}</div>
+        <div class="tag">${BASIC_SHOP.has(k) ? 'Basic' : turn.unlocked.has(k) ? 'Unlocked' : 'Locked'}${ACTIONS[k] ? ' · one use' : ''}${inHand ? ` · ${inHand} in hand` : ''}</div>
       </div>`;
   }).join('');
 }
@@ -1608,8 +1632,9 @@ function buy(k) {
   if (turn.coins < price) return toast('Not enough excess oil', 'bad');
   if (turn.pinned.length >= HAND_SIZE) return toast('Your next hand is full', 'bad');
   turn.coins -= price;
-  turn.unlocked.add(k); // action cards too: once bought, they can be drawn at random
+  if (!BASIC_SHOP.has(k)) turn.unlocked.add(k); // action cards too: once bought, they can be drawn at random
   turn.pinned.push(k);
+  hand.addPinned(k);
   renderShop();
 }
 
@@ -1639,7 +1664,7 @@ let pickResolve = null;
 
 /** Show 3 random market tiles; the clicked one is unlocked and put in the next hand for free. */
 function openCardPick() {
-  const options = [...SHOP_ITEMS].sort(() => Math.random() - 0.5).slice(0, PICK_SLOTS);
+  const options = SHOP_ITEMS.filter(([k]) => !BASIC_SHOP.has(k)).sort(() => Math.random() - 0.5).slice(0, PICK_SLOTS);
   eventOpen = true;
   hand.select(-1);
   $('pickCards').innerHTML = options.map(([k], i) => {
@@ -1679,7 +1704,10 @@ $('pickCards').addEventListener('click', (e) => {
   const k = card.dataset.k;
   turn.unlocked.add(k);
   const inHand = turn.pinned.length < HAND_SIZE;
-  if (inHand) turn.pinned.push(k);
+  if (inHand) {
+    turn.pinned.push(k);
+    if (holdingPurchases) hand.addPinned(k);
+  }
   toast(`${cardDef(k).name} unlocked${inHand ? ' and added to your next hand' : ''}`, 'good', 2600);
   closeCardPick();
 });
@@ -1850,7 +1878,8 @@ function spark(cells) {
       }
       if (tile.food) {
         turn.food += tile.food;
-        showStore(turn.food, growthCost(turn.population), true);
+        clampFood();
+        showStore(turn.food, foodCapOf(grid), true);
       }
     },
     () => {
@@ -2190,6 +2219,9 @@ function frame(now) {
   perf.begin('ruin buttons');
   updateRuinButtons();
   perf.end('ruin buttons');
+  perf.begin('map icons');
+  zoomIcons.update(grid);
+  perf.end('map icons');
   perf.begin('expansion');
   checkExpansion();
   const cell = rig.isDragging ? null : hoveredCell();

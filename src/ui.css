@@ -269,19 +269,6 @@ body {
   animation: pop 0.35s ease-out;
 }
 
-.pop-chip {
-  position: fixed;
-  z-index: 30;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: #8fe0ff;
-  color: #10202a;
-  font-size: 12px;
-  font-weight: 700;
-  pointer-events: none;
-  transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.6s ease-in;
-}
-
 #panel .res .pop-text {
   margin-top: 3px;
   font-size: 11px;
@@ -1348,14 +1335,44 @@ body.shopping #leftcol {
   translate: -110% 0;
 }
 
+/* The hand stays up while shopping (above the shop backdrop) so bought cards are dealt into it. */
 body.shopping #hand {
-  translate: 0 140%;
+  z-index: 46;
+  pointer-events: none;
+}
+
+/* Tighter shop layout, leaving the bottom strip for the hand. */
+#shop {
+  padding-bottom: 300px;
+}
+#shop .shop-head {
+  padding: 14px 20px 10px;
+}
+#shop .coins {
+  font-size: 36px;
+}
+#shop .shop-band {
+  gap: 12px;
+  padding: 12px 0;
+}
+#shop #shopCards .card {
+  --w: 175px;
+}
+#shop #btnShopReroll {
+  margin-top: 14px; /* a little more room below the prices */
+}
+#shop .shop-foot {
+  padding: 12px 20px 6px;
+}
+#shop #btnShopDone {
+  width: 260px;
+  padding: 12px 16px;
+  font-size: 20px;
 }
 
 body.shopping #top,
 body.shopping #panel,
-body.shopping #leftcol,
-body.shopping #hand {
+body.shopping #leftcol {
   opacity: 0;
   pointer-events: none;
 }
@@ -1850,7 +1867,8 @@ body.dialogue #top,
 body.dialogue #panel,
 body.dialogue #leftcol,
 body.dialogue #hand,
-body.dialogue #ruinBtns {
+body.dialogue #ruinBtns,
+body.dialogue #mapIcons {
   opacity: 0;
   pointer-events: none;
 }
@@ -1884,4 +1902,36 @@ body.dialogue #inspect {
 #debug .dbg-check input {
   pointer-events: auto;
   accent-color: var(--gold);
+}
+
+/* Resource icons over tiles when zoomed out (see zoomIcons.js). Opacity is set from JS. */
+#mapIcons {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  --map-ico: 26px;
+}
+.map-icon {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: calc(var(--map-ico) * 1.45);
+  height: calc(var(--map-ico) * 1.45);
+  border-radius: 50%;
+  background: rgba(20, 16, 12, 0.72);
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+.map-icon .ico {
+  width: var(--map-ico);
+  height: var(--map-ico);
+  margin: 0;
+  vertical-align: middle;
+}
+body.striking #mapIcons {
+  visibility: hidden;
 }

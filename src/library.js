@@ -2,6 +2,9 @@ import './library.css';
 import * as THREE from 'three';
 import { SHAPES } from './pieces.js';
 import { ACTIONS, SHOP_ITEMS, TERRAINS, TERRAIN_KEYS, TileFactory, cardText, hex } from './tiles.js';
+import { SCALE, P, loadScaleConfig } from './scalingConfig.js';
+
+loadScaleConfig(); // show the tuned numbers
 
 const GROUPS = [
   {
@@ -72,10 +75,11 @@ function statLines(stats) {
   if (stats.adjacentManpower) {
     for (const [n, v] of Object.entries(stats.adjacentManpower)) lines.push(`Next to ${NAME[n] ?? n}: Worker slots +${v}`);
   }
-  if (stats.raiderDrain) lines.push(`Worker slots -${stats.raiderDrain}`);
-  if (stats.oilDrain) lines.push(`Oil -${stats.oilDrain} per season`);
-  if (stats.foodDrain) lines.push(`Food -${stats.foodDrain} per season`);
-  if (stats.stockpileTheft) lines.push(`Stockpile -${stats.stockpileTheft * 100}% per season`);
+  if (stats.drain === 'slots') lines.push(`Worker slots -${P(SCALE.campSlots)} per camp`);
+  if (stats.drain === 'oil') lines.push(`Oil made -${P(SCALE.campOil)} per camp, per season`);
+  if (stats.drain === 'food') lines.push(`Food grown -${P(SCALE.campFood)} per camp, per season`);
+  if (stats.drain === 'stockpile') lines.push(`Stockpile -${P(SCALE.smuggle)} per camp, per season`);
+  if (stats.drain) lines.push(`Camps of one kind take at most ${P(SCALE.campStackMax)}`);
   if (stats.ruinsBonusManpower) lines.push(`On ruins, +${stats.ruinsBonusManpower} extra worker slot`);
   if (stats.adjacent) {
     for (const [neighbour, bonus] of Object.entries(stats.adjacent)) {

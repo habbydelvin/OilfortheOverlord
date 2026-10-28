@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { hasBlockout, loadBlockouts, loadWastePieces } from './models.js';
 import { buildRaiderCamp } from './raiderMesh.js';
 import { buildLabourCamp } from './labourCampMesh.js';
+import { SCALE, P } from './scalingConfig.js';
 
 /**
  * Desert dieselpunk tile set. Flat colours only for now, detail comes later.
@@ -203,9 +204,11 @@ export const TERRAINS = {
     edge: 0x52261b,
     category: 'junk',
     buildable: false,
-    weight: 0, // only spawned by a starving year
-    rule: '-2 worker slots · Leaves when your people are fed',
-    stats: { raiderDrain: 2 },
+    weight: 0, // only spawned when the food runs out (net ≤ 0 and empty stores)
+    get rule() {
+      return `-${P(SCALE.campSlots)} worker slots · Arrives when the food stores run dry · One leaves each season with a food surplus`;
+    },
+    stats: { drain: 'slots' },
   },
 
   // ---- bandit camps: settle in a full 3×3 block of Wasteland at the end of a season ----
@@ -220,8 +223,10 @@ export const TERRAINS = {
     weight: 0, // only spawned in a 3×3 block of Wasteland
     bandit: true,
     tent: 0x8c2f22,
-    rule: '-2 worker slots · Clear it with Send in the Militia',
-    stats: { raiderDrain: 2 },
+    get rule() {
+      return `-${P(SCALE.campSlots)} worker slots · Clear it with Send in the Militia`;
+    },
+    stats: { drain: 'slots' },
   },
   bandit_siphon: {
     name: 'Siphoner Camp',
@@ -233,8 +238,10 @@ export const TERRAINS = {
     weight: 0,
     bandit: true,
     tent: 0x22201e,
-    rule: '-2 oil each season · Clear it with Send in the Militia',
-    stats: { oilDrain: 2 },
+    get rule() {
+      return `-${P(SCALE.campOil)} of oil made each season · Clear it with Send in the Militia`;
+    },
+    stats: { drain: 'oil' },
   },
   bandit_scav: {
     name: 'Scavenger Camp',
@@ -246,8 +253,10 @@ export const TERRAINS = {
     weight: 0,
     bandit: true,
     tent: 0x6f7a2a,
-    rule: '-2 food each season · Clear it with Send in the Militia',
-    stats: { foodDrain: 2 },
+    get rule() {
+      return `-${P(SCALE.campFood)} of food grown each season · Clear it with Send in the Militia`;
+    },
+    stats: { drain: 'food' },
   },
   bandit_smuggle: {
     name: 'Smuggler Den',
@@ -259,8 +268,10 @@ export const TERRAINS = {
     weight: 0,
     bandit: true,
     tent: 0x34506e,
-    rule: 'Steals 10% of your oil stockpile each season · Clear it with Send in the Militia',
-    stats: { stockpileTheft: 0.1 },
+    get rule() {
+      return `Steals ${P(SCALE.smuggle)} of your oil stockpile each season · Clear it with Send in the Militia`;
+    },
+    stats: { drain: 'stockpile' },
   },
 };
 
@@ -389,6 +400,9 @@ export const cardDef = (key) => TERRAINS[key] ?? ACTIONS[key];
 
 /** Shop stock. Special tiles are locked until bought once; action cards are one use. [terrain, price in barrels of excess oil] */
 export const SHOP_ITEMS = [
+  ['station', 2], // basics: always in the random draws, so never locked
+  ['farm', 2],
+  ['settlement', 2],
   ['pump', 3],
   ['oasis', 4],
   ['tarpit', 4],
@@ -398,6 +412,9 @@ export const SHOP_ITEMS = [
   ['demolish', 2],
   ['militia', 2],
 ];
+
+/** Basic tiles sold in the shop. They are never locked and never offered as a free tile pick. */
+export const BASIC_SHOP = new Set(['station', 'farm', 'settlement']);
 
 export const TERRAIN_KEYS = Object.keys(TERRAINS);
 

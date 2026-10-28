@@ -1,5 +1,6 @@
 import { DIRS } from './grid.js';
 import { TERRAINS } from './tiles.js';
+import { SCALE, campShare, scaled } from './scalingConfig.js';
 
 /** Workers each building needs to run. */
 export const WORKERS = { farm: 1, station: 1, refinery: 1 };
@@ -13,27 +14,35 @@ export const WORKERS = { farm: 1, station: 1, refinery: 1 };
  *     newest go idle and produce nothing.
  *  2. Food: staffed farms grow, capital/settlements eat. Not enough food -> fed < 1.
  *  3. Oil: crude (staffed stations) × refinery multiplier × fed.
- *  4. Food store: spare food is banked; a shortfall is covered from the store before `fed` drops.
- *     Each time the store reaches growthCost(population), it converts into +1 population.
+ *  4. Food store: spare food is banked (up to FOOD_PER_CAPITAL per Capital, the rest is wasted);
+ *     a shortfall is covered from the store before `fed` drops.
  *
  * state: { population, foodStore } carried between seasons. Population adds +1 manpower each.
+ *
+ * Scaling (see scalingConfig.js): year events give percentages (mods.farmPct, capPct, stationPct,
+ * foodUpkeepPct); camps take a percentage of the total each (slots, oil made, food grown).
  */
 /** Population needed to eat 1 food per season. */
 const POP_PER_FOOD = 2;
+/** Food each Capital can hold in the stores. */
+export const FOOD_PER_CAPITAL = 30;
+/** Food store capacity for the current grid. */
+export function foodCapOf(grid) {
+  let n = 0;
+  for (const c of grid.cells.values()) if (c.terrain === 'capital') n++;
+  return n * FOOD_PER_CAPITAL;
+}
 
 export function computeEconomy(grid, state = {}) {
   const population = state.population ?? 0;
   const foodStore = state.foodStore ?? 0;
   // Year-event modifiers (see events.js).
-  const mods = { farmMult: 1, stationBonus: 0, capDelta: 0, foodUpkeep: 0, ...(state.mods ?? {}) };
+  const mods = { farmPct: 0, stationPct: 0, capPct: 0, foodUpkeepPct: 0, capDelta: 0, foodUpkeep: 0, ...(state.mods ?? {}) };
   const neighbours = (x, z) => DIRS.map(([dx, dz]) => grid.get(x + dx, z + dz)?.terrain);
 
   let capBase = 0;
   let craterManpower = 0;
-  let raiderManpower = 0;
-  let banditOil = 0; // Siphoner camps
-  let banditFood = 0; // Scavenger camps
-  let stockpileTheft = 0; // Smuggler dens: share of the stockpile taken each season
+  const camps = { slots: 0, oil: 0, food: 0, stockpile: 0 }; // camps per drain kind
   let farmFood = 0;
   let foodEaten = 0;
   let craterFood = 0;
@@ -55,10 +64,7 @@ export function computeEconomy(grid, state = {}) {
       capBase += ruins;
       bonus.ruins += ruins;
     }
-    if (stats.raiderDrain) raiderManpower += stats.raiderDrain;
-    if (stats.oilDrain) banditOil += stats.oilDrain;
-    if (stats.foodDrain) banditFood += stats.foodDrain;
-    if (stats.stockpileTheft) stockpileTheft += stats.stockpileTheft;
+    if (stats.drain) camps[stats.drain]++;
     // Labour Camp: +2 slots if any Settlement is next to it (doesn't stack with more Settlements).
     if (stats.adjacentManpower) {
       const near = neighbours(cell.x, cell.z);
@@ -72,7 +78,11 @@ export function computeEconomy(grid, state = {}) {
       craterManpower += neighbours(cell.x, cell.z).filter((n) => n === 'farm' || n === 'settlement').length;
     }
   }
-  const cap = Math.max(0, capBase + population - craterManpower - raiderManpower + mods.capDelta);
+  // Raider camps and the year event take a share of the gross worker slots.
+  const capGross = capBase + population;
+  const raiderManpower = camps.slots ? scaled(capGross, campShare(camps.slots, SCALE.campSlots)) : 0;
+  const eventCap = scaled(capGross, mods.capPct);
+  const cap = Math.max(0, capGross - craterManpower - raiderManpower + eventCap + mods.capDelta);
 
   // Staff worker buildings in placement order; the newest past the cap go idle.
   const idleKeys = new Set();
@@ -100,8 +110,6 @@ export function computeEconomy(grid, state = {}) {
       foodEaten += -stats.food;
       per.food += stats.food;
     }
-    // Bandits: per-tile numbers for the payout.
-    if (stats.foodDrain) per.food -= stats.foodDrain;
 
     if (isIdle(cell.x, cell.z)) {
       per.idle = true;
@@ -113,7 +121,7 @@ export function computeEconomy(grid, state = {}) {
       const oasis = near.includes('oasis');
       if (pump) bonus.pumpFarms++;
       if (oasis) bonus.oasisFarms++;
-      per.rawFood = (2 + (pump ? 2 : 0) + (oasis ? 3 : 0)) * mods.farmMult;
+      per.rawFood = 2 + (pump ? 2 : 0) + (oasis ? 3 : 0);
       // A Capital next door triggers the farm twice: double output (doesn't stack with more Capitals).
       if (near.includes('capital')) {
         bonus.capitalFood += per.rawFood;
@@ -124,7 +132,7 @@ export function computeEconomy(grid, state = {}) {
     } else if (t === 'station') {
       const tarpit = near.includes('tarpit');
       if (tarpit) bonus.tarpitStations++;
-      per.rawCrude = 2 + (tarpit ? 2 : 0) + mods.stationBonus;
+      per.rawCrude = 2 + (tarpit ? 2 : 0);
       if (near.includes('capital')) {
         bonus.capitalCrude += per.rawCrude;
         per.rawCrude *= 2;
@@ -144,41 +152,50 @@ export function computeEconomy(grid, state = {}) {
     }
   }
 
+  // Year events: a share of all farm food / station crude, spread over the tiles in proportion.
+  const eventFood = Math.max(-farmFood, farmFood > 0 ? scaled(farmFood, mods.farmPct) : 0);
+  const eventCrude = Math.max(-crude, crude > 0 ? scaled(crude, mods.stationPct) : 0);
+  for (const per of perCell) {
+    if (eventFood && per.rawFood) per.rawFood *= (farmFood + eventFood) / farmFood;
+    if (eventCrude && per.rawCrude) per.rawCrude *= (crude + eventCrude) / crude;
+  }
+  farmFood += eventFood;
+  crude += eventCrude;
+
   const free = cap - used;
   const idle = idleKeys.size;
   const foodGrown = Math.round(farmFood);
+  // Scavengers take a share of the food grown; the event (refugees) adds upkeep as a share too.
+  const banditFood = camps.food ? scaled(foodGrown, campShare(camps.food, SCALE.campFood)) : 0;
+  const eventUpkeep = scaled(foodGrown, mods.foodUpkeepPct);
+  splitOver(perCell, 'food', 'food', -banditFood);
   // Citizens eat too: 1 food per 2 population (rounded up).
   const popFood = Math.ceil(population / POP_PER_FOOD);
-  const totalEaten = foodEaten + craterFood + popFood + banditFood + mods.foodUpkeep;
+  const totalEaten = foodEaten + craterFood + popFood + banditFood + eventUpkeep + mods.foodUpkeep;
   const foodBalance = foodGrown - totalEaten;
   // The store covers a shortfall first; only what it can't cover starves the city.
   const fed = totalEaten > 0 ? Math.min(1, (foodGrown + foodStore) / totalEaten) : 1;
 
-  // Bank spare food (whole numbers), then convert full growth costs into population.
-  let storeAfter = Math.max(0, foodStore + Math.round(foodBalance));
-  let popGrowth = 0;
-  while (storeAfter >= growthCost(population + popGrowth)) {
-    storeAfter -= growthCost(population + popGrowth);
-    popGrowth++;
-  }
+  // Bank spare food (whole numbers) up to the store capacity; anything over it spoils.
+  const foodCap = (counts.capital ?? 0) * FOOD_PER_CAPITAL;
+  const rawStore = Math.max(0, foodStore + Math.round(foodBalance));
+  const storeAfter = Math.min(foodCap, rawStore);
+  const foodWasted = rawStore - storeAfter;
 
   const refineryMult = 1 + 0.5 * refineryLinks;
   const oilMade = Math.round(crude * refineryMult * fed);
-  // Siphoners tap the pipelines: taken off this season's oil (never below 0).
+  // Siphoners tap the pipelines: a share of this season's oil (never below 0).
+  const banditOil = camps.oil ? scaled(oilMade, campShare(camps.oil, SCALE.campOil)) : 0;
   const oilStolen = Math.min(oilMade, banditOil);
+  // Smuggler dens: share of the stockpile taken each season.
+  const stockpileTheft = campShare(camps.stockpile, SCALE.smuggle);
   const oil = oilMade - oilStolen;
 
   // Per-tile: farms grow at the staffing rate; final oil is shared out over stations by their crude
   // (largest remainder, so the per-tile numbers add up exactly to the total).
   shareOut(perCell, 'rawCrude', 'oil', oilMade);
-  // Each Siphoner camp shows what it took (up to what was there).
-  let siphonLeft = oilStolen;
-  for (const per of perCell) {
-    const d = TERRAINS[per.terrain].stats.oilDrain;
-    if (!d || siphonLeft <= 0) continue;
-    per.oil -= Math.min(d, siphonLeft);
-    siphonLeft -= Math.min(d, siphonLeft);
-  }
+  // Each Siphoner camp shows its part of what was taken.
+  splitOver(perCell, 'oil', 'oil', -oilStolen);
   // Grown food (after upkeep was already counted) rounded so the tiles add up to the shown balance.
   const upkeep = perCell.reduce((s, p) => s + p.food, 0);
   shareOut(perCell, 'rawFood', 'food', Math.round(foodBalance) - upkeep);
@@ -199,6 +216,12 @@ export function computeEconomy(grid, state = {}) {
     banditFood,
     banditOil,
     oilStolen,
+    camps,
+    capGross,
+    eventCap,
+    eventFood: Math.round(eventFood),
+    eventCrude: Math.round(eventCrude),
+    eventUpkeep,
     oilMade,
     stockpileTheft,
     mods,
@@ -211,8 +234,8 @@ export function computeEconomy(grid, state = {}) {
     population,
     foodStore,
     storeAfter,
-    popGrowth,
-    nextGrowthCost: growthCost(population + popGrowth),
+    foodCap,
+    foodWasted,
     crude,
     refineryMult,
     refineryLinks,
@@ -220,6 +243,15 @@ export function computeEconomy(grid, state = {}) {
     counts,
     bonus,
   };
+}
+
+/** Adds `amount` (whole, may be negative) evenly over the camp tiles that drain `drain`. */
+function splitOver(cells, drain, outKey, amount) {
+  const items = cells.filter((c) => TERRAINS[c.terrain].stats.drain === drain);
+  if (!items.length || !amount) return;
+  const sign = Math.sign(amount);
+  const n = Math.abs(amount);
+  items.forEach((c, i) => (c[outKey] += sign * (Math.floor(n / items.length) + (i < n % items.length ? 1 : 0))));
 }
 
 /**
@@ -240,11 +272,6 @@ function shareOut(cells, weightKey, outKey, total) {
   parts.sort((a, b) => b.rem - a.rem);
   for (let i = 0; given < total; i = (i + 1) % parts.length, given++) parts[i].base++;
   for (const p of parts) p.c[outKey] += p.base;
-}
-
-/** Food needed for the next population point when you already have `population` (10, 15, 20, …). */
-export function growthCost(population) {
-  return 10 + 5 * population;
 }
 
 /** Tribute quota for the first year. */

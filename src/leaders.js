@@ -27,7 +27,7 @@ export async function playRebelScene({ dialogue, turn, camp, clearCamp, punish }
     kind: 'disaster',
     kindLabel: 'Unrest',
     title: 'The People Rise',
-    effect: 'A rebel camp has formed in your city (-2 worker slots)',
+    effect: `A rebel camp has formed in your city (${camp.effect ?? 'fewer worker slots'})`,
   });
   await dialogue.say(REBEL, 'Overseer. You sit in your tower counting barrels while the workers count ribs.');
   await dialogue.say(REBEL, "The Overlord's tanks drink better than our children.");
