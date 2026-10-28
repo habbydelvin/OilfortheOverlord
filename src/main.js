@@ -161,10 +161,11 @@ function campEffect(kind) {
   const e = economyNow();
   const d = TERRAINS[kind].stats.drain;
   const all = (e.camps[d] ?? 0) > 1 ? ' (all camps)' : '';
-  if (d === 'slots') return `-${P(SCALE.campSlots)} worker slots, -${e.raiderManpower} now${all}`;
-  if (d === 'oil') return `-${P(SCALE.campOil)} of oil made, -${e.oilStolen} now${all}`;
-  if (d === 'food') return `-${P(SCALE.campFood)} of food grown, -${e.banditFood} now${all}`;
-  return `steals ${P(e.stockpileTheft)} of the stockpile each season${all}`;
+  if (d === 'slots') return `-${P(SCALE.campSlots)} worker slots, -${e.rebelManpower} now${all}`;
+  if (d === 'banditSlots') return `-${SCALE.banditSlots} worker slots`;
+  if (d === 'oil') return `-${SCALE.banditOil} oil each season`;
+  if (d === 'food') return `-${SCALE.banditFood} food each season`;
+  return `steals ${SCALE.banditStockpile} barrels from the stockpile each season`;
 }
 
 /** Keeps the food store within what the Capitals can hold (after rewards, Spark, lost Capitals…). */
@@ -764,7 +765,7 @@ function breakdown(kind, e) {
     mul('Hunger', e.fed);
     add(`Siphoner camps ×${c('bandit_siphon')}`, -e.oilStolen);
     total('This season', signed(e.oil));
-    const theft = Math.floor((turn.stockpile + e.oil) * Math.min(1, e.stockpileTheft));
+    const theft = Math.min(turn.stockpile + e.oil, e.stockpileTheft);
     add(`Smuggler dens ×${c('bandit_smuggle')}`, -theft);
     note(`Stockpile ${turn.stockpile} → ${turn.stockpile + e.oil - theft} / ${turn.quota} tribute`);
     note(`The Overlord takes all of it after ${SEASONS[yearLength() - 1]}.`);
@@ -1132,7 +1133,7 @@ function gameOver(reason) {
 function settleTurn(e) {
   // The year ends after Winter, or early as soon as this season's oil meets the quota.
   // Smuggler dens take a share of the stockpile (after this season's oil arrives).
-  const stolen = Math.floor((turn.stockpile + e.oil) * Math.min(1, e.stockpileTheft));
+  const stolen = Math.min(turn.stockpile + e.oil, e.stockpileTheft);
   let yearEnds = turn.season >= yearLength() - 1 || turn.stockpile + e.oil - stolen >= turn.quota;
   const label = `${SEASONS[turn.season]}, round ${turn.round}`;
   turn.stockpile += e.oil - stolen;

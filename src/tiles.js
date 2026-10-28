@@ -224,9 +224,9 @@ export const TERRAINS = {
     bandit: true,
     tent: 0x8c2f22,
     get rule() {
-      return `-${P(SCALE.campSlots)} worker slots · Clear it with Send in the Militia`;
+      return `-${SCALE.banditSlots} worker slots · Clear it with Send in the Militia`;
     },
-    stats: { drain: 'slots' },
+    stats: { drain: 'banditSlots' },
   },
   bandit_siphon: {
     name: 'Siphoner Camp',
@@ -239,7 +239,7 @@ export const TERRAINS = {
     bandit: true,
     tent: 0x22201e,
     get rule() {
-      return `-${P(SCALE.campOil)} of oil made each season · Clear it with Send in the Militia`;
+      return `-${SCALE.banditOil} oil each season · Clear it with Send in the Militia`;
     },
     stats: { drain: 'oil' },
   },
@@ -254,7 +254,7 @@ export const TERRAINS = {
     bandit: true,
     tent: 0x6f7a2a,
     get rule() {
-      return `-${P(SCALE.campFood)} of food grown each season · Clear it with Send in the Militia`;
+      return `-${SCALE.banditFood} food each season · Clear it with Send in the Militia`;
     },
     stats: { drain: 'food' },
   },
@@ -269,7 +269,7 @@ export const TERRAINS = {
     bandit: true,
     tent: 0x34506e,
     get rule() {
-      return `Steals ${P(SCALE.smuggle)} of your oil stockpile each season · Clear it with Send in the Militia`;
+      return `Steals ${SCALE.banditStockpile} barrels from your oil stockpile each season · Clear it with Send in the Militia`;
     },
     stats: { drain: 'stockpile' },
   },

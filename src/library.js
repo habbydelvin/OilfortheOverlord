@@ -75,11 +75,11 @@ function statLines(stats) {
   if (stats.adjacentManpower) {
     for (const [n, v] of Object.entries(stats.adjacentManpower)) lines.push(`Next to ${NAME[n] ?? n}: Worker slots +${v}`);
   }
-  if (stats.drain === 'slots') lines.push(`Worker slots -${P(SCALE.campSlots)} per camp`);
-  if (stats.drain === 'oil') lines.push(`Oil made -${P(SCALE.campOil)} per camp, per season`);
-  if (stats.drain === 'food') lines.push(`Food grown -${P(SCALE.campFood)} per camp, per season`);
-  if (stats.drain === 'stockpile') lines.push(`Stockpile -${P(SCALE.smuggle)} per camp, per season`);
-  if (stats.drain) lines.push(`Camps of one kind take at most ${P(SCALE.campStackMax)}`);
+  if (stats.drain === 'slots') lines.push(`Worker slots -${P(SCALE.campSlots)} per camp (at most ${P(SCALE.campStackMax)} in total)`);
+  if (stats.drain === 'banditSlots') lines.push(`Worker slots -${SCALE.banditSlots}`);
+  if (stats.drain === 'oil') lines.push(`Oil -${SCALE.banditOil} per season`);
+  if (stats.drain === 'food') lines.push(`Food -${SCALE.banditFood} per season`);
+  if (stats.drain === 'stockpile') lines.push(`Stockpile -${SCALE.banditStockpile} barrels per season`);
   if (stats.ruinsBonusManpower) lines.push(`On ruins, +${stats.ruinsBonusManpower} extra worker slot`);
   if (stats.adjacent) {
     for (const [neighbour, bonus] of Object.entries(stats.adjacent)) {

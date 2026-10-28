@@ -42,7 +42,7 @@ export function computeEconomy(grid, state = {}) {
 
   let capBase = 0;
   let craterManpower = 0;
-  const camps = { slots: 0, oil: 0, food: 0, stockpile: 0 }; // camps per drain kind
+  const camps = { slots: 0, banditSlots: 0, oil: 0, food: 0, stockpile: 0 }; // camps per drain kind
   let farmFood = 0;
   let foodEaten = 0;
   let craterFood = 0;
@@ -78,9 +78,11 @@ export function computeEconomy(grid, state = {}) {
       craterManpower += neighbours(cell.x, cell.z).filter((n) => n === 'farm' || n === 'settlement').length;
     }
   }
-  // Raider camps and the year event take a share of the gross worker slots.
+  // Rebel camps and the year event take a share of the gross worker slots; Raider Hideouts a flat amount.
   const capGross = capBase + population;
-  const raiderManpower = camps.slots ? scaled(capGross, campShare(camps.slots, SCALE.campSlots)) : 0;
+  const rebelManpower = camps.slots ? scaled(capGross, campShare(camps.slots, SCALE.campSlots)) : 0;
+  const hideoutManpower = camps.banditSlots * SCALE.banditSlots;
+  const raiderManpower = rebelManpower + hideoutManpower;
   const eventCap = scaled(capGross, mods.capPct);
   const cap = Math.max(0, capGross - craterManpower - raiderManpower + eventCap + mods.capDelta);
 
@@ -166,7 +168,7 @@ export function computeEconomy(grid, state = {}) {
   const idle = idleKeys.size;
   const foodGrown = Math.round(farmFood);
   // Scavengers take a share of the food grown; the event (refugees) adds upkeep as a share too.
-  const banditFood = camps.food ? scaled(foodGrown, campShare(camps.food, SCALE.campFood)) : 0;
+  const banditFood = camps.food * SCALE.banditFood;
   const eventUpkeep = scaled(foodGrown, mods.foodUpkeepPct);
   splitOver(perCell, 'food', 'food', -banditFood);
   // Citizens eat too: 1 food per 2 population (rounded up).
@@ -185,10 +187,10 @@ export function computeEconomy(grid, state = {}) {
   const refineryMult = 1 + 0.5 * refineryLinks;
   const oilMade = Math.round(crude * refineryMult * fed);
   // Siphoners tap the pipelines: a share of this season's oil (never below 0).
-  const banditOil = camps.oil ? scaled(oilMade, campShare(camps.oil, SCALE.campOil)) : 0;
+  const banditOil = camps.oil * SCALE.banditOil;
   const oilStolen = Math.min(oilMade, banditOil);
-  // Smuggler dens: share of the stockpile taken each season.
-  const stockpileTheft = campShare(camps.stockpile, SCALE.smuggle);
+  // Smuggler dens: barrels taken from the stockpile each season (flat, per den).
+  const stockpileTheft = camps.stockpile * SCALE.banditStockpile;
   const oil = oilMade - oilStolen;
 
   // Per-tile: farms grow at the staffing rate; final oil is shared out over stations by their crude
@@ -213,6 +215,8 @@ export function computeEconomy(grid, state = {}) {
     idle,
     craterManpower,
     raiderManpower,
+    rebelManpower,
+    hideoutManpower,
     banditFood,
     banditOil,
     oilStolen,

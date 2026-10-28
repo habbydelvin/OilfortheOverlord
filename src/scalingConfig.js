@@ -3,8 +3,8 @@
  *
  * Year events: a percentage that starts at `<event>Base` in year 2 (the first event year), grows by
  * `<event>PerYear` each year after, and stops at `<event>Max`. Good events scale the same way.
- * Camps: each camp takes a percentage of the current total (worker slots, oil made, food grown);
- * several camps of one kind add up, capped at `campStackMax`. Every scaled effect is at least 1.
+ * Rebel (raider) camps: each takes a percentage of the worker slots; several add up, capped at
+ * `campStackMax`. Bandit camps take a flat amount each. Every scaled effect is at least 1.
  *
  * `SCALE` is read live, so slider changes apply straight away (even to the running year's event).
  * To make a tweak permanent: "Copy JSON" in the debug panel and paste it over SCALE_DEFAULTS.
@@ -26,10 +26,11 @@ export const SCALE_DEFAULTS = {
   refugeesPerYear: 0.05,
   refugeesMax: 0.5,
   campSlots: 0.15,
-  campOil: 0.15,
-  campFood: 0.15,
-  smuggle: 0.1,
   campStackMax: 0.6,
+  banditSlots: 2,
+  banditOil: 2,
+  banditFood: 2,
+  banditStockpile: 3,
 };
 
 /** First year that draws an event; its strength is the base value. */
@@ -48,12 +49,14 @@ export const SCALE_PARAMS = [
   ...eventRows('tithe', 'Tithe of Men (worker slots)'),
   ...eventRows('oilBoom', 'Oil Boom (station oil)'),
   ...eventRows('refugees', 'Refugees taken in (slots + food upkeep)'),
-  { group: 'Scaling · Camps (per camp)' },
-  { key: 'campSlots', label: 'Raiders: worker slots', min: 0, max: 0.5, step: 0.01, hint: 'Raider Camp + Raider Hideout' },
-  { key: 'campOil', label: 'Siphoner: oil made', min: 0, max: 0.5, step: 0.01 },
-  { key: 'campFood', label: 'Scavenger: food grown', min: 0, max: 0.5, step: 0.01 },
-  { key: 'smuggle', label: 'Smuggler: stockpile', min: 0, max: 0.5, step: 0.01 },
-  { key: 'campStackMax', label: 'Stacking cap (per kind)', min: 0.1, max: 1, step: 0.01, hint: 'most one kind of camp can take in total' },
+  { group: 'Scaling · Rebel camps (% per camp)' },
+  { key: 'campSlots', label: 'Rebels: worker slots', min: 0, max: 0.5, step: 0.01, hint: 'Raider Camp (from starvation)' },
+  { key: 'campStackMax', label: 'Stacking cap', min: 0.1, max: 1, step: 0.01, hint: 'most all rebel camps can take in total' },
+  { group: 'Bandit camps (flat, per camp, per season)' },
+  { key: 'banditSlots', label: 'Raider Hideout: worker slots', min: 0, max: 10, step: 1 },
+  { key: 'banditOil', label: 'Siphoner: oil', min: 0, max: 10, step: 1 },
+  { key: 'banditFood', label: 'Scavenger: food', min: 0, max: 10, step: 1 },
+  { key: 'banditStockpile', label: 'Smuggler: barrels from stockpile', min: 0, max: 20, step: 1 },
 ];
 
 export const SCALE = { ...SCALE_DEFAULTS };
