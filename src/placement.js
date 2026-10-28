@@ -126,10 +126,13 @@ export class Placement {
     this.blockMat.emissive.copy(ok ? OK_COLOR : BAD_COLOR).multiplyScalar(0.08);
     // Blockout ghosts keep the atlas. Only push them toward red when the spot is illegal.
     this.blocks.traverse((obj) => {
-      const base = obj.material?.userData?.base;
-      if (!base) return;
-      obj.material.color.copy(base);
-      if (!ok) obj.material.color.lerp(BAD_COLOR, 0.45);
+      if (!obj.material) return;
+      for (const m of [obj.material].flat()) {
+        const base = m.userData?.base;
+        if (!base) continue;
+        m.color.copy(base);
+        if (!ok) m.color.lerp(BAD_COLOR, 0.45);
+      }
     });
 
     this.feet.position.set(cell[0], 0, cell[1]);

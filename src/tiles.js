@@ -401,14 +401,19 @@ export class TileFactory {
     const mesh = this.create(terrain);
     mesh.traverse((obj) => {
       if (!obj.isMesh) return;
-      const material = obj.material.clone();
-      // Already see-through parts (refinery smoke) keep their own, lower opacity and cast no shadow.
-      const seeThrough = material.transparent;
-      material.transparent = true;
-      material.opacity = Math.min(material.opacity, 0.86);
-      material.depthWrite = false;
-      material.userData.base = material.color.clone();
-      obj.material = material;
+      // A mesh can carry several materials (e.g. the Village02 ship): ghost each of them.
+      let seeThrough = false;
+      const ghost = (source) => {
+        const material = source.clone();
+        // Already see-through parts (refinery smoke) keep their own, lower opacity and cast no shadow.
+        seeThrough ||= material.transparent;
+        material.transparent = true;
+        material.opacity = Math.min(material.opacity, 0.86);
+        material.depthWrite = false;
+        material.userData.base = material.color.clone();
+        return material;
+      };
+      obj.material = Array.isArray(obj.material) ? obj.material.map(ghost) : ghost(obj.material);
       obj.castShadow = !seeThrough;
     });
     return mesh;

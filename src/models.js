@@ -9,7 +9,7 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
  */
 export const BLOCKOUTS = {
   capital: 'CapitalCity01.fbx',
-  settlement: 'VillageCity01.fbx',
+  settlement: 'Village02City01.fbx',
   farm: 'HydroFarm01.fbx',
   pump: 'WaterPump01.fbx',
   station: 'OilStation01.fbx',
@@ -30,12 +30,12 @@ export const BLOCKOUTS = {
 const FINISHED = {
   capital: { yaw: 0, fit: 'Capital_HiveCity' },
   refinery: { yaw: 0, fit: 'Refinery_HiveCity' },
-  settlement: { yaw: 0, fit: 'Village_HiveCity' },
+  settlement: { yaw: 0, fit: 'Village02_HiveCity' },
 };
 
 const MODEL_URL = '/models/blockouts/';
 // Bump when a model file is re-exported under the same name, so browsers drop the cached copy.
-const MODEL_VERSION = '20261027-1729';
+const MODEL_VERSION = '20261028-0937';
 const ATLAS_URL = '/models/Atlas.jpg?v=20261026-1640';
 // Footprints measure about 96 × 97 cm. One board cell is 1 unit across.
 const CELL = 0.97;

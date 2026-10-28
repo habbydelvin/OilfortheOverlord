@@ -75,8 +75,11 @@ hand.excluded = () => {
 // ---------- tiles ----------
 const WASTELAND_VARIANTS = ['wasteland1', 'wasteland2', 'wasteland3', 'wasteland4'];
 
-/** Places a tile, replacing whatever was there (building over Wasteland / Ruins). */
-function addTile(x, z, terrain, delay = 0) {
+/**
+ * Places a tile, replacing whatever was there (building over Wasteland / Ruins).
+ * It stomps down after `delay` seconds; `instant` puts it straight in place instead (the starting Capital).
+ */
+function addTile(x, z, terrain, delay = 0, instant = false) {
   // Mix wasteland shades per cell so a wasteland piece doesn't look like one flat slab.
   if (WASTELAND_VARIANTS.includes(terrain)) {
     terrain = WASTELAND_VARIANTS[Math.floor(Math.random() * WASTELAND_VARIANTS.length)];
@@ -87,10 +90,10 @@ function addTile(x, z, terrain, delay = 0) {
 
   const mesh = factory.create(terrain);
   mesh.position.set(x, 0, z);
-  mesh.visible = false;
+  mesh.visible = instant;
   tiles.add(mesh);
   grid.set(x, z, { terrain, mesh, onRuins });
-  anims.push({ mesh, t: -delay, landed: false });
+  if (!instant) anims.push({ mesh, t: -delay, landed: false });
 }
 
 /** Swap any flat stand-in that now has a loaded blockout, including one still falling. */
@@ -1267,7 +1270,7 @@ function resetIsland() {
   document.body.classList.remove('shopping');
   $('gameover').classList.add('hidden');
   $('report').textContent = 'No seasons played yet.';
-  addTile(0, 0, SEED_TERRAIN);
+  addTile(0, 0, SEED_TERRAIN, 0, true); // the game opens with the Capital already standing
   mysteries.reset();
   frontier.rebuild(grid);
   // Opening hand: always one of each basic building plus two Wasteland, in random order.
