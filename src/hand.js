@@ -200,7 +200,9 @@ export class Hand {
     const loop = (now) => {
       const dt = Math.min((now - this.#last) / 1000, 0.05);
       this.#last = now;
+      this.perf?.begin('hand (cards)');
       this.#step(dt);
+      this.perf?.end('hand (cards)');
       requestAnimationFrame(loop);
     };
     requestAnimationFrame(loop);

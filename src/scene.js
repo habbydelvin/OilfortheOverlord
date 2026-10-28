@@ -78,7 +78,7 @@ export function createScene(container) {
     );
   }
 
-  return { renderer, scene, camera, followTarget };
+  return { renderer, scene, camera, sun, followTarget };
 }
 
 /**

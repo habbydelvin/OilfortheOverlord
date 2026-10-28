@@ -49,12 +49,15 @@ export class CameraRig {
     this.goal.set(x, 0, z);
   }
 
+  #rightV = new THREE.Vector3();
+  #forwardV = new THREE.Vector3();
+
   #right() {
-    return new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    return this.#rightV.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
   }
 
   #forward() {
-    return new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    return this.#forwardV.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
   }
 
   #pan(dx, dy) {

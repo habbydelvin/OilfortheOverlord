@@ -6,6 +6,7 @@ import { ACTIONS, TERRAINS, TILE, cardDef, isBuilding, isCamp } from './tiles.js
 const OK_COLOR = new THREE.Color(0x8be39a);
 const BAD_COLOR = new THREE.Color(0xe0563f);
 const HOVER_Y = 0.5;
+const goal = new THREE.Vector3(); // reused every frame
 
 /**
  * Ghost preview for the selected piece: floating blocks that follow the cursor
@@ -36,6 +37,7 @@ export class Placement {
 
   setPiece(piece) {
     this.piece = piece;
+    this.tinted = null; // new ghost materials: re-tint on the next update
     this.blocks.clear();
     this.feet.clear();
     this.cell = null;
@@ -141,7 +143,8 @@ export class Placement {
     if (!ok) this.blockMat.color.lerp(BAD_COLOR, 0.55);
     this.blockMat.emissive.copy(ok ? OK_COLOR : BAD_COLOR).multiplyScalar(0.08);
     // Blockout ghosts keep the atlas. Only push them toward red when the spot is illegal.
-    this.blocks.traverse((obj) => {
+    // (Only when legality flips: walking the ghost's materials every frame is wasted work.)
+    if (this.tinted !== ok) this.blocks.traverse((obj) => {
       if (!obj.material) return;
       for (const m of [obj.material].flat()) {
         const base = m.userData?.base;
@@ -150,9 +153,10 @@ export class Placement {
         if (!ok) m.color.lerp(BAD_COLOR, 0.45);
       }
     });
+    this.tinted = ok;
 
     this.feet.position.set(cell[0], 0, cell[1]);
-    const goal = new THREE.Vector3(cell[0], HOVER_Y + Math.sin(time * 3) * 0.05, cell[1]);
+    goal.set(cell[0], HOVER_Y + Math.sin(time * 3) * 0.05, cell[1]);
     if (wasHidden) this.blocks.position.copy(goal);
     else this.blocks.position.lerp(goal, 1 - Math.exp(-22 * dt));
 

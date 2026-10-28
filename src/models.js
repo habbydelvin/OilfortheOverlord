@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 /**
  * Blockout tiles. Maya exports these in centimetres with the mesh pivot
@@ -156,6 +157,151 @@ function movingTracksOnly(clip) {
   return new THREE.AnimationClip(clip.name, clip.duration, tracks);
 }
 
+/**
+ * Draw-call reduction. The finished city models arrive as meshes whose geometry is cut into many
+ * material groups (FBXLoader starts a new group at every material change): the Capital is 37 meshes
+ * but 853 draws, and twice that with the shadow pass, for every placed copy. Re-bucket every
+ * static, opaque triangle by material and bake one mesh per material in the model root's space
+ * (the Capital drops to ~20 draws). Animated nodes (and everything under them), skinned meshes and
+ * meshes with see-through parts (sorted per object) are left alone.
+ * Returns { before, after } draw counts.
+ */
+const KEEP_ATTRS = ['position', 'normal', 'uv'];
+
+/** Copy the vertices referenced by `index` (a slice of src's vertices) into a compact indexed geometry. */
+function compactPart(src, index, attrs, matrix) {
+  const n = src.attributes.position.count;
+  const remap = new Int32Array(n).fill(-1);
+  const order = [];
+  const outIndex = new Uint32Array(index.length);
+  for (let i = 0; i < index.length; i++) {
+    const v = index[i];
+    if (remap[v] < 0) {
+      remap[v] = order.length;
+      order.push(v);
+    }
+    outIndex[i] = remap[v];
+  }
+  // A mirrored transform flips the winding once baked: swap two corners to keep faces outward.
+  if (matrix.determinant() < 0) {
+    for (let i = 0; i + 2 < outIndex.length; i += 3) [outIndex[i + 1], outIndex[i + 2]] = [outIndex[i + 2], outIndex[i + 1]];
+  }
+  const g = new THREE.BufferGeometry();
+  for (const k of attrs) {
+    const a = src.attributes[k];
+    const size = a.itemSize;
+    const out = new Float32Array(order.length * size);
+    for (let i = 0; i < order.length; i++) for (let c = 0; c < size; c++) out[i * size + c] = a.getComponent(order[i], c);
+    g.setAttribute(k, new THREE.BufferAttribute(out, size));
+  }
+  g.setIndex(new THREE.BufferAttribute(outIndex, 1));
+  g.applyMatrix4(matrix);
+  return g;
+}
+
+/** Rewrite the index so every material's triangles are contiguous: one group (one draw) per material. */
+function regroupByMaterial(g) {
+  if (g.groups.length < 2) return;
+  const total = g.index ? g.index.count : g.attributes.position.count;
+  const src = g.index ? g.index.array : null;
+  const byMat = new Map();
+  for (const grp of g.groups) {
+    const list = byMat.get(grp.materialIndex) ?? [];
+    list.push(grp);
+    byMat.set(grp.materialIndex, list);
+  }
+  if (byMat.size === g.groups.length) return; // already one run per material
+  const out = new Uint32Array(g.groups.reduce((n, grp) => n + Math.max(0, Math.min(total, grp.start + grp.count) - grp.start), 0));
+  const groups = [];
+  let k = 0;
+  for (const [materialIndex, list] of byMat) {
+    const start = k;
+    for (const grp of list) {
+      const end = Math.min(total, grp.start + grp.count);
+      for (let i = grp.start; i < end; i++) out[k++] = src ? src[i] : i;
+    }
+    groups.push({ start, count: k - start, materialIndex });
+  }
+  g.setIndex(new THREE.BufferAttribute(out, 1));
+  g.clearGroups();
+  for (const grp of groups) g.addGroup(grp.start, grp.count, grp.materialIndex);
+}
+
+export function mergeStaticMeshes(root) {
+  const animated = new Set();
+  for (const clip of root.animations ?? []) {
+    for (const track of clip.tracks) animated.add(THREE.PropertyBinding.parseTrackName(track.name).nodeName);
+  }
+  const isAnimated = (obj) => {
+    for (let o = obj; o && o !== root; o = o.parent) if (animated.has(o.name) || animated.has(o.uuid)) return true;
+    return false;
+  };
+
+  root.updateMatrixWorld(true);
+  const toRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const buckets = new Map(); // signature -> { material, cast, receive, attrs, parts: [{ src, index, matrix }] }
+  const consumed = [];
+  let before = 0;
+  root.traverse((obj) => {
+    if (!obj.isMesh) return;
+    const g = obj.geometry;
+    const mats = [obj.material].flat();
+    const groups = Array.isArray(obj.material) && g.groups.length ? g.groups : [{ start: 0, count: Infinity, materialIndex: 0 }];
+    before += groups.length;
+    if (obj.isSkinnedMesh || obj.isInstancedMesh || obj.morphTargetInfluences || !obj.visible || isAnimated(obj)) return;
+    if (!g.attributes.position || mats.some((m) => !m || m.transparent)) return;
+    const attrs = Object.keys(g.attributes).filter((k) => KEEP_ATTRS.includes(k)).sort();
+    const matrix = new THREE.Matrix4().multiplyMatrices(toRoot, obj.matrixWorld);
+    const total = g.index ? g.index.count : g.attributes.position.count;
+    for (const grp of groups) {
+      const m = mats[grp.materialIndex ?? 0];
+      if (!m) continue;
+      const startI = grp.start;
+      const endI = Math.min(total, grp.start + grp.count);
+      if (endI <= startI) continue;
+      const index = g.index ? g.index.array.subarray(startI, endI) : Uint32Array.from({ length: endI - startI }, (_, i) => startI + i);
+      const sig = `${m.uuid}|${obj.castShadow}|${obj.receiveShadow}|${attrs.join(',')}`;
+      let b = buckets.get(sig);
+      if (!b) buckets.set(sig, (b = { material: m, cast: obj.castShadow, receive: obj.receiveShadow, attrs, parts: [] }));
+      b.parts.push({ src: g, index, matrix });
+    }
+    consumed.push(obj);
+  });
+
+  for (const b of buckets.values()) {
+    const geos = b.parts.map(({ src, index, matrix }) => compactPart(src, index, b.attrs, matrix));
+    const geometry = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
+    if (geos.length > 1) geos.forEach((g) => g.dispose());
+    if (!geometry) throw new Error('mergeStaticMeshes: incompatible parts');
+    const mesh = new THREE.Mesh(geometry, b.material);
+    mesh.name = `merged:${b.material.name || 'material'}`;
+    mesh.castShadow = b.cast;
+    mesh.receiveShadow = b.receive;
+    root.add(mesh);
+  }
+  for (const obj of consumed) {
+    obj.removeFromParent();
+    obj.geometry.dispose();
+  }
+  // Meshes that must stay separate (the animated traffic ships: 52 groups each) still get their
+  // groups sorted and joined by material, so each draws once per material instead of once per run.
+  const regrouped = new Set();
+  root.traverse((obj) => {
+    if (!obj.isMesh || !Array.isArray(obj.material) || regrouped.has(obj.geometry)) return;
+    regroupByMaterial(obj.geometry);
+    regrouped.add(obj.geometry);
+  });
+  // Drop the empty transform nodes left behind (keeps clone(true) cheap); animated ones stay.
+  const prune = (obj) => {
+    for (const c of [...obj.children]) prune(c);
+    if (obj !== root && !obj.isMesh && !obj.children.length && !animated.has(obj.name) && !obj.isLight && !obj.isCamera) obj.removeFromParent();
+  };
+  prune(root);
+  let after = 0;
+  root.traverse((o) => o.isMesh && (after += Array.isArray(o.material) ? o.geometry.groups.length || 1 : 1));
+  return { before, after };
+}
+
 /** Bytes downloaded across all model files, for a loading bar. Totals appear as each download starts. */
 export const loadProgress = { loaded: 0, total: 0 };
 const fileBytes = new Map(); // file -> [loaded, total]
@@ -189,6 +335,15 @@ export async function loadBlockouts() {
       // Object3D.clone copies `animations`, so every tile copy can play them.
       raw.animations = raw.animations.map(movingTracksOnly).filter((clip) => clip.tracks.length);
       fitToCell(raw, { ground: 0, ...finished });
+      // ?nomerge in the URL keeps the original meshes (for A/B checks).
+      if (!new URLSearchParams(location.search).has('nomerge')) {
+        try {
+          const { before, after } = mergeStaticMeshes(raw);
+          console.info(`[models] ${terrain}: ${before} draws -> ${after}`);
+        } catch (e) {
+          console.warn(`[models] ${terrain}: merge skipped`, e);
+        }
+      }
     } else {
       applyAtlas(raw, atlas);
       raw.animations = [];

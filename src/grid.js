@@ -80,8 +80,17 @@ export class Grid {
     return out;
   }
 
+  /** Runs every frame in expansion mode: stops at the first empty cell, builds no Set. */
   isFull() {
-    return this.emptyTerritoryKeys().size === 0;
+    for (const k of this.plots) {
+      const [px, pz] = k.split(',').map(Number);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          if (!this.has(plotCenter(px) + dx, plotCenter(pz) + dz)) return false;
+        }
+      }
+    }
+    return true;
   }
 
   /** Locked plots sharing a side with the territory: the expansion choices. */

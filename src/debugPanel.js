@@ -5,12 +5,12 @@ const decimals = (step) => (String(step).split('.')[1] ?? '').length;
 /**
  * Game Debug panel: game mode, dev shortcuts, and tuning sliders.
  * Each tuning section edits its `cfg` in place (read live) and saves to localStorage.
- * `fog` is an optional extra section: { params, defaults, cfg, save, clear, onChange(param) }.
+ * `fog` and `gfx` are optional extra sections: { params, defaults, cfg, save, clear, onChange(param) }.
  */
-export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog }) {
+export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog, gfx, onPerf }) {
   const fmt = (p, v) => (p.type === 'select' || p.type === 'color' ? v : Number(v).toFixed(decimals(p.step)));
   const payout = { id: 'payout', params: PAYOUT_PARAMS, defaults: PAYOUT_DEFAULTS, cfg, save: savePayoutConfig, clear: clearPayoutConfig };
-  const sections = [payout, fog && { id: 'fog', ...fog }].filter(Boolean);
+  const sections = [gfx && { id: 'gfx', ...gfx }, payout, fog && { id: 'fog', ...fog }].filter(Boolean);
   const sectionOf = (id) => sections.find((s) => s.id === id);
 
   function rowsFor({ id, params, defaults, cfg }) {
@@ -52,6 +52,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
         <div class="dbg-actions dbg-dev">
           <button data-act="skipMet" title="Jump to the tribute and deliver exactly the quota">Skip year <small>(meet)</small></button>
           <button data-act="skipMiss" title="Jump to the tribute and deliver nothing (a strike)">Skip year <small>(miss)</small></button>
+          <button data-act="perf" title="Performance overlay: fps, ms per system, GPU time, A/B toggles (also opens with \`)">Perf</button>
         </div>
         ${rows}
       </div>
@@ -94,6 +95,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
     if (act === 'play') onPlay();
     else if (act === 'skipMet' || act === 'skipMiss') status(onSkipYear?.(act === 'skipMet') ?? '');
     else if (act === 'close') setOpen(false);
+    else if (act === 'perf') onPerf?.();
     else if (act === 'reset') {
       for (const sec of sections) {
         Object.assign(sec.cfg, sec.defaults);
@@ -167,6 +169,9 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
   setOpen(localStorage.getItem('oto.debugOpen') === '1');
   return {
     toggle: () => setOpen(root.classList.contains('hidden')),
+    isOpen: () => !root.classList.contains('hidden'),
+    /** Redraw every row (after a setting changed elsewhere, e.g. the perf overlay). */
+    refresh: render,
     /** Sync the mode checkbox after the X hotkey changes it. */
     refreshMode: () => {
       const box = root.querySelector('[data-act="mode"]');

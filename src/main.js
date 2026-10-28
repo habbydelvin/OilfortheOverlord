@@ -19,13 +19,16 @@ import { Dialogue } from './dialogue.js';
 import { TIERS, TIER_ORDER, REWARDS, LOW_STREAK_LIMIT, rollReward, scaledQuota } from './targets.js';
 import { loadPayoutConfig } from './payoutConfig.js';
 import { createDebugPanel } from './debugPanel.js';
+import { Perf } from './perfOverlay.js';
+import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig, applyGfx } from './graphics.js';
 import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
 
 const HAND_SIZE = 5;
 const SEED_TERRAIN = 'capital';
 
 // ---------- setup ----------
-const { renderer, scene, camera, followTarget } = createScene(document.getElementById('app'));
+const { renderer, scene, camera, sun, followTarget } = createScene(document.getElementById('app'));
+const perf = new Perf(renderer); // opens with the debug panel (`)
 const rig = new CameraRig(camera, renderer.domElement);
 const grid = new Grid();
 const factory = new TileFactory();
@@ -39,6 +42,11 @@ const expansion = new Expansion(scene);
 // Clouds over locked plots in expansion mode; they part when a plot is unlocked.
 const fogCfg = loadFogConfig(); // saved Game Debug slider values
 const fog = new FogOfWar(scene, fogCfg);
+// Reduced-resolution fog (quality presets); the placed tiles still hide the fog behind them.
+fog.attachRenderer(renderer, scene, [tiles]);
+const gfxCfg = loadGfxConfig();
+const applyGraphics = () => applyGfx(gfxCfg, { renderer, scene, sun, fog });
+applyGraphics();
 // Debug: territory expansion mode (the old fill-the-3×3-then-expand rules), saved across reloads.
 const MODE_KEY = 'oftoMode';
 grid.expansionMode = localStorage.getItem(MODE_KEY) === 'expansion';
@@ -51,6 +59,18 @@ const debug = createDebugPanel(document.getElementById('debug'), document.getEle
   expansionMode: () => grid.expansionMode,
   onExpansionMode: (on) => setExpansionMode(on),
   onSkipYear: (met) => debugSkipYear(met),
+  onPerf: () => perf.setOpen(!perf.enabled),
+  gfx: {
+    params: GFX_PARAMS,
+    defaults: GFX_DEFAULTS,
+    cfg: gfxCfg,
+    save: saveGfxConfig,
+    clear: clearGfxConfig,
+    onChange: () => {
+      applyGraphics();
+      perf.refreshToggles();
+    },
+  },
   fog: {
     params: FOG_PARAMS,
     defaults: FOG_DEFAULTS,
@@ -61,6 +81,7 @@ const debug = createDebugPanel(document.getElementById('debug'), document.getEle
   },
 });
 const hand = new Hand(document.getElementById('hand'), HAND_SIZE, (piece) => placement.setPiece(piece), grid);
+hand.perf = perf;
 
 const $ = (id) => document.getElementById(id);
 const anims = [];
@@ -290,7 +311,8 @@ function updateRuinButtons() {
     ruinV.set(c.x, 0.55, c.z).project(camera);
     const px = (ruinV.x * 0.5 + 0.5) * window.innerWidth;
     const py = (-ruinV.y * 0.5 + 0.5) * window.innerHeight;
-    btn.style.transform = `translate(${px}px, ${py}px) translate(-50%, -100%)`;
+    const tf = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px) translate(-50%, -100%)`;
+    if (btn._tf !== tf) btn.style.transform = btn._tf = tf; // skip style writes while the camera is still
   }
   for (const [k, btn] of ruinBtns) {
     if (live.has(k)) continue;
@@ -1705,6 +1727,7 @@ window.addEventListener('keydown', (e) => {
   if (tgt.matches?.('input, select, textarea')) return; // typing in the debug panel
   if (k === '`') {
     debug.toggle();
+    perf.setOpen(debug.isOpen());
     return;
   }
   if (payout.active) {
@@ -1939,29 +1962,89 @@ function frame(now) {
   const dt = Math.min((now - last) / 1000, 0.05);
   last = now;
   const time = now / 1000;
+  perf.frameBegin(now);
 
+  perf.begin('camera');
   rig.update(dt);
   followTarget(rig.target, rig.distance, dt);
+  perf.end('camera');
+  perf.begin('drops+shake');
   updateDropAnims(dt);
   applyShake(dt);
+  perf.end('drops+shake');
+  perf.begin('dust');
   dust.update(dt);
+  perf.end('dust');
+  perf.begin('tile anims');
   factory.update(dt);
+  perf.end('tile anims');
+  perf.begin('frontier+mysteries');
   frontier.update(dt, time);
   mysteries.update(time);
+  perf.end('frontier+mysteries');
+  perf.begin('ruin buttons');
   updateRuinButtons();
+  perf.end('ruin buttons');
+  perf.begin('expansion');
   checkExpansion();
   const cell = rig.isDragging ? null : hoveredCell();
   expansion.update(cell, dt, time);
+  perf.end('expansion');
+  perf.begin('fog update');
   fog.setHover(expansion.hovered ? plotKey(expansion.hovered.px, expansion.hovered.pz) : null);
   fog.update(dt, rig.target, rig.distance);
+  perf.end('fog update');
+  perf.begin('inspect');
   updateInspect(cell);
+  perf.end('inspect');
+  perf.begin('placement');
   // Hide the ghost while choosing a plot or while the payout plays.
   placement.update(expansion.active || payout.active ? null : cell, dt, time);
+  perf.end('placement');
 
+  perf.begin('render (cpu)');
+  perf.gpuBegin();
+  fog.render(camera); // offscreen fog pass (High/Medium/Low on high-DPI screens)
   renderer.render(scene, camera);
+  perf.gpuEnd();
+  perf.end('render (cpu)');
+  perf.begin('payout');
   payout.update(dt); // after render so labels use this frame's camera
+  perf.end('payout');
+  perf.frameEnd();
   requestAnimationFrame(frame);
 }
+
+// ---------- performance overlay (`) ----------
+// GPU split: each fog draw (veil + billow layers) is bracketed, so GPU time lands in "fog";
+// the rest of the frame (shadow pass, buildings, overlays, fog depth pre-pass + composite) is "scene".
+for (const obj of [fog.veil, ...fog.meshes]) {
+  obj.onBeforeRender = () => perf.gpuMark('fog');
+  obj.onAfterRender = () => perf.gpuMark('scene');
+}
+perf.counter('fog quality', () => fog.quality + (fog.offscreen ? ` @${fog.renderScale}x offscreen` : ' (direct)'));
+perf.counter('fog billows', () => (fog.visible ? fog.count.toLocaleString() : 'off'));
+perf.counter('fog mask uploads', () => fog.uploads ?? 0);
+perf.counter('grid cells', () => grid.cells.size);
+perf.toggle({ label: 'Fog', get: () => fog.visible, set: (on) => fog.setVisible(on) });
+perf.toggle({ label: 'Fog veil', get: () => fog.veilOn, set: (on) => fog.setParts({ veil: on }) });
+perf.toggle({ label: 'Fog billows', get: () => fog.billowsOn, set: (on) => fog.setParts({ billows: on }) });
+perf.toggle({ label: 'Shadow pass (off = frozen)', get: () => renderer.shadowMap.autoUpdate, set: (on) => (renderer.shadowMap.autoUpdate = on) });
+const gfxToggle = (key, label) =>
+  perf.toggle({
+    label,
+    options: GFX_PARAMS.find((p) => p.key === key).options,
+    get: () => gfxCfg[key],
+    set: (v) => {
+      gfxCfg[key] = v;
+      saveGfxConfig(gfxCfg);
+      applyGraphics();
+      debug.refresh();
+    },
+  });
+gfxToggle('fogQuality', 'Fog quality');
+gfxToggle('resolution', 'Resolution');
+gfxToggle('shadows', 'Shadows');
 
 // ---------- startup ----------
 // Loading bar: bytes of the model files downloaded so far. The FBX files are
@@ -2006,4 +2089,4 @@ factory.piecesReady.then((pieces) => {
 });
 
 // Handy for debugging in the console.
-window.tileIsland = { grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };
+window.tileIsland = { perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };
