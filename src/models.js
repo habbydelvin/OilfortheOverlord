@@ -21,6 +21,12 @@ export const BLOCKOUTS = {
   ruins: 'Ruins01.fbx',
   crater: 'ToxicCraterCity01.fbx',
   labourcamp: 'LaborCampCity01.fbx',
+  // Camps: one model per camp, matched by its tent colour (TERRAINS[key].tent in tiles.js).
+  raider: 'Camp04.fbx', // brown (rebels from starvation)
+  bandit_raider: 'Camp03.fbx', // red
+  bandit_siphon: 'Camp05.fbx', // grey (near-black tent)
+  bandit_scav: 'Camp01.fbx', // green (olive tent)
+  bandit_smuggle: 'Camp02.fbx', // blue
 };
 
 /**
@@ -42,6 +48,11 @@ const FINISHED = {
   cliffs: { yaw: 0, fit: 'SandCliffs_Ground' },
   ruins: { yaw: 0, fit: 'WasteRuins_Ground' },
   crater: { yaw: 0, fit: 'ToxicCrater_HiveCity' },
+  raider: { yaw: 0, fit: 'RaiderCampBrown_HiveCity' },
+  bandit_raider: { yaw: 0, fit: 'RaiderCampRed_HiveCity' },
+  bandit_siphon: { yaw: 0, fit: 'RaiderCampGray_HiveCity' },
+  bandit_scav: { yaw: 0, fit: 'RaiderCampGreen_HiveCity' },
+  bandit_smuggle: { yaw: 0, fit: 'RaiderCampBlue_HiveCity' },
   settlement: { yaw: 0, fit: 'Village02_HiveCity' },
 };
 

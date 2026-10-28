@@ -65,6 +65,11 @@
       </div>
     </div>
     <div id="app"></div>
+    <!-- Music: mute button + volume slider (src/music.js). Outside #ui so it stays usable over dialogue scenes. -->
+    <div id="music">
+      <button id="btnMusic" type="button" aria-label="Mute music"></button>
+      <input id="musicVolume" type="range" min="0" max="100" step="1" aria-label="Music volume" />
+    </div>
 
     <div id="ui">
       <header id="top">

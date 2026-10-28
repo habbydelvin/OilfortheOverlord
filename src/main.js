@@ -1,6 +1,7 @@
 import './ui.css';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
+import { initMusic } from './music.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, key as plotKey } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
@@ -31,6 +32,7 @@ const SEED_TERRAIN = 'capital';
 
 // ---------- setup ----------
 const { renderer, scene, camera, sun, followTarget } = createScene(document.getElementById('app'));
+initMusic(); // background track: loads now, starts (fading in) on the first click or key press
 const perf = new Perf(renderer); // '-' toggles the overlay
 const rig = new CameraRig(camera, renderer.domElement);
 const grid = new Grid();

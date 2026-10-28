@@ -1935,3 +1935,55 @@ body.dialogue #inspect {
 body.striking #mapIcons {
   visibility: hidden;
 }
+
+/* ---------- music (bottom left) ---------- */
+/* Above the dialogue overlay (z 60), so the music can be muted during the intro and scenes. */
+#music {
+  position: fixed;
+  left: 18px;
+  bottom: 18px;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  border-radius: 22px;
+  background: rgba(10, 12, 14, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(232, 191, 104, 0.35), 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+#btnMusic {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--gold);
+  cursor: pointer;
+}
+#btnMusic svg {
+  width: 20px;
+  height: 20px;
+}
+#btnMusic:hover {
+  background: rgba(232, 191, 104, 0.15);
+}
+#music.muted #btnMusic {
+  color: var(--muted);
+}
+/* The slider slides out on hover, so the collapsed button never covers the cards. */
+#musicVolume {
+  width: 0;
+  margin: 0;
+  opacity: 0;
+  accent-color: var(--gold);
+  cursor: pointer;
+  transition: width 0.2s ease, margin 0.2s ease, opacity 0.2s ease;
+}
+#music:hover #musicVolume,
+#music:focus-within #musicVolume {
+  width: 100px;
+  margin: 0 10px 0 6px;
+  opacity: 1;
+}

@@ -515,7 +515,8 @@ export class TileFactory {
       return holder;
     }
     const tagSoil = (g) => (g.traverse((o) => o.geometry === this.soilGeo && fitFull(o)), g);
-    if (isCamp(terrain)) return tagSoil(buildRaiderCamp(this.soilGeo, this.soilMat, TERRAINS[terrain].tent));
+    // Finished camp models (Camp01-05.fbx); the code-built camp only if its file failed to load.
+    if (isCamp(terrain) && !this.models?.has(terrain)) return tagSoil(buildRaiderCamp(this.soilGeo, this.soilMat, TERRAINS[terrain].tent));
     // The finished model (LaborCampCity01.fbx); the code-built camp only if that file failed to load.
     if (terrain === 'labourcamp' && !this.models?.has('labourcamp')) return tagSoil(buildLabourCamp(this.soilGeo, this.soilMat));
     const source = this.models?.get(terrain);
