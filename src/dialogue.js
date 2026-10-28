@@ -39,6 +39,8 @@ export class Dialogue {
 
   /** Show the overlay, with an optional banner ({ kind, title, effect } — effect may contain HTML). */
   open(banner = null) {
+    // Already showing: keep the portrait and box in place and just swap the banner (re-dropping it).
+    const continuing = this.active;
     this.active = true;
     this.root.classList.remove('hidden');
     this.root.className = banner?.kind ? `kind-${banner.kind}` : '';
@@ -48,6 +50,11 @@ export class Dialogue {
       this.$('.dlg-kind').textContent = banner.kindLabel ?? banner.kind ?? '';
       this.$('.dlg-title').textContent = banner.title ?? '';
       this.$('.dlg-effect').innerHTML = banner.effect ?? '';
+      if (continuing) {
+        b.style.animation = 'none';
+        void b.offsetWidth;
+        b.style.animation = '';
+      }
     }
     document.body.classList.add('dialogue');
   }

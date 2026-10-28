@@ -1,5 +1,5 @@
 import { pieceOf, randomPiece, rotateCells, shapeFits, SHAPES } from './pieces.js';
-import { ACTIONS, ICONS, TERRAINS, cardDef, cardText, hex, shapeGridHTML, snapHTML } from './tiles.js';
+import { ACTIONS, ICONS, TERRAINS, cardDef, cardText, hex, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
 import { WORKERS } from './economy.js';
 
 const MP_ICON = ICONS.manpower;
@@ -141,7 +141,7 @@ export class Hand {
         <div class="${cls}" data-i="${i}" style="--top:${hex(t.top)};--edge:${hex(t.edge)};animation-delay:${i * 50}ms">
           ${costBadge(p, t)}
           <div class="hotkey">${i + 1}</div>
-          <div class="art">${t.symbol ? '' : shapeGridHTML(rotateCells(SHAPES[p.shape].cells, p.rot))}</div>
+          <div class="art">${cardArtHTML(p.terrain, rotateCells(SHAPES[p.shape].cells, p.rot))}</div>
           ${snapHTML(t)}
           <div class="name">${t.name}</div>
           <div class="rule">${cardText(t)}</div>

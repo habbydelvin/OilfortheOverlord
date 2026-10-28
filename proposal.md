@@ -115,6 +115,16 @@ The first quota is 20. The quota always grows (×1.5 + 20), even if you fall sho
 | 15 / 20 (missed, plus a strike) | 50 |
 | 50 / 50 (exactly met) | 95 |
 
+From year 2, after the shop (or the Overlord's failure speech) and before the year event, he lets you set this year's target. The formula above is the base. The tier scales it for this year only, and next year's base grows from the base, not the scaled quota.
+
+| Tier | Quota | Reward if met (one rolled each year) |
+| --- | --- | --- |
+| Low | 85% | None |
+| Medium | 100% | +50% market oil, +6 food, 2 free rerolls, or +1 population |
+| High | 125% | A free pick of 1 of 3 market tiles, a good-fortune event next year, double market oil, or +2 population and +8 food |
+
+Rewards are paid at tribute, and only if the target is met. Three Lows in a row force the next target to High. A HUD label shows the tier and its reward for the rest of the year.
+
 ## Build phase
 
 ### Rotate, fit, connect
@@ -248,5 +258,5 @@ Slight narrative choices and events occur between turns that affect the growth o
 | Kind | Event | Choice |
 | --- | --- | --- |
 | Event | Refugees at the gate | Take them in for +2 manpower and −2 food each turn, or turn them away. |
-| Choice | The overlord's envoy | Pay a bribe of oil now to lower next round's quota, or refuse and risk his displeasure. |
+| Choice | Tribute target | Each year from year 2, name a Low, Medium, or High target. Higher targets pay a reward only if you meet them. |
 | Event | Blight in the fields | Burn the affected farms to save the rest, or gamble that the harvest holds. |

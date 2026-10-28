@@ -1,5 +1,6 @@
 /**
- * Year events: one is drawn at the start of every year from year 2 on, after the shop closes.
+ * Year events: one is drawn at the start of every year from year 2 on, after the shop closes
+ * and the tribute target is set (targets.js).
  * It lasts until the next tribute. See events.md for the full design list.
  *
  * kind:    'pressure' | 'disaster' | 'fortune' | 'choice'
@@ -107,32 +108,7 @@ export const EVENTS = {
       },
     ],
   },
-  overlordsOffer: {
-    name: "Overlord's Offer",
-    kind: 'choice',
-    weight: 1,
-    text: 'The Overlord is in a bargaining mood.',
-    lines: [
-      'I am feeling generous today, Overseer. Do not get used to it.',
-      'Ask for mercy and I will lighten this year\u2019s tribute. Ask for a reward and I will pay you well... for more oil.',
-    ],
-    choices: [
-      {
-        label: 'Ask for mercy',
-        text: 'This year\u2019s quota -30%',
-        say: 'Lighten the tribute. Please.',
-        retort: 'Mercy. How predictable. Thirty percent less, this once.',
-        mods: { quotaMult: 0.7 },
-      },
-      {
-        label: 'Ask for a reward',
-        text: 'Quota +30%, double shop coins at tribute',
-        say: 'Raise it. And pay us for it.',
-        retort: 'Ambition! Thirty percent more, then. Do not disappoint me.',
-        mods: { quotaMult: 1.3, coinMult: 2 },
-      },
-    ],
-  },
+  // (The Overlord's Offer event was replaced by the yearly tribute target, see targets.js.)
 };
 
 export const KIND_LABEL = { pressure: 'Pressure', disaster: 'Disaster', fortune: 'Good fortune', choice: 'Choice' };
@@ -140,8 +116,9 @@ export const KIND_LABEL = { pressure: 'Pressure', disaster: 'Disaster', fortune:
 /**
  * Pick next year's event, or null in year 1. A run of met tributes makes pressure and disasters
  * more likely; a recent missed tribute favours good fortune and choices.
+ * `kinds` limits the draw to those kinds (a target reward forces good fortune).
  */
-export function drawEvent(turn) {
+export function drawEvent(turn, { kinds } = {}) {
   if (turn.round < 2) return null;
   const streak = turn.metStreak ?? 0;
   const missed = turn.lastMissed ?? false;
@@ -149,7 +126,10 @@ export function drawEvent(turn) {
     if (kind === 'pressure' || kind === 'disaster') return (1 + 0.25 * streak) * (missed ? 0.5 : 1);
     return missed ? 1.75 : 1;
   };
-  const pool = Object.entries(EVENTS).map(([key, ev]) => [key, ev.weight * factor(ev.kind)]);
+  const pool = Object.entries(EVENTS)
+    .filter(([, ev]) => !kinds || kinds.includes(ev.kind))
+    .map(([key, ev]) => [key, ev.weight * factor(ev.kind)]);
+  if (!pool.length) return null;
   let r = Math.random() * pool.reduce((s, [, w]) => s + w, 0);
   for (const [key, w] of pool) {
     r -= w;

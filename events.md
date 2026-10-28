@@ -2,7 +2,19 @@
 
 ## Status
 
-A core set of 7 is implemented in `src/events.js`: **Early Collection, Tithe of Men, Famine, Bumper Harvest, Oil Boom, Refugees at the Gate, Overlord's Offer**. The rest of this file is the backlog.
+A core set of 6 is implemented in `src/events.js`: **Early Collection, Tithe of Men, Famine, Bumper Harvest, Oil Boom, Refugees at the Gate**. The rest of this file is the backlog. (Overlord's Offer was removed: the yearly tribute target in `src/targets.js` replaces it.)
+
+## Tribute target (every year from year 2)
+
+After the shop (or the Overlord's failure speech) and before the year event, the Overlord lets you set this year's target. The base quota comes from `nextQuota()` as before; the tier scales it for this year only, and next year's base grows from the base.
+
+| Tier | Quota | Reward if met (one rolled each year) |
+| --- | --- | --- |
+| Low | 85% | None |
+| Medium | 100% | +50% market oil, +6 food, 2 free rerolls, or +1 population |
+| High | 125% | Free pick of 1 of 3 market tiles, a good-fortune event next year, double market oil, or +2 population and +8 food |
+
+Rewards are paid at tribute, and only if the target is met. Three Lows in a row force the next target to High.
 
 Decisions: core set first; choice events included; no advance warning (events are a surprise); year 1 is event-free.
 
@@ -50,7 +62,7 @@ Every event uses systems the game already has: worker slots, the food store, rai
 | Event | Option A | Option B |
 | --- | --- | --- |
 | **Refugees at the Gate** | Take them in: +3 worker slots, −3 food per season | Turn them away: a raider camp spawns |
-| **Overlord's Offer** | Quota −30% this year | Quota +30%, but double shop coins |
+| ~~**Overlord's Offer**~~ | Removed: replaced by the yearly tribute target. | |
 | **Mercenaries** | Pay 10 oil: all raider camps leave | Refuse them |
 | **Prospectors** | Reveal the "?" site closest to your land | +5 oil now |
 | **Black Market Caravan** | Shop prices halved this year | +1 extra card in every hand this year |

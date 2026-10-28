@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS } from './grid.js';
-import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML } from './tiles.js';
+import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
 import { hasBlockout, loadProgress } from './models.js';
 import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
@@ -15,6 +15,7 @@ import { computeEconomy, growthCost, FIRST_QUOTA, nextQuota, SEASONS } from './e
 import { Payout } from './payout.js';
 import { EVENTS, KIND_LABEL, drawEvent } from './events.js';
 import { Dialogue } from './dialogue.js';
+import { TIERS, TIER_ORDER, REWARDS, LOW_STREAK_LIMIT, rollReward, scaledQuota } from './targets.js';
 import { loadPayoutConfig } from './payoutConfig.js';
 import { createDebugPanel } from './debugPanel.js';
 
@@ -44,6 +45,7 @@ const debug = createDebugPanel(document.getElementById('debug'), document.getEle
   onPlay: () => previewPayout(),
   expansionMode: () => grid.expansionMode,
   onExpansionMode: (on) => setExpansionMode(on),
+  onSkipYear: (met) => debugSkipYear(met),
 });
 const hand = new Hand(document.getElementById('hand'), HAND_SIZE, (piece) => placement.setPiece(piece), grid);
 
@@ -54,7 +56,20 @@ let piecesPlaced = 0;
 // Turn state: a turn is a season, a round is four seasons, tribute after Winter.
 /** Food in the store at the start, so a bad first year isn't an instant loss. */
 const STARTING_FOOD = 5;
-const turn = { strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, event: null, metStreak: 0, lastMissed: false, unlocked: new Set(), pinned: [], coins: 0, total: 0, food: STARTING_FOOD, population: 0, quota: FIRST_QUOTA };
+const turn = { strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, event: null, metStreak: 0, lastMissed: false, unlocked: new Set(), pinned: [], coins: 0, total: 0, food: STARTING_FOOD, population: 0, quota: FIRST_QUOTA, ...freshTargetState() };
+
+/**
+ * Yearly target state (see targets.js).
+ *   quotaBase    the un-scaled quota from nextQuota(); next year's quota grows from this
+ *   target       this year's { tier, reward } (null in year 1)
+ *   lowStreak    Low targets picked in a row (LOW_STREAK_LIMIT forces High)
+ *   freeRerolls  hand rerolls that cost no oil (reward)
+ *   cardPicks    free 1-of-3 tile picks waiting at the start of the next year (reward)
+ *   forceFortune next year's event is good fortune (reward)
+ */
+function freshTargetState() {
+  return { quotaBase: FIRST_QUOTA, target: null, lowStreak: 0, freeRerolls: 0, cardPicks: 0, forceFortune: false };
+}
 
 /** This season's economy with the carried-over food store and population. */
 const economyNow = () => computeEconomy(grid, { mods: turn.event?.mods, population: turn.population, foodStore: turn.food });
@@ -305,6 +320,21 @@ function updateHUD() {
     $('eventLabel').className = `event-label ${ev.kind}`;
     $('eventLabel').removeAttribute('title');
   }
+  const tg = turn.target;
+  $('targetLabel').classList.toggle('hidden', !tg);
+  if (tg) {
+    const t = TIERS[tg.tier];
+    const r = tg.reward ? REWARDS[tg.reward] : null;
+    $('targetLabel').innerHTML =
+      `Target: <b>${t.label}</b>` +
+      `<div class="event-tip">` +
+      `<div class="event-tip-kind">Tribute target</div>` +
+      `<div class="event-tip-name">${t.label} · ${Math.round(t.mult * 100)}% of ${turn.quotaBase}</div>` +
+      `<div class="event-tip-text">Tribute this year: ${turn.quota} oil.<br />${r ? `Reward if met: ${iconize(r.text)}` : 'No reward.'}</div>` +
+      `<div class="event-tip-foot">${turn.lowStreak >= LOW_STREAK_LIMIT ? 'Next year the Overlord forces a High target.' : turn.lowStreak ? `Low targets in a row: ${turn.lowStreak} of ${LOW_STREAK_LIMIT}.` : 'Rewards are lost if the tribute is missed.'}</div>` +
+      `</div>`;
+    $('targetLabel').className = `event-label target-${tg.tier}`;
+  }
   showOil(turn.stockpile);
   showStrikes();
 
@@ -331,8 +361,8 @@ function updateHUD() {
     (turn.population ? ` · population ${turn.population}` : '');
 
   $('btnReroll').classList.toggle('hidden', hand.isEmpty);
-  $('btnReroll').classList.toggle('disabled', turn.stockpile < rerollCost());
-  $('btnRerollSub').innerHTML = `-${rerollCost()}${ICONS.oil}`;
+  $('btnReroll').classList.toggle('disabled', !turn.freeRerolls && turn.stockpile < rerollCost());
+  $('btnRerollSub').innerHTML = turn.freeRerolls ? `free ×${turn.freeRerolls}` : `-${rerollCost()}${ICONS.oil}`;
   $('btnNextSub').textContent =
     turn.season === yearLength() - 1 ? `collect oil, pay ${quota} tribute` : 'collect oil, draw a new hand';
   if (tipKind) renderResTip(e);
@@ -471,7 +501,7 @@ function updateInspect(cell) {
   if (t.buildable) notes.push('A building can be placed on top of this tile');
   el.innerHTML = `
     <div class="card-big">
-      <div class="art">${shapeGridHTML([[0, 0]])}</div>
+      <div class="art">${cardArtHTML(c.terrain)}</div>
       ${snapHTML(t)}
       <div class="name">${t.name}</div>
       <div class="rule">${cardText(t)}</div>
@@ -751,21 +781,36 @@ function settleTurn(e) {
     }
     const quota = turn.quota;
     const delivered = turn.stockpile;
-    // Excess oil is spent in the shop (some events multiply it).
-    turn.coins = Math.round(Math.max(0, delivered - quota) * (turn.event?.mods?.coinMult ?? 1));
+    const met = delivered >= quota;
+    // This year's target reward: only paid if the (scaled) quota was met.
+    const target = turn.target;
+    const reward = met && target?.reward ? REWARDS[target.reward] : null;
+    // Excess oil is spent in the shop (some events and target rewards multiply it).
+    const coinMult = (turn.event?.mods?.coinMult ?? 1) * (reward?.coinMult ?? 1);
+    turn.coins = Math.round(Math.max(0, delivered - quota) * coinMult);
     turn.stockpile = 0; // the Overlord takes everything; the new year starts from empty
     // The Overlord's greed grows with what he receives: excess raises next year's quota.
-    // An event's quota change only lasts the year: next year grows from the un-modified quota.
-    const base = turn.event?.baseQuota ?? quota;
-    turn.quota = nextQuota(base, base + (delivered - quota));
-    turn.metStreak = delivered >= quota ? turn.metStreak + 1 : 0;
-    turn.lastMissed = delivered < quota;
+    // The target tier and any event quota change only last the year: next year grows from the base.
+    const base = turn.quotaBase;
+    const prevBase = base;
+    turn.quotaBase = nextQuota(base, base + (delivered - quota));
+    turn.quota = turn.quotaBase; // scaled again when the next target is set
+    turn.metStreak = met ? turn.metStreak + 1 : 0;
+    turn.lastMissed = !met;
     turn.event = null;
-    const rise = turn.quota - quota;
-    if (delivered >= quota) {
+    turn.target = null;
+    const rise = turn.quotaBase - prevBase;
+    if (met) {
       lines.push(`<span class="good">Tribute of ${quota} met. The Overlord seized all ${delivered} barrels.</span>`);
       msg += ` · Tribute of ${quota} met. The Overlord seized all ${delivered} barrels.`;
+      if (reward) {
+        const extra = reward.grant?.({ turn }) ?? '';
+        lines.push(`<span class="good">${TIERS[target.tier].label} target met: reward earned (${iconize(reward.text)}). ${extra}</span>`);
+        msg += ` · Target reward: ${reward.text}`;
+      }
     } else {
+      if (target?.reward)
+        lines.push(`<span class="bad">${TIERS[target.tier].label} target missed: the reward (${iconize(REWARDS[target.reward].text)}) is lost.</span>`);
       const short = quota - delivered;
       turn.strikes++;
       const lost = turn.strikes < MAX_STRIKES ? nukeRandomTile(true) : null;
@@ -777,8 +822,8 @@ function settleTurn(e) {
       failure = { quota, delivered, short, lost, nextQuota: turn.quota };
     }
     const greed = delivered > quota ? "Your excess whetted the Overlord's appetite. " : '';
-    lines.push(`<span class="bad">${greed}Next tribute: ${turn.quota} (+${rise}).</span>`);
-    msg += ` · ${greed}Next tribute: ${turn.quota} (+${rise}).`;
+    lines.push(`<span class="bad">${greed}Next base tribute: ${turn.quota} (+${rise}).</span>`);
+    msg += ` · ${greed}Next base tribute: ${turn.quota} (+${rise}).`;
   }
 
   $('report').innerHTML = lines.join('<br />');
@@ -796,7 +841,7 @@ function settleTurn(e) {
       if (final) {
         showStrikes(true);
         gameOver('Three tributes missed. The Overlord has lost his patience and razed your city.');
-      } else startYearEvent(dealNewHand);
+      } else startNewYear(dealNewHand, { continued: true });
     });
     return;
   }
@@ -822,24 +867,157 @@ function settleTurn(e) {
 const yearLength = () => turn.event?.mods?.yearLength ?? 4;
 let eventOpen = false;
 
-/** Draw this year's event (none in year 1), show it, apply the result, then continue. */
-async function startYearEvent(then) {
-  const key = drawEvent(turn);
-  if (!key) return then();
+/**
+ * A new year (year 2 on): any free tile picks earned last year, then the Overlord asks for this
+ * year's target, then the year event, then `then` (deal the hand).
+ *
+ * It plays as one conversation: the dialogue stays up from the target through the event (and, with
+ * `continued`, straight on from the failure speech that is already showing), and the Overlord only
+ * leaves once he has nothing more to say.
+ */
+async function startNewYear(then, { continued = false } = {}) {
+  eventOpen = true;
+  hand.select(-1);
+  let talking = continued; // the dialogue is already up
+  if (turn.season === 0 && turn.round >= 2) {
+    const gifted = turn.cardPicks > 0;
+    if (gifted && talking) {
+      await dialogue.leave(); // the tile pick has its own screen
+      talking = false;
+    }
+    while (turn.cardPicks > 0) {
+      turn.cardPicks--;
+      await openCardPick();
+    }
+    eventOpen = true; // the tile pick clears it when it closes
+    await startTarget({ continued: talking, gifted });
+    talking = true;
+  }
+  return startYearEvent(then, { continued: talking });
+}
+
+/**
+ * The Overlord sets this year's target (forced High after LOW_STREAK_LIMIT Lows in a row).
+ * Leaves the dialogue open: the caller closes it (or carries on talking).
+ */
+async function startTarget({ continued = false, gifted = false } = {}) {
+  eventOpen = true;
+  hand.select(-1);
+  const forced = turn.lowStreak >= LOW_STREAK_LIMIT;
+  const offers = (forced ? ['high'] : TIER_ORDER).map((tier) => ({ tier, reward: rollReward(TIERS[tier].pool) }));
+  const picked = await playTargetDialogue(offers, { forced, continued, gifted });
+  applyTarget(picked);
+}
+
+/** Text for one tier option: its quota and (if any) its reward. */
+function targetTag({ tier, reward }) {
+  const q = scaledQuota(turn.quotaBase, tier);
+  const pct = Math.round(TIERS[tier].mult * 100);
+  return `${q} oil (${pct}%) · ${reward ? `reward: ${iconize(REWARDS[reward].text)}` : 'no reward'}`;
+}
+
+async function playTargetDialogue(offers, { forced, continued, gifted }) {
+  const OVERLORD = 'The Overlord';
+  const pleased = !turn.lastMissed;
+  const base = turn.quotaBase;
+  dialogue.open({
+    kind: forced ? 'pressure' : 'choice',
+    kindLabel: `Year ${turn.round} · tribute target`,
+    title: forced ? 'No More Excuses' : pleased ? 'The Overlord Is Pleased' : 'A Chance to Redeem Yourself',
+    effect: forced
+      ? `${LOW_STREAK_LIMIT} low targets in a row: this year's target is forced to High.`
+      : `Base tribute ${base} oil · rewards are paid only if the target is met.`,
+  });
+  let lines;
+  let ask;
+  if (forced) {
+    lines = [
+      continued
+        ? `And do not think I have forgotten your ${LOW_STREAK_LIMIT} timid little targets in a row.`
+        : `${LOW_STREAK_LIMIT} years of timid little targets, Overseer. Did you think I would not notice?`,
+      'My legions do not march on modest ambitions.',
+    ];
+    ask = `This year you will give me ${scaledQuota(base, 'high')} barrels. I am not asking.`;
+  } else if (pleased) {
+    lines = [
+      gifted ? 'I trust my gift will serve you well, Overseer.' : 'Your harvest reached my tanks in full. I am... pleased, Overseer.',
+      `My clerks reckon ${base} barrels for the coming year. But a loyal servant may name his own target.`,
+    ];
+    ask = 'Promise me less and play it safe, or promise me more and be rewarded. Choose.';
+  } else {
+    lines = [
+      continued ? 'Still. I have some use for you yet.' : 'You failed me, and yet here you stand.',
+      `My clerks reckon ${base} barrels for the coming year. Perhaps you wish to prove them wrong.`,
+    ];
+    ask = 'Name your target, Overseer. Promise little and keep your head, or promise more and earn back my favour.';
+  }
+  for (const line of lines) await dialogue.say(OVERLORD, line);
+  const options = forced
+    ? [{ text: 'As you command, Overlord.', tag: targetTag(offers[0]) }]
+    : offers.map((o) => ({ text: `${TIERS[o.tier].label}: ${TIERS[o.tier].say}`, tag: targetTag(o) }));
+  const i = await dialogue.ask(OVERLORD, ask, options);
+  const picked = offers[i];
+  await dialogue.say(OVERLORD, forced ? 'Good. Do not make me regret indulging you all these years.' : TIERS[picked.tier].retort);
+  return picked;
+}
+
+function applyTarget({ tier, reward }) {
+  turn.target = { tier, reward };
+  turn.quota = scaledQuota(turn.quotaBase, tier);
+  turn.lowStreak = tier === 'low' ? turn.lowStreak + 1 : 0;
+  const rewardText = reward ? `Reward if met: ${REWARDS[reward].text}.` : 'No reward.';
+  const cls = tier === 'low' ? '' : 'good';
+  $('report').innerHTML =
+    `${$('report').innerHTML}<br /><span class="${cls}">Target set: <b>${TIERS[tier].label}</b>, tribute ${turn.quota} oil. ${iconize(rewardText)}</span>`;
+  updateHUD();
+}
+
+/**
+ * Draw this year's event (none in year 1), show it, apply the result, then continue.
+ * `continued`: the Overlord is already talking (target dialogue), so the event follows on from it
+ * and he leaves at the end either way.
+ */
+async function startYearEvent(then, { continued = false } = {}) {
+  const key = drawEvent(turn, turn.forceFortune ? { kinds: ['fortune'] } : undefined);
+  turn.forceFortune = false;
+  if (!key) {
+    if (continued) await dialogue.leave();
+    eventOpen = false;
+    targetToast();
+    return then();
+  }
   const ev = EVENTS[key];
   eventOpen = true;
   hand.select(-1);
-  const choice = await playEventDialogue(ev);
+  const choice = await playEventDialogue(ev, continued);
+  await dialogue.leave();
   eventOpen = false;
   applyYearEvent(key, ev, choice);
   then();
 }
 
+/** After the new-year talk: a reminder of the target just set (toasts are hidden during dialogue). */
+function targetToast() {
+  const tg = turn.target;
+  if (!tg || turn.season !== 0) return;
+  const r = tg.reward ? REWARDS[tg.reward] : null;
+  toast(`${TIERS[tg.tier].label} target: ${turn.quota} oil${r ? ` · reward: ${r.text}` : ''}`, 'good', 3200);
+}
+
+/** What the Overlord says to move on from the target to the year's event. */
+const EVENT_BRIDGE = {
+  pressure: 'One more thing, Overseer. My demands have grown this year.',
+  disaster: 'Before you scurry off. There is news from your city, and you will not like it.',
+  fortune: 'And before you go: some news that may even please you.',
+  choice: 'One more thing. A matter for you to decide.',
+};
+
 /**
  * The Overlord announces the event. His last line comes with your replies: for choice events
  * those are the real options (with their effect in the tag), otherwise flavour that he answers.
+ * The dialogue is left open; the caller closes it.
  */
-async function playEventDialogue(ev) {
+async function playEventDialogue(ev, continued = false) {
   const OVERLORD = 'The Overlord';
   dialogue.open({
     kind: ev.kind,
@@ -847,6 +1025,7 @@ async function playEventDialogue(ev) {
     title: ev.name,
     effect: iconize(ev.choices ? 'Your answer decides what happens.' : ev.text),
   });
+  if (continued && EVENT_BRIDGE[ev.kind]) await dialogue.say(OVERLORD, EVENT_BRIDGE[ev.kind]);
   const lines = ev.lines?.length ? ev.lines : [ev.text];
   for (const line of lines.slice(0, -1)) await dialogue.say(OVERLORD, line);
   const options = ev.choices
@@ -855,14 +1034,14 @@ async function playEventDialogue(ev) {
   const i = await dialogue.ask(OVERLORD, lines[lines.length - 1], options);
   const picked = ev.choices ? ev.choices[i] : ev.replies?.[i];
   if (picked?.retort) await dialogue.say(OVERLORD, picked.retort);
-  dialogue.close();
   return ev.choices ? picked : null;
 }
 
 function applyYearEvent(key, ev, choice) {
   const mods = { ...(ev.mods ?? {}), ...(choice?.mods ?? {}) };
   const summary = choice ? `${choice.label}: ${choice.text}` : ev.text;
-  turn.event = { key, name: ev.name, kind: ev.kind, mods, summary, baseQuota: turn.quota };
+  turn.event = { key, name: ev.name, kind: ev.kind, mods, summary };
+  // Scales this year's (already target-scaled) quota; next year still grows from turn.quotaBase.
   if (mods.quotaMult) turn.quota = Math.round(turn.quota * mods.quotaMult);
   const ctx = { turn, spawnRaider };
   const extra = [ev.apply?.(ctx), choice?.apply?.(ctx)].filter(Boolean).join(' ');
@@ -917,6 +1096,39 @@ function debugEvent() {
   startYearEvent(updateHUD).finally(() => (turn.round = round));
 }
 
+/**
+ * Debug panel: skip straight to this year's tribute. `met` delivers exactly the quota (shop, then the
+ * next year's target dialogue); otherwise nothing is delivered (a strike and the failure speech).
+ * The skipped season's own oil is ignored; food and population still tick once.
+ */
+function debugSkipYear(met) {
+  if (turn.over) return 'Game over: restart first';
+  if (shopOpen || eventOpen || payout.active) return 'Finish the current screen first';
+  if (previewing) cancelPreview();
+  hand.select(-1);
+  turn.season = yearLength() - 1;
+  turn.stockpile = met ? turn.quota : 0;
+  settleTurn({ ...economyNow(), oil: 0 });
+  return met ? `Skipped year: tribute met` : 'Skipped year: tribute missed';
+}
+
+/** Debug (T): set this year's tribute target again (Shift+T: a free tile pick first). */
+function debugTarget(withPick = false) {
+  if (shopOpen || payout.active || turn.over || eventOpen) return;
+  (withPick ? openCardPick() : Promise.resolve())
+    .then(() => startTarget({ gifted: withPick }))
+    .then(() => dialogue.leave())
+    .then(() => {
+      eventOpen = false;
+      targetToast();
+      dealIfPicked();
+    });
+}
+/** After a debug tile pick, deal the pinned tile into the hand so it can be seen. */
+function dealIfPicked() {
+  if (turn.pinned.length) dealNewHand();
+}
+
 /** Debug (P): open the shop now with some spending money. Continue deals a fresh hand. */
 const DEBUG_SHOP_COINS = 20;
 function debugShop() {
@@ -940,7 +1152,7 @@ function renderShop(animate = false) {
     return `
       <div class="shop-item">
         <div class="card${can ? '' : ' cant'}${animate ? ' deal' : ''}" data-k="${k}" style="--top:${hex(t.top)};--edge:${hex(t.edge)};animation-delay:${0.15 + i * 0.07}s">
-          <div class="art">${t.symbol ? '' : shapeGridHTML([[0, 0]])}</div>
+          <div class="art">${cardArtHTML(k)}</div>
           ${snapHTML(t)}
           <div class="name">${t.name}</div>
           <div class="rule">${cardText(t)}</div>
@@ -978,7 +1190,58 @@ $('btnShopDone').addEventListener('click', () => {
   turn.coins = 0; // unspent excess goes to the Overlord
   $('shop').classList.add('hidden');
   document.body.classList.remove('shopping');
-  startYearEvent(dealNewHand);
+  startNewYear(dealNewHand);
+});
+
+// ---------- free tile pick (target reward) ----------
+const PICK_SLOTS = 3;
+let pickResolve = null;
+
+/** Show 3 random market tiles; the clicked one is unlocked and put in the next hand for free. */
+function openCardPick() {
+  const options = [...SHOP_ITEMS].sort(() => Math.random() - 0.5).slice(0, PICK_SLOTS);
+  eventOpen = true;
+  hand.select(-1);
+  $('pickCards').innerHTML = options.map(([k], i) => {
+    const t = cardDef(k);
+    return `
+      <div class="shop-item">
+        <div class="card deal" data-k="${k}" style="--top:${hex(t.top)};--edge:${hex(t.edge)};animation-delay:${0.15 + i * 0.07}s">
+          <div class="art">${cardArtHTML(k)}</div>
+          ${snapHTML(t)}
+          <div class="name">${t.name}</div>
+          <div class="rule">${cardText(t)}</div>
+        </div>
+        <div class="tag">${turn.unlocked.has(k) ? 'Unlocked' : 'Locked'}${ACTIONS[k] ? ' · one use' : ''}</div>
+      </div>`;
+  }).join('');
+  const el = $('cardPick');
+  el.classList.remove('hidden', 'opening');
+  void el.offsetWidth;
+  el.classList.add('opening');
+  document.body.classList.add('shopping');
+  return new Promise((resolve) => (pickResolve = resolve));
+}
+
+/** `resume` false (a reset) drops the waiting new-year flow instead of continuing it. */
+function closeCardPick(resume = true) {
+  $('cardPick').classList.add('hidden');
+  if (!shopOpen) document.body.classList.remove('shopping');
+  const done = pickResolve;
+  pickResolve = null;
+  eventOpen = false;
+  if (resume) done?.();
+}
+
+$('pickCards').addEventListener('click', (e) => {
+  const card = e.target.closest('.card[data-k]');
+  if (!card || !pickResolve) return;
+  const k = card.dataset.k;
+  turn.unlocked.add(k);
+  const inHand = turn.pinned.length < HAND_SIZE;
+  if (inHand) turn.pinned.push(k);
+  toast(`${cardDef(k).name} unlocked${inHand ? ' and added to your next hand' : ''}`, 'good', 2600);
+  closeCardPick();
 });
 
 // ---------- input ----------
@@ -1196,12 +1459,21 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'n') nukeRandomTile();
   else if (k === 'p' && !e.repeat) debugShop();
   else if (k === 'v' && !e.repeat) debugEvent();
+  else if (k === 't' && !e.repeat) debugTarget(e.shiftKey);
   else if (k === 'x' && !e.repeat) setExpansionMode(!grid.expansionMode);
   else if (k === 'enter') endTurn();
 });
 
 $('btnReroll').addEventListener('click', () => {
   if (hand.isEmpty || payout.active || turn.over || shopOpen || eventOpen) return;
+  if (turn.freeRerolls > 0) {
+    // Target reward: free, and doesn't raise the price of the next paid reroll.
+    turn.freeRerolls--;
+    hand.reroll();
+    updateHUD();
+    toast(`Hand rerolled for free (${turn.freeRerolls} free reroll${turn.freeRerolls === 1 ? '' : 's'} left)`, 'good');
+    return;
+  }
   const cost = rerollCost();
   if (turn.stockpile < cost) {
     toast(`Not enough oil to reroll (costs ${cost})`, 'bad');
@@ -1262,9 +1534,11 @@ function resetIsland() {
     unlocked: new Set(),
     pinned: [],
     coins: 0,
+    ...freshTargetState(),
   });
   shopOpen = false;
   eventOpen = false;
+  closeCardPick(false);
   dialogue.close();
   $('shop').classList.add('hidden');
   document.body.classList.remove('shopping');
@@ -1286,7 +1560,7 @@ function resetIsland() {
  * A missed tribute: the Overlord comes to speak. What he says depends on how many strikes are
  * left: a warning, a last warning, and on the third miss his judgement (the game over follows).
  */
-async function playTributeFailure({ quota, delivered, short, lost, nextQuota: next, strikes, final }) {
+async function playTributeFailure({ quota, delivered, short, lost, strikes, final }) {
   const OVERLORD = 'The Overlord';
   const left = MAX_STRIKES - strikes;
   eventOpen = true;
@@ -1322,7 +1596,7 @@ async function playTributeFailure({ quota, delivered, short, lost, nextQuota: ne
         `${delivered} barrels. My generals no longer say your name; they just call you "the shortfall".`,
         reminder,
       ],
-      ask: `This is your last warning. Next year I want ${next} barrels. Fail me once more, and I will raze the Hive City to the sand.`,
+      ask: 'This is your last warning. Fail me once more, and I will raze the Hive City to the sand.',
       replies: [
         ["You'll have your oil. All of it.", 'Words. Bring me barrels.'],
         ['Give me more time.', 'Time is the one thing I have stopped giving you.'],
@@ -1336,7 +1610,7 @@ async function playTributeFailure({ quota, delivered, short, lost, nextQuota: ne
         'My tanks sat idle in the dunes while the technobarbarians laughed. Because of you, Overseer.',
         reminder,
       ],
-      ask: `There will be no market for you this year. Next year: ${next} barrels. Fail me twice more and your city burns.`,
+      ask: 'There will be no market for you this year. Fail me twice more and your city burns.',
       replies: [
         ["It won't happen again.", "See that it doesn't."],
         ['The wells ran dry.', 'Then dig new ones. With your bare hands, if you must.'],
@@ -1351,8 +1625,11 @@ async function playTributeFailure({ quota, delivered, short, lost, nextQuota: ne
     script.replies.map(([text]) => ({ text })),
   );
   await dialogue.say(OVERLORD, script.replies[i][1]);
-  await dialogue.leave();
-  eventOpen = false;
+  // Not the end: he stays on and moves straight on to next year's target (startNewYear).
+  if (final) {
+    await dialogue.leave();
+    eventOpen = false;
+  }
 }
 
 /** Opening scene: the Overlord appoints you Overseer of the Hive City, then leaves you to it. */

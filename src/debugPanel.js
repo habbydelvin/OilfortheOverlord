@@ -6,7 +6,7 @@ const decimals = (step) => (String(step).split('.')[1] ?? '').length;
  * Debug panel for tuning the payout animation. Edits `cfg` in place (the Payout reads it live)
  * and saves to localStorage so tweaks survive a reload.
  */
-export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode }) {
+export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear }) {
   const fmt = (p, v) => (p.type === 'select' ? v : Number(v).toFixed(decimals(p.step)));
 
   function render() {
@@ -38,6 +38,11 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
           <span class="dbg-name">Territory expansion <small>(X)</small></span>
           <input type="checkbox" data-act="mode"${expansionMode?.() ? ' checked' : ''} />
         </label>
+        <div class="dbg-group">Dev testing</div>
+        <div class="dbg-actions dbg-dev">
+          <button data-act="skipMet" title="Jump to the tribute and deliver exactly the quota">Skip year <small>(meet)</small></button>
+          <button data-act="skipMiss" title="Jump to the tribute and deliver nothing (a strike)">Skip year <small>(miss)</small></button>
+        </div>
         ${rows}
       </div>
       <div class="dbg-actions">
@@ -75,6 +80,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
     btn.blur(); // so Space doesn't re-click it
     const act = btn.dataset.act;
     if (act === 'play') onPlay();
+    else if (act === 'skipMet' || act === 'skipMiss') status(onSkipYear?.(act === 'skipMet') ?? '');
     else if (act === 'close') setOpen(false);
     else if (act === 'reset') {
       Object.assign(cfg, PAYOUT_DEFAULTS);

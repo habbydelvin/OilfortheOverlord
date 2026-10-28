@@ -70,6 +70,7 @@
       <header id="top">
         <div class="level" id="seasonLabel">Round 1 · Spring</div>
         <div id="eventLabel" class="event-label hidden"></div>
+        <div id="targetLabel" class="event-label hidden"></div>
         <div class="bar"><div class="fill" id="quotaFill"></div></div>
         <div class="count" id="quotaCount">0 / 20 barrels</div>
         <div class="strikes" id="strikes" title="Failed tributes: at 3 the Overlord destroys you"><i></i><i></i><i></i></div>
@@ -146,7 +147,7 @@
           <b>Q / E</b> · turn camera &nbsp; <b>C</b> · recenter<br />
           <b>N</b> · debug: overlord nuke (toxic crater)<br />
           <b>P</b> · debug: open the shop<br />
-          <b>V</b> · debug: year event<br />
+          <b>V</b> · debug: year event &nbsp; <b>T</b> · debug: tribute target (<b>Shift+T</b> with a free tile pick)<br />
           <b>X</b> · debug: toggle territory expansion mode<br />
           <b>Space</b> · debug: replay payout &nbsp; <b>`</b> · tuning panel
         </div>
@@ -166,6 +167,15 @@
           <button id="btnShopReroll" class="shop-reroll"><span class="icon">⟳</span> Reroll <span id="shopRerollCost"></span></button>
         </div>
         <div class="shop-foot"><button id="btnShopDone" class="btn gold">Continue</button></div>
+      </div>
+      <div id="cardPick" class="hidden">
+        <div class="shop-head">
+          <div class="title">The Overlord's reward</div>
+          <div class="coins">Pick one tile</div>
+          <p>Free: it is unlocked for good and goes into your next hand.</p>
+        </div>
+        <div class="shop-band"><div id="pickCards"></div></div>
+        <div class="shop-foot"></div>
       </div>
       <div id="gameover" class="hidden">
         <div class="box">

@@ -275,6 +275,39 @@ export function shapeGridHTML(cells) {
   return `<div class="shape" style="grid-template-columns:repeat(${n},1fr)">${squares}</div>`;
 }
 
+/**
+ * Tiles that affect other tiles show their reach on the LED panel instead of their size:
+ * the tile itself lit in its card colour, the cells it affects lit yellow.
+ * 'plus' = the 4 sides (adjacency), 'square' = the full 3×3 around it.
+ */
+export const AREAS = {
+  capital: 'plus',
+  pump: 'plus',
+  refinery: 'plus',
+  oasis: 'plus',
+  tarpit: 'plus',
+  labourcamp: 'plus',
+  crater: 'plus',
+  spark: 'square',
+};
+
+export function areaGridHTML(area) {
+  let squares = '';
+  for (let z = 0; z < 3; z++)
+    for (let x = 0; x < 3; x++) {
+      const centre = x === 1 && z === 1;
+      const hit = area === 'square' || x === 1 || z === 1;
+      squares += centre && area !== 'square' ? '<i class="on"></i>' : hit ? '<i class="area"></i>' : '<i></i>';
+    }
+  return `<div class="shape area-grid" style="grid-template-columns:repeat(3,1fr)">${squares}</div>`;
+}
+
+/** LED panel contents for a card: its area of effect if it has one, else its shape (nothing for other action cards). */
+export function cardArtHTML(key, cells = [[0, 0]]) {
+  if (AREAS[key]) return areaGridHTML(AREAS[key]);
+  return cardDef(key)?.symbol ? '' : shapeGridHTML(cells);
+}
+
 /** The picture slot above the card text: a tile snapshot when one is set, the symbol for action cards, else empty. */
 export const snapHTML = (t) =>
   `<div class="snap">${t.symbol ? `<div class="symbol">${t.symbol}</div>` : t.snapshot ? `<img src="${t.snapshot}" alt="">` : ''}</div>`;
