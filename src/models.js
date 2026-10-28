@@ -17,9 +17,9 @@ export const BLOCKOUTS = {
   refinery: 'RefineryCity01.fbx',
   oasis: 'Oasis.fbx',
   tarpit: 'TarPit01.fbx',
-  cliffs: 'Cliffs01.fbx',
-  ruins: 'PreWarRuins01.fbx',
-  crater: 'ToxicCrater01.fbx',
+  cliffs: 'Cliff01.fbx',
+  ruins: 'Ruins01.fbx',
+  crater: 'ToxicCraterCity01.fbx',
   labourcamp: 'LaborCampCity01.fbx',
 };
 
@@ -38,6 +38,10 @@ const FINISHED = {
   pump: { yaw: 0, fit: 'PumpStation_HiveCity' },
   oasis: { yaw: 0, fit: 'WasteOasis_HiveCity' },
   labourcamp: { yaw: 0, fit: 'LaborCamp_HiveCity' },
+  // Cliff and Ruins have no _HiveCity group: their 12 × 12 ground plate is the footprint.
+  cliffs: { yaw: 0, fit: 'SandCliffs_Ground' },
+  ruins: { yaw: 0, fit: 'WasteRuins_Ground' },
+  crater: { yaw: 0, fit: 'ToxicCrater_HiveCity' },
   settlement: { yaw: 0, fit: 'Village02_HiveCity' },
 };
 
@@ -319,6 +323,40 @@ function trackBytes(file, e) {
 }
 
 /** Loads every blockout once. Rejects only if the atlas or a file is missing. */
+/**
+ * The board's sand plane (scene.js, GROUND.y = -0.05) is see-through so it can fade out at the edges, which puts
+ * it in three.js's transparent pass, drawn after every solid object. Anything sunk below it (the Toxic Crater's
+ * pit and liquid) would be painted over with sand. Those parts move to the transparent pass too, still fully
+ * opaque and writing depth, and draw right after the plane (renderOrder -0.5: the plane is -1, the rest 0+).
+ */
+const BOARD_GROUND_Y = -0.05;
+function drawAfterGround(root) {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  const swap = new Map();
+  let n = 0;
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    const mats = [o.material].flat();
+    if (mats.every((m) => m.transparent)) return; // smoke and fumes already draw after the plane
+    if (box.setFromObject(o).min.y >= BOARD_GROUND_Y - 1e-3) return;
+    const lift = (m) => {
+      if (m.transparent) return m;
+      if (!swap.has(m)) {
+        const c = m.clone();
+        c.transparent = true;
+        c.depthWrite = true;
+        swap.set(m, c);
+      }
+      return swap.get(m);
+    };
+    o.material = Array.isArray(o.material) ? o.material.map(lift) : lift(o.material);
+    o.renderOrder = -0.5;
+    n++;
+  });
+  return n;
+}
+
 export async function loadBlockouts() {
   const loader = new FBXLoader();
   // Wait for the atlas image. The FBX loader does not attach it itself.
@@ -345,6 +383,8 @@ export async function loadBlockouts() {
           console.warn(`[models] ${terrain}: merge skipped`, e);
         }
       }
+      const sunk = drawAfterGround(raw);
+      if (sunk) console.info(`[models] ${terrain}: ${sunk} below-ground parts drawn after the sand plane`);
     } else {
       applyAtlas(raw, atlas);
       raw.animations = [];
