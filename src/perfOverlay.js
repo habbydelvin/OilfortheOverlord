@@ -1,5 +1,5 @@
 /**
- * In-game performance overlay (` key, with the debug panel). Shows FPS, frame times, CPU ms per update step, GPU ms
+ * In-game performance overlay (- key). Shows FPS, frame times, CPU ms per update step, GPU ms
  * (whole frame and split around the fog), renderer counters, and A/B toggles for the expensive
  * systems. A capture button records a few seconds and copies a JSON summary.
  *
@@ -296,7 +296,7 @@ export class Perf {
     root.id = 'perf';
     root.className = 'hidden';
     root.innerHTML = `
-      <div class="ph"><b>Performance <small>(\`)</small></b><span class="fps">--</span></div>
+      <div class="ph"><b>Performance <small>(-)</small></b><span class="fps">--</span></div>
       <div class="summary"></div>
       <canvas width="560" height="120"></canvas>
       <div class="sec">CPU per frame (ms) · avg / max</div>

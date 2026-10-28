@@ -404,10 +404,29 @@ export const TERRAIN_KEYS = Object.keys(TERRAINS);
 export const isBuilding = (terrain) => TERRAINS[terrain]?.category === 'building';
 
 export const TILE = {
-  gap: 0.03, // tiny seam so individual tiles stay readable
+  gap: 0, // seam between tiles (world units); Game Debug → Graphics → Tile gap
   capH: 0.12, // coloured terrain layer
   soilH: 0.5, // dark earth underneath
 };
+
+const FULL = { sx: 1, sz: 1, cx: 0, cz: 0, w: 1, h: 1 };
+/**
+ * Apply TILE.gap to everything under `root` tagged with userData.fit (fitted models, stand-in blocks, camp
+ * soil, ghost blocks): x/z scale shrinks so a w×h footprint becomes (w - gap)×(h - gap), still centred.
+ */
+export function applyTileGap(root, gap = TILE.gap) {
+  root.traverse((o) => {
+    const f = o.userData.fit;
+    if (!f) return;
+    o.scale.x = (f.sx * (f.w - gap)) / f.w;
+    o.scale.z = (f.sz * (f.h - gap)) / f.h;
+    o.position.x = -f.cx * o.scale.x;
+    o.position.z = -f.cz * o.scale.z;
+  });
+  return root;
+}
+/** Tag a full-cell mesh centred on its origin so applyTileGap shrinks it. */
+export const fitFull = (o) => ((o.userData.fit = FULL), o);
 
 export const hex = (n) => `#${n.toString(16).padStart(6, '0')}`;
 
@@ -424,7 +443,7 @@ export class TileFactory {
   piecesReady;
 
   constructor() {
-    const s = 1 - TILE.gap;
+    const s = 1;
     this.capGeo = new THREE.BoxGeometry(s, TILE.capH, s).translate(0, -TILE.capH / 2, 0);
     this.soilGeo = new THREE.BoxGeometry(s, TILE.soilH, s).translate(0, -TILE.capH - TILE.soilH / 2, 0);
     this.soilMat = new THREE.MeshStandardMaterial({ color: 0x4a3b2c, roughness: 1 });
@@ -460,23 +479,28 @@ export class TileFactory {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
     }
-    group.add(soil, cap);
+    group.add(fitFull(soil), fitFull(cap));
     return group;
   }
 
   /**
    * bare: an empty holder, for a cell covered by a whole-piece Wasteland model (the model is added separately).
    */
-  create(terrain, { bare = false } = {}) {
+  create(terrain, opts) {
+    return applyTileGap(this.#create(terrain, opts));
+  }
+
+  #create(terrain, { bare = false } = {}) {
     if (bare) return new THREE.Group();
     if (terrain.startsWith('wasteland')) {
       const holder = new THREE.Group();
       this.fillWaste(holder, terrain);
       return holder;
     }
-    if (isCamp(terrain)) return buildRaiderCamp(this.soilGeo, this.soilMat, TERRAINS[terrain].tent);
+    const tagSoil = (g) => (g.traverse((o) => o.geometry === this.soilGeo && fitFull(o)), g);
+    if (isCamp(terrain)) return tagSoil(buildRaiderCamp(this.soilGeo, this.soilMat, TERRAINS[terrain].tent));
     // The finished model (LaborCampCity01.fbx); the code-built camp only if that file failed to load.
-    if (terrain === 'labourcamp' && !this.models?.has('labourcamp')) return buildLabourCamp(this.soilGeo, this.soilMat);
+    if (terrain === 'labourcamp' && !this.models?.has('labourcamp')) return tagSoil(buildLabourCamp(this.soilGeo, this.soilMat));
     const source = this.models?.get(terrain);
     if (!source) return this.#block(terrain);
     // The fitted model keeps its own offset. A holder takes the cell position
@@ -531,6 +555,7 @@ export class TileFactory {
       if (model.animations.length) this.#animate(model);
     } else holder.add(this.#block(terrain));
     holder.userData.blockout = Boolean(source);
+    applyTileGap(holder);
   }
 
   /**
@@ -546,7 +571,7 @@ export class TileFactory {
     group.add(model);
     group.rotation.y = (-rot * Math.PI) / 2;
     if (model.animations.length) this.#animate(model);
-    return group;
+    return applyTileGap(group);
   }
 
   /** Ghost copy of a whole Wasteland piece for the placement preview. */

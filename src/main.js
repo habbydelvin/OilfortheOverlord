@@ -28,7 +28,7 @@ const SEED_TERRAIN = 'capital';
 
 // ---------- setup ----------
 const { renderer, scene, camera, sun, followTarget } = createScene(document.getElementById('app'));
-const perf = new Perf(renderer); // opens with the debug panel (`)
+const perf = new Perf(renderer); // '-' toggles the overlay
 const rig = new CameraRig(camera, renderer.domElement);
 const grid = new Grid();
 const factory = new TileFactory();
@@ -1727,7 +1727,10 @@ window.addEventListener('keydown', (e) => {
   if (tgt.matches?.('input, select, textarea')) return; // typing in the debug panel
   if (k === '`') {
     debug.toggle();
-    perf.setOpen(debug.isOpen());
+    return;
+  }
+  if (k === '-') {
+    perf.setOpen(!perf.enabled); // performance overlay
     return;
   }
   if (payout.active) {
@@ -2015,7 +2018,7 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-// ---------- performance overlay (`) ----------
+// ---------- performance overlay (-) ----------
 // GPU split: each fog draw (veil + billow layers) is bracketed, so GPU time lands in "fog";
 // the rest of the frame (shadow pass, buildings, overlays, fog depth pre-pass + composite) is "scene".
 for (const obj of [fog.veil, ...fog.meshes]) {

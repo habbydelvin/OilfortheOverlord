@@ -1,12 +1,18 @@
 import * as THREE from 'three';
 import { pieceOffsets } from './pieces.js';
 import { hasBlockout } from './models.js';
-import { ACTIONS, TERRAINS, TILE, cardDef, isBuilding, isCamp } from './tiles.js';
+import { ACTIONS, TERRAINS, cardDef, isBuilding, isCamp, applyTileGap, fitFull } from './tiles.js';
 
 const OK_COLOR = new THREE.Color(0x8be39a);
 const BAD_COLOR = new THREE.Color(0xe0563f);
 const HOVER_Y = 0.5;
 const goal = new THREE.Vector3(); // reused every frame
+/** A full-cell ghost part in a holder (the holder takes the offset; the part shrinks by the tile gap). */
+function cellPart(geo, mat) {
+  const holder = new THREE.Group();
+  holder.add(applyTileGap(fitFull(new THREE.Mesh(geo, mat))));
+  return holder;
+}
 
 /**
  * Ghost preview for the selected piece: floating blocks that follow the cursor
@@ -22,7 +28,7 @@ export class Placement {
   constructor(scene, grid, factory) {
     this.grid = grid;
     this.factory = factory;
-    const s = 1 - TILE.gap;
+    const s = 1;
 
     this.blocks = new THREE.Group();
     this.feet = new THREE.Group();
@@ -52,7 +58,7 @@ export class Placement {
       this.offsets = [];
       for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) this.offsets.push([dx, dz]);
       for (const [ox, oz] of this.offsets) {
-        const f = new THREE.Mesh(this.footGeo, this.footMat);
+        const f = cellPart(this.footGeo, this.footMat);
         f.position.set(ox, 0.015, oz);
         this.feet.add(f);
       }
@@ -70,12 +76,12 @@ export class Placement {
     }
     for (const [ox, oz] of this.offsets) {
       if (!wholePiece) {
-        const b = blockout ? this.factory.preview(piece.terrain) : new THREE.Mesh(this.blockGeo, this.blockMat);
+        const b = blockout ? this.factory.preview(piece.terrain) : cellPart(this.blockGeo, this.blockMat);
         b.position.set(ox, 0, oz);
-        b.castShadow = true;
+        if (!blockout) b.children[0].castShadow = true;
         this.blocks.add(b);
       }
-      const f = new THREE.Mesh(this.footGeo, this.footMat);
+      const f = cellPart(this.footGeo, this.footMat);
       f.position.set(ox, 0.015, oz);
       this.feet.add(f);
     }

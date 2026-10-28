@@ -46,7 +46,7 @@ const MODEL_URL = '/models/blockouts/';
 const MODEL_VERSION = '20261028-1553';
 const ATLAS_URL = '/models/Atlas.jpg?v=20261026-1640';
 // Footprints measure about 96 × 97 cm. One board cell is 1 unit across.
-const CELL = 0.97;
+const CELL = 1; // full cell: the seam between tiles is TILE.gap, applied live by applyTileGap (tiles.js)
 
 export function hasBlockout(terrain) {
   return Object.prototype.hasOwnProperty.call(BLOCKOUTS, terrain);
@@ -67,6 +67,7 @@ function fitToCell(root, { yaw = -Math.PI / 2, fit = null, ground = null } = {})
   const span = Math.max(size.x, size.z, 1e-4);
   const scale = CELL / span;
   root.scale.setScalar(scale);
+  root.userData.fit = { sx: scale, sz: scale, cx: center.x, cz: center.z, w: 1, h: 1 };
   // Base on the cell (y = 0), footprint centred. Measured after the yaw,
   // so the Maya pivot offset does not leave the building in the air.
   const base = ground ?? box.min.y;
@@ -376,7 +377,6 @@ export const WASTE_PIECES = {
   j: 'J',
 };
 const BLENDER_CELL = 12;
-const TILE_GAP = 0.03; // same seam as single tiles (CELL = 1 - gap)
 
 /** Scale a piece model to its cells (keeping the seam at its outer edge) and centre its footprint on the origin. */
 function fitPiece(raw, base) {
@@ -389,8 +389,9 @@ function fitPiece(raw, base) {
   const center = box.getCenter(new THREE.Vector3());
   const w = Math.max(1, Math.round(size.x / BLENDER_CELL));
   const h = Math.max(1, Math.round(size.z / BLENDER_CELL));
-  const sx = (w - TILE_GAP) / size.x;
-  const sz = (h - TILE_GAP) / size.z;
+  const sx = w / size.x;
+  const sz = h / size.z;
+  raw.userData.fit = { sx, sz, cx: center.x, cz: center.z, w, h };
   raw.scale.set(sx, (sx + sz) / 2, sz);
   // Blender ground is y = 0 (pits and the worm sink below it and must not lift the piece).
   raw.position.set(-center.x * sx, 0, -center.z * sz);
@@ -467,6 +468,30 @@ async function shareTextures(roots) {
 }
 
 /**
+ * The piece files carry animated dust clusters (Waste<Name>_Dust and its _DustNN_NN parts) that read as
+ * floating chunks over the board. Remove them. Returns the names of every removed node (for the tracks).
+ */
+const DUST_NAME = /_Dust(\d|$)/;
+function removeDust(raw, name) {
+  const roots = [];
+  raw.traverse((obj) => {
+    if (obj !== raw && DUST_NAME.test(obj.name) && !DUST_NAME.test(obj.parent?.name ?? '')) roots.push(obj);
+  });
+  const removed = new Set();
+  let clusters = 0;
+  for (const root of roots) {
+    root.traverse((o) => {
+      removed.add(o.name);
+      if (/_Dust\d+_01$/.test(o.name)) clusters++;
+      if (o.isMesh) o.geometry.dispose();
+    });
+    root.removeFromParent();
+  }
+  if (roots.length) console.info(`Wasteland ${name}: removed ${clusters} dust clusters`);
+  return removed;
+}
+
+/**
  * Loads every Wasteland piece model, one file at a time with a pause in between, so it can run in the
  * background (each file blocks the page for about a quarter of a second while it parses).
  * Resolves to a Map: shape key -> fitted model.
@@ -476,8 +501,15 @@ export async function loadWastePieces() {
   const pieces = new Map();
   for (const [shape, name] of Object.entries(WASTE_PIECES)) {
     const raw = await loader.loadAsync(`${MODEL_URL}Waste${name}City01.fbx?v=${MODEL_VERSION}`);
+    const removed = removeDust(raw, name);
     toStandard(raw);
-    raw.animations = raw.animations.map(movingTracksOnly).filter((clip) => clip.tracks.length);
+    raw.animations = raw.animations
+      .map(movingTracksOnly)
+      .map((clip) => {
+        const tracks = clip.tracks.filter((t) => !removed.has(THREE.PropertyBinding.parseTrackName(t.name).nodeName));
+        return tracks.length === clip.tracks.length ? clip : new THREE.AnimationClip(clip.name, clip.duration, tracks);
+      })
+      .filter((clip) => clip.tracks.length);
     fitPiece(raw, raw.getObjectByName(`Waste${name}_HiveCity`) ?? raw);
     raw.name = `waste-${shape}`;
     pieces.set(shape, raw);

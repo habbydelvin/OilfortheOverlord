@@ -52,7 +52,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
         <div class="dbg-actions dbg-dev">
           <button data-act="skipMet" title="Jump to the tribute and deliver exactly the quota">Skip year <small>(meet)</small></button>
           <button data-act="skipMiss" title="Jump to the tribute and deliver nothing (a strike)">Skip year <small>(miss)</small></button>
-          <button data-act="perf" title="Performance overlay: fps, ms per system, GPU time, A/B toggles (also opens with \`)">Perf</button>
+          <button data-act="perf" title="Performance overlay: fps, ms per system, GPU time, A/B toggles (-)">Perf</button>
         </div>
         ${rows}
       </div>

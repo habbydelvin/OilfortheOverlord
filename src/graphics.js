@@ -1,4 +1,5 @@
 import { FOG_QUALITY_NAMES } from './fogOfWar.js';
+import { TILE, applyTileGap } from './tiles.js';
 
 /**
  * Graphics settings (Game Debug panel → Graphics), saved to localStorage.
@@ -10,6 +11,7 @@ export const GFX = {
   fogQuality: 'High',
   resolution: 'Auto',
   shadows: 'High',
+  tileGap: 0, // seam between tiles; 0 = seamless world
 };
 
 export const GFX_PARAMS = [
@@ -17,6 +19,7 @@ export const GFX_PARAMS = [
   { key: 'fogQuality', label: 'Fog quality', type: 'select', options: FOG_QUALITY_NAMES, hint: 'Ultra = the original fog; lower = fewer/smaller billows' },
   { key: 'resolution', label: 'Resolution', type: 'select', options: ['Auto', '2', '1.5', '1', '0.75'], hint: 'pixel ratio; 1 is much cheaper on Retina screens' },
   { key: 'shadows', label: 'Shadows', type: 'select', options: ['High', 'Low', 'Off'], hint: 'High = 2048² shadow map, Low = 1024²' },
+  { key: 'tileGap', label: 'Tile gap', min: 0, max: 0.08, step: 0.005, hint: '0 = seamless world; 0.03 = the old seam between tiles' },
 ];
 
 export const GFX_DEFAULTS = { ...GFX };
@@ -25,7 +28,11 @@ const KEY = 'oto.gfx';
 export function loadGfxConfig() {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? '{}');
-    for (const p of GFX_PARAMS) if (p.key && p.options.includes(saved[p.key])) GFX[p.key] = saved[p.key];
+    for (const p of GFX_PARAMS) {
+      if (!p.key) continue;
+      const v = saved[p.key];
+      if (p.options ? p.options.includes(v) : typeof v === 'number' && v >= p.min && v <= p.max) GFX[p.key] = v;
+    }
   } catch {
     /* keep defaults */
   }
@@ -42,6 +49,11 @@ export function pixelRatioFor(resolution) {
 /** Apply every graphics setting. `sun` is the shadow-casting light. */
 export function applyGfx(cfg, { renderer, scene, sun, fog }) {
   fog.setQuality(cfg.fogQuality);
+
+  if (TILE.gap !== cfg.tileGap) {
+    TILE.gap = cfg.tileGap;
+    applyTileGap(scene); // every placed tile and the ghost; new tiles pick it up as they're made
+  }
 
   const pr = pixelRatioFor(cfg.resolution);
   if (renderer.getPixelRatio() !== pr) {
