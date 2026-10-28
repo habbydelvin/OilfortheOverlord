@@ -613,20 +613,36 @@ body.paying #btnReset {
 }
 
 /* ---------- hovered tile info ---------- */
+/* Fills the free space between the resources and the buttons; the card grows to fit it. */
 #inspect {
-  margin: 22px 14px 0 0;
+  flex: 1 1 0;
+  min-height: 0;
+  margin: 16px 14px 12px 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
 }
 
 #inspect.hidden {
   display: none;
 }
 
-/* The hand card frame, a bit larger (frame, tint, and window come from the .card rules). */
-#inspect .card-big {
-  --w: 175px;
+#inspect:not(.hidden) + .spacer {
+  display: none;
+}
+
+#inspect .card-slot {
+  flex: 1 1 0;
+  min-height: 0;
+  container-type: size;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The hand card frame, as large as the slot allows (frame, tint, and window come from the .card rules). */
+#panel #inspect .card-big {
+  --w: min(100cqw, calc(100cqh / 1.82));
   flex-shrink: 0;
 }
 
@@ -661,6 +677,7 @@ body.paying #btnReset {
 }
 
 #inspect .note {
+  flex-shrink: 0;
   align-self: stretch;
   margin-top: 8px;
   border-radius: 4px;

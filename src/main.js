@@ -152,11 +152,41 @@ function eventSetup(key, choiceIdx = -1, year = turn.round) {
 /** This season's economy if `mods` were the active event (for the "now" numbers in event text). */
 const previewEconomy = (mods) => computeEconomy(grid, { mods, population: turn.population, foodStore: turn.food });
 /** Effect text for an event (and choice), with this year's percentage and the amount it means right now. */
-function eventText(key, choiceIdx = -1, year = turn.round) {
+function eventText(key, choiceIdx = -1, year = turn.round, info = eventInfo()) {
   const { ev, p, choice, mods } = eventSetup(key, choiceIdx, year);
   const e = previewEconomy(mods);
-  return choice ? `${choice.label}: ${choice.text(p, e)}` : ev.text(p, e);
+  return choice ? `${choice.label}: ${choice.text(p, e, info)}` : ev.text(p, e, info);
 }
+
+/** What the board offers year events right now (for their text and whether they can be drawn). */
+function eventInfo() {
+  const cells = [...grid.cells.values()];
+  return {
+    quota: turn.quota,
+    camps: cells.filter((c) => isCamp(c.terrain)).length,
+    settlements: cells.filter((c) => c.terrain === 'settlement').length,
+    buildings: cells.filter((c) => isBuilding(c.terrain) && c.terrain !== 'capital').length,
+    sites: mysteries.sites.size,
+    open: emptyEdgeCells().length,
+    cliffs: Math.round(SCALE.earthquakeCliffs),
+  };
+}
+
+/** Empty cells next to your land (never a "?" site), as [x, z]. */
+const emptyEdgeCells = () =>
+  [...grid.openKeys()].map((k) => k.split(',').map(Number)).filter(([x, z]) => !mysteries.has(x, z));
+const shuffled = (a) => {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+
+/** Cards in every hand this year (a Black Market Caravan can add one). */
+const handSize = () => HAND_SIZE + (turn.event?.mods?.handBonus ?? 0);
+/** Shop price this visit (a Black Market Caravan can halve it). */
+const shopPrice = (price) => Math.max(1, Math.round(price * (turn.shopMult ?? 1)));
 
 /** What a camp kind does: its percentage, plus what all camps of that kind take right now. */
 function campEffect(kind) {
@@ -491,7 +521,7 @@ function clearRuins(x, z) {
   if (!c || !canClearRuins(c) || turn.over || payout.active || shopOpen || eventOpen) return;
   removeMesh(c.mesh);
   grid.cells.delete(`${x},${z}`);
-  const drawn = hand.refill(HAND_SIZE);
+  const drawn = hand.refill(handSize());
   placement.cell = null;
   frontier.rebuild(grid);
   updateHUD();
@@ -720,6 +750,7 @@ function breakdown(kind, e) {
     add(`Oasis bonus ×${e.bonus.oasisFarms}`, 3 * e.bonus.oasisFarms);
     add('Capital doubles', e.bonus.capitalFood);
     if (turn.event) add(turn.event.name, e.eventFood);
+    if (e.droughtFood) note(`Drought: pumps and oases give nothing (-${e.droughtFood} food)`);
     total('Grown', Math.round(e.foodGrown));
     add('Capital eats', -3 * c('capital'));
     add(`Settlements ×${c('settlement')}`, -2 * c('settlement'));
@@ -743,6 +774,7 @@ function breakdown(kind, e) {
     add(`Settlements ×${c('settlement')}`, 2 * c('settlement'));
     add('Built on ruins', e.bonus.ruins);
     add('Labour camps', e.bonus.labourCamps);
+    add('Taxed settlements', e.taxSlots);
     add(`Population`, e.population);
     add('Toxic craters', -e.craterManpower);
     add(`Raider camps ×${c('raider') + c('bandit_raider')}`, -e.raiderManpower);
@@ -765,6 +797,7 @@ function breakdown(kind, e) {
     total('Crude', e.crude);
     mul(`Refineries (${e.refineryLinks} station link${e.refineryLinks === 1 ? '' : 's'})`, e.refineryMult);
     mul('Hunger', e.fed);
+    add('Settlement tax', e.taxOil);
     add(`Siphoner camps ×${c('bandit_siphon')}`, -e.oilStolen);
     total('This season', signed(e.oil));
     const theft = Math.min(turn.stockpile + e.oil, e.stockpileTheft);
@@ -829,13 +862,13 @@ function updateInspect(cell) {
   if (isCamp(c.terrain)) notes.push(`Right now: ${campEffect(c.terrain)}`);
   if (t.buildable) notes.push('A building can be placed on top of this tile');
   el.innerHTML = `
-    <div class="card-big">
+    <div class="card-slot"><div class="card-big">
       <div class="art">${cardArtHTML(c.terrain)}</div>
       ${snapHTML(t)}
       <div class="name">${t.name}</div>
       <div class="rule">${cardText(t)}</div>
       <div class="kind">${t.category}</div>
-    </div>
+    </div></div>
     ${notes.map((n) => `<div class="note">${n}</div>`).join('')}`;
   el.classList.remove('hidden');
 }
@@ -1225,6 +1258,7 @@ function settleTurn(e) {
     turn.quota = turn.quotaBase; // scaled again when the next target is set
     turn.metStreak = met ? turn.metStreak + 1 : 0;
     turn.lastMissed = !met;
+    turn.shopMult = turn.event?.mods?.shopMult ?? 1; // Black Market Caravan: this tribute's shop
     turn.event = null;
     turn.target = null;
     const rise = turn.quotaBase - prevBase;
@@ -1409,8 +1443,8 @@ function applyTarget({ tier, reward }) {
  * `continued`: the Overlord is already talking (target dialogue), so the event follows on from it
  * and he leaves at the end either way.
  */
-async function startYearEvent(then, { continued = false } = {}) {
-  const key = drawEvent(turn, turn.forceFortune ? { kinds: ['fortune'] } : undefined);
+async function startYearEvent(then, { continued = false, force = null } = {}) {
+  const key = force ?? drawEvent(turn, { kinds: turn.forceFortune ? ['fortune'] : undefined, info: eventInfo() });
   turn.forceFortune = false;
   if (!key) {
     if (continued) await dialogue.leave();
@@ -1424,7 +1458,8 @@ async function startYearEvent(then, { continued = false } = {}) {
   const choice = await playEventDialogue(key, ev, continued);
   await dialogue.leave();
   eventOpen = false;
-  applyYearEvent(key, ev, choice);
+  const later = applyYearEvent(key, ev, choice);
+  for (const fn of later) await fn(); // e.g. Show of Force: the missile cinematic
   await playPendingScenes(); // turned-away refugees: the Rebel Leader speaks
   then();
 }
@@ -1466,7 +1501,9 @@ async function playEventDialogue(key, ev, continued = false) {
   const options = ev.choices
     ? ev.choices.map((c, ci) => {
         const { mods } = eventSetup(key, ci);
-        return { text: c.say ?? c.label, tag: iconize(c.text(p, previewEconomy(mods))) };
+        const info = eventInfo();
+        const off = c.disabled?.(info);
+        return { text: c.say ?? c.label, tag: off ? 'not possible' : iconize(c.text(p, previewEconomy(mods), info)), disabled: off };
       })
     : (ev.replies ?? [{ say: 'Understood.' }]).map((r) => ({ text: r.say }));
   const i = await dialogue.ask(OVERLORD, lines[lines.length - 1], options);
@@ -1476,9 +1513,11 @@ async function playEventDialogue(key, ev, continued = false) {
 }
 
 function applyYearEvent(key, ev, choiceIdx) {
-  const { mods, choice } = eventSetup(key, choiceIdx);
-  // Mods and text are worked out live from this year's strength (the Scaling sliders apply at once).
+  const { mods, choice, p } = eventSetup(key, choiceIdx);
+  // Mods and text are worked out live from this year's strength (the Scaling sliders apply at once);
+  // the board counts in the text are frozen as they were when the event started.
   const round = turn.round;
+  const info = eventInfo();
   turn.event = {
     key,
     choiceIdx,
@@ -1489,19 +1528,66 @@ function applyYearEvent(key, ev, choiceIdx) {
       return eventSetup(key, choiceIdx, round).mods;
     },
     get summary() {
-      return eventText(key, choiceIdx, round);
+      return eventText(key, choiceIdx, round, info);
     },
   };
   const summary = turn.event.summary;
   // Scales this year's (already target-scaled) quota; next year still grows from turn.quotaBase.
   if (mods.quotaMult) turn.quota = Math.round(turn.quota * mods.quotaMult);
+  const later = []; // async follow-ups the caller awaits (cinematics)
   const ctx = {
     turn,
+    p,
+    info,
     spawnRaider: () => {
       const raid = spawnRaider();
       if (!raid) return null;
       queueScene('rebel', spawnRaider.last);
       return { text: raid, effect: spawnRaider.last.effect };
+    },
+    clearAllCamps: () => {
+      const camps = [...grid.cells.values()].filter((c) => isCamp(c.terrain));
+      camps.forEach((c) => clearCamp(c.x, c.z));
+      return camps.length;
+    },
+    prospect: () => {
+      const found = mysteries.revealNearest([...grid.cells.values()].map((c) => [c.x, c.z]));
+      if (!found) return '';
+      addTile(found.x, found.z, found.terrain, 0.25);
+      frontier.rebuild(grid);
+      return `The map led you to a ${TERRAINS[found.terrain].name}.`;
+    },
+    earthquake: () => {
+      const cells = shuffled(emptyEdgeCells()).slice(0, Math.round(SCALE.earthquakeCliffs));
+      cells.forEach(([x, z], i) => {
+        addTile(x, z, 'cliffs', 0.2 + i * 0.15);
+        dust.burst(x, z, 1.2);
+      });
+      shake.amount = Math.min(shake.amount + 0.8, 1.2);
+      placement.cell = null;
+      frontier.rebuild(grid);
+      return cells.length ? `${cells.length} cell${cells.length === 1 ? '' : 's'} turned into Cliffs.` : '';
+    },
+    showOfForce: () => {
+      // Ruins surface on an empty cell next to your land; a missile from their silo hits a building.
+      const [spot] = shuffled(emptyEdgeCells());
+      const [target] = pickStrikeTargets(1);
+      if (!spot || !target) return '';
+      addTile(spot[0], spot[1], 'ruins', 0.1);
+      dust.burst(spot[0], spot[1], 1.4);
+      frontier.rebuild(grid);
+      const run = runId;
+      later.push(async () => {
+        await wait(0.8);
+        if (run !== runId) return;
+        const lost = await playMissileStrike([{ ...target, from: { x: spot[0], z: spot[1] } }]);
+        if (run !== runId) return;
+        eventOpen = false;
+        reportStrike(lost);
+        updateHUD();
+        if (lost.length) toast(`The silo's missile destroyed your ${listLost(lost)}`, 'bad', 2600);
+      });
+      return 'Pre-war Ruins surfaced, and their missile launched.';
     },
   };
   const extra = [ev.apply?.(ctx), choice?.apply?.(ctx)].filter(Boolean).join(' ');
@@ -1509,10 +1595,14 @@ function applyYearEvent(key, ev, choiceIdx) {
   $('report').innerHTML = `${$('report').innerHTML}<br />${line}`;
   toast(`${ev.name}${choice ? `: ${choice.label}` : ''}${extra ? ` · ${extra}` : ''}`, ev.kind === 'fortune' ? 'good' : 'bad', 3200);
   frontier.rebuild(grid);
+  updateHUD();
+  return later;
 }
 
 function dealNewHand() {
-  hand.deal(HAND_SIZE, turn.pinned);
+  // Dust Storm: extra Wasteland dealt on top of the normal hand.
+  const waste = turn.event?.mods?.extraWaste ?? 0;
+  hand.deal(handSize() + waste, [...turn.pinned, ...Array(waste).fill('wasteland')]);
   turn.pinned = [];
   holdingPurchases = false;
   updateHUD();
@@ -1560,7 +1650,7 @@ function debugEvent() {
   if (shopOpen || payout.active || turn.over || eventOpen) return;
   const round = turn.round;
   turn.round = Math.max(2, round); // events are never drawn in year 1
-  startYearEvent(updateHUD).finally(() => (turn.round = round));
+  startYearEvent(updateHUD, { force: debugEvent.force ?? null }).finally(() => (turn.round = round));
 }
 
 /**
@@ -1615,6 +1705,7 @@ function renderShop(animate = false) {
   $('shopCards').innerHTML = shopStock.map(([k, price], i) => {
     const t = cardDef(k);
     const inHand = turn.pinned.filter((p) => p === k).length;
+    price = shopPrice(price);
     const can = turn.coins >= price && turn.pinned.length < HAND_SIZE;
     return `
       <div class="shop-item">
@@ -1624,14 +1715,14 @@ function renderShop(animate = false) {
           <div class="name">${t.name}</div>
           <div class="rule">${cardText(t)}</div>
         </div>
-        <div class="price">${price} barrels</div>
+        <div class="price">${price} barrel${price === 1 ? '' : 's'}${(turn.shopMult ?? 1) !== 1 ? ' <small>black market</small>' : ''}</div>
         <div class="tag">${BASIC_SHOP.has(k) ? 'Basic' : turn.unlocked.has(k) ? 'Unlocked' : 'Locked'}${ACTIONS[k] ? ' · one use' : ''}${inHand ? ` · ${inHand} in hand` : ''}</div>
       </div>`;
   }).join('');
 }
 
 function buy(k) {
-  const price = SHOP_ITEMS.find(([key]) => key === k)[1];
+  const price = shopPrice(SHOP_ITEMS.find(([key]) => key === k)[1]);
   if (turn.coins < price) return toast('Not enough excess oil', 'bad');
   if (turn.pinned.length >= HAND_SIZE) return toast('Your next hand is full', 'bad');
   turn.coins -= price;
@@ -1656,6 +1747,7 @@ $('btnShopReroll').addEventListener('click', () => {
 $('btnShopDone').addEventListener('click', () => {
   shopOpen = false;
   turn.coins = 0; // unspent excess goes to the Overlord
+  turn.shopMult = 1; // a black market discount only lasts one visit
   $('shop').classList.add('hidden');
   document.body.classList.remove('shopping');
   startNewYear(dealNewHand);
@@ -1931,7 +2023,7 @@ window.addEventListener('keydown', (e) => {
     if (k === 'enter') endTurn();
     return; // no placing / rotating / nuking mid-payout
   }
-  if (k >= '1' && k <= String(HAND_SIZE)) {
+  if (k >= '1' && k <= '9' && Number(k) <= hand.cards.length) {
     const i = Number(k) - 1;
     hand.select(hand.selected === i ? -1 : i);
   } else if (k === 'r') hand.rotate(e.shiftKey ? -1 : 1);
@@ -2031,6 +2123,7 @@ function resetIsland() {
     seenBandits: false,
     pinned: [],
     coins: 0,
+    shopMult: 1,
     ...freshTargetState(),
   });
   shopOpen = false;
@@ -2329,4 +2422,4 @@ factory.piecesReady.then((pieces) => {
 });
 
 // Handy for debugging in the console.
-window.tileIsland = { perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };
+window.tileIsland = { debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };

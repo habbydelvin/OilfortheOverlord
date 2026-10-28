@@ -635,6 +635,16 @@ export class MissileStrike {
    */
   #launchPath(m) {
     const c = this.cfg;
+    // Launched from the ground (a silo in Pre-war Ruins): a tall lob from the launch cell.
+    if (m.target.from) {
+      const start = new THREE.Vector3(m.target.from.x, 0.3, m.target.from.z);
+      const end = new THREE.Vector3(m.target.x, 0, m.target.z);
+      const len = start.distanceTo(end);
+      m.p0 = start;
+      m.p1 = start.clone().lerp(end, 0.5).addScaledVector(UP, Math.max(5, len * 1.4));
+      m.p2 = end;
+      return;
+    }
     const b = THREE.MathUtils.degToRad(c.bearing);
     const dir = new THREE.Vector3(Math.sin(b), 0, -Math.cos(b));
     const side = new THREE.Vector3(-dir.z, 0, dir.x);

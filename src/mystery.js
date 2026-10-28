@@ -132,6 +132,26 @@ export class Mysteries {
     return out;
   }
 
+  /** Removes the site nearest to any of `cells` (Manhattan) and returns { x, z, terrain }, or null. */
+  revealNearest(cells) {
+    let best = null;
+    let bestD = Infinity;
+    for (const [k, s] of this.sites) {
+      for (const [x, z] of cells) {
+        const d = Math.abs(x - s.x) + Math.abs(z - s.z);
+        if (d < bestD) {
+          bestD = d;
+          best = [k, s];
+        }
+      }
+    }
+    if (!best) return null;
+    const [k, s] = best;
+    this.group.remove(s.sprite);
+    this.sites.delete(k);
+    return { x: s.x, z: s.z, terrain: pickReveal() };
+  }
+
   update(time) {
     for (const s of this.sites.values()) {
       s.sprite.position.y = 0.6 + Math.sin(time * 2 + s.x * 0.9 + s.z * 0.6) * 0.08;

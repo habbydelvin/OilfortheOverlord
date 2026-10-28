@@ -46,6 +46,7 @@ export function computeEconomy(grid, state = {}) {
   let farmFood = 0;
   let foodEaten = 0;
   let craterFood = 0;
+  let droughtFood = 0;
   let crude = 0;
   let refineryLinks = 0;
   const counts = {};
@@ -80,11 +81,13 @@ export function computeEconomy(grid, state = {}) {
   }
   // Rebel camps and the year event take a share of the gross worker slots; Raider Hideouts a flat amount.
   const capGross = capBase + population;
+  // Taxed settlements: some of their people flee the work.
+  const taxSlots = (mods.settlementSlots ?? 0) * (counts0(grid, 'settlement'));
   const rebelManpower = camps.slots ? scaled(capGross, campShare(camps.slots, SCALE.campSlots)) : 0;
   const hideoutManpower = camps.banditSlots * SCALE.banditSlots;
   const raiderManpower = rebelManpower + hideoutManpower;
   const eventCap = scaled(capGross, mods.capPct);
-  const cap = Math.max(0, capGross - craterManpower - raiderManpower + eventCap + mods.capDelta);
+  const cap = Math.max(0, capGross - craterManpower - raiderManpower + eventCap + taxSlots + mods.capDelta);
 
   // Staff worker buildings in placement order; the newest past the cap go idle.
   const idleKeys = new Set();
@@ -119,11 +122,16 @@ export function computeEconomy(grid, state = {}) {
     }
 
     if (t === 'farm') {
+      // Drought: pumps and oases give nothing (what they would have given is kept for the event text).
       const pump = near.includes('pump');
       const oasis = near.includes('oasis');
-      if (pump) bonus.pumpFarms++;
-      if (oasis) bonus.oasisFarms++;
-      per.rawFood = 2 + (pump ? 2 : 0) + (oasis ? 3 : 0);
+      const water = (pump ? 2 : 0) + (oasis ? 3 : 0);
+      if (mods.drought) droughtFood += water * (near.includes('capital') ? 2 : 1);
+      else {
+        if (pump) bonus.pumpFarms++;
+        if (oasis) bonus.oasisFarms++;
+      }
+      per.rawFood = 2 + (mods.drought ? 0 : water);
       // A Capital next door triggers the farm twice: double output (doesn't stack with more Capitals).
       if (near.includes('capital')) {
         bonus.capitalFood += per.rawFood;
@@ -185,7 +193,9 @@ export function computeEconomy(grid, state = {}) {
   const foodWasted = rawStore - storeAfter;
 
   const refineryMult = 1 + 0.5 * refineryLinks;
-  const oilMade = Math.round(crude * refineryMult * fed);
+  // Taxed settlements pay oil straight into the season's yield.
+  const taxOil = (mods.settlementOil ?? 0) * (counts.settlement ?? 0);
+  const oilMade = Math.round(crude * refineryMult * fed) + taxOil;
   // Siphoners tap the pipelines: a share of this season's oil (never below 0).
   const banditOil = camps.oil * SCALE.banditOil;
   const oilStolen = Math.min(oilMade, banditOil);
@@ -226,6 +236,9 @@ export function computeEconomy(grid, state = {}) {
     eventFood: Math.round(eventFood),
     eventCrude: Math.round(eventCrude),
     eventUpkeep,
+    droughtFood,
+    taxOil,
+    taxSlots,
     oilMade,
     stockpileTheft,
     mods,
@@ -247,6 +260,12 @@ export function computeEconomy(grid, state = {}) {
     counts,
     bonus,
   };
+}
+
+function counts0(grid, terrain) {
+  let n = 0;
+  for (const c of grid.cells.values()) if (c.terrain === terrain) n++;
+  return n;
 }
 
 /** Adds `amount` (whole, may be negative) evenly over the camp tiles that drain `drain`. */

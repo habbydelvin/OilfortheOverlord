@@ -2,7 +2,9 @@
 
 ## Status
 
-A core set of 6 is implemented in `src/events.js`: **Early Collection, Tithe of Men, Famine, Bumper Harvest, Oil Boom, Refugees at the Gate**. The rest of this file is the backlog. (Overlord's Offer was removed: the yearly tribute target in `src/targets.js` replaces it.)
+Implemented in `src/events.js` (14): **Early Collection, Tithe of Men, Show of Force, Famine, Drought, Dust Storm, Earthquake, Bumper Harvest, Oil Boom, Refugees at the Gate, Mercenaries, Prospectors, Black Market Caravan, Tax the Settlements**. Everything else in this file is the backlog.
+
+Percentage effects scale with the year (strength = year-2 value + per-year step, up to a max); every value is a slider in Game Debug → Scaling (`src/scalingConfig.js`). Event text shows the percentage and what it means right now. Events with nothing to act on are skipped in the draw (`when`), e.g. Mercenaries with no camps. (Overlord's Offer was removed: the yearly tribute target in `src/targets.js` replaces it.)
 
 ## Tribute target (every year from year 2)
 
@@ -26,33 +28,33 @@ Every event uses systems the game already has: worker slots, the food store, rai
 
 | Event | Effect |
 | --- | --- |
-| **Early Collection** | Tribute is due after Autumn: 3 seasons instead of 4. |
+| **Early Collection** ✅ | Tribute is due after Autumn: 3 seasons instead of 4. |
 | **Overlord's Inspection** | The quota is 25% higher, but meeting it gives double shop coins. |
-| **Tithe of Men** | −3 worker slots for the whole year. The Overlord has drafted your workers. |
+| **Tithe of Men** ✅ | −20% worker slots (+5%/year, max 50%). The Overlord has drafted your workers. |
 | **Requisition** | At the start of each season, the Overlord takes 3 oil from your stockpile. |
-| **Show of Force** | A Toxic Crater lands on a random tile right away. |
+| **Show of Force** ✅ | Pre-war Ruins surface on an empty cell next to your land; a dormant missile in their silo launches from them and turns one of your buildings (never the Capital) into a Toxic Crater. |
 | **Martial Law** | Rerolls are disabled for the year. |
 
 ## Disasters
 
 | Event | Effect |
 | --- | --- |
-| **Famine** | Farms produce half food this year. |
-| **Drought** | Pumps and Oases give no bonus this year. |
+| **Famine** ✅ | Farms −40% food (+5%/year, max 75%). |
+| **Drought** ✅ | Pumps and Oases give no bonus this year. |
 | ~~**Great Raid**~~ | Removed: too punishing with no counterplay. |
-| **Dust Storm** | Every hand this year has one extra Wasteland. |
+| **Dust Storm** ✅ | Every hand this year has one extra Wasteland (on top of the normal hand). |
 | **Plague** | Lose 2 population, and settlements eat 1 extra food. |
 | **Pipeline Fire** | Each refinery link counts for half this year. |
-| **Earthquake** | 3 random empty cells next to your land turn into Cliffs. |
+| **Earthquake** ✅ | 3 random empty cells next to your land turn into Cliffs (slider). |
 
 ## Good fortune
 
 | Event | Effect |
 | --- | --- |
-| **Bumper Harvest** | Farms produce +50% food this year. |
-| **Oil Boom** | Stations give +1 oil each. |
+| **Bumper Harvest** ✅ | Farms +10% food (+5%/year, max 25%). |
+| **Oil Boom** ✅ | Stations +10% crude (+5%/year, max 25%). |
 | **Lenient Overlord** | The quota is 20% lower, but next year's jump is bigger. |
-| **Refugee Wave** | +3 worker slots for the year, and +2 food upkeep. |
+| **Refugee Wave** | +3 worker slots for the year, and +2 food upkeep. (Overlaps "Take them in" of Refugees at the Gate.) |
 | **Salvage Season** | Clearing ruins this year also gives +1 worker slot permanently. |
 | **Grace Period** | The tribute deadline moves to 5 seasons: you get an extra "Late Winter". |
 | **Free Hands** | The first 3 rerolls this year are free. |
@@ -61,12 +63,12 @@ Every event uses systems the game already has: worker slots, the food store, rai
 
 | Event | Option A | Option B |
 | --- | --- | --- |
-| **Refugees at the Gate** | Take them in: +3 worker slots, −3 food per season | Turn them away: a raider camp spawns |
+| **Refugees at the Gate** ✅ | Take them in: +20% worker slots, food upkeep 20% of food grown (+5%/year, max 50%) | Turn them away: +1 raider camp |
 | ~~**Overlord's Offer**~~ | Removed: replaced by the yearly tribute target. | |
-| **Mercenaries** | Pay 10 oil: all raider camps leave | Refuse them |
-| **Prospectors** | Reveal the "?" site closest to your land | +5 oil now |
-| **Black Market Caravan** | Shop prices halved this year | +1 extra card in every hand this year |
-| **Tax the Settlements** | +2 oil per settlement each season | Each settlement drains 1 worker slot this year |
+| **Mercenaries** ✅ | Hire them: every rebel and bandit camp is cleared; their fee is added to the tribute (+15%, +2%/year, max 30%). The stockpile is empty at the start of the year, so the fee is paid at tribute. Only drawn when there is a camp. | Refuse them: the camps stay |
+| **Prospectors** ✅ | Buy the map: reveal the "?" site closest to your land (disabled if none are left) | Take the oil: oil in the stockpile now, 10% of the tribute (+2%/year, max 25%) |
+| **Black Market Caravan** ✅ | Shop prices halved at this year's tribute (rounded, at least 1) | +1 card in every hand this year |
+| **Tax the Settlements** ✅ | Tax them: +2 oil per settlement each season, and −1 worker slot per settlement (people flee the work). Only drawn with a settlement. | Spare them: nothing changes |
 
 ## Escalation
 
@@ -83,10 +85,10 @@ These events keep coming back, harder each time.
 
 ## Implementation notes
 
-- **Data:** define events in a new `src/events.js`, alongside `TERRAINS` and `ACTIONS`: `{ key, name, kind: 'pressure' | 'disaster' | 'fortune' | 'choice', weight, text, apply(turn, grid), modifiers }`.
-- **Modifiers:** most events are just numbers the economy reads. Store them on `turn.event`, e.g. `{ farmMult: 0.5 }`, `{ capDelta: -3 }`, `{ seasonsInYear: 3 }`, and pass them into `computeEconomy` through `state`.
-- **One-off effects:** Show of Force, Earthquake and Plague run once in `apply` when the year starts. Show of Force reuses `nukeRandomTile()`.
-- **Season length:** Early Collection and Grace Period need the hard-coded `turn.season === 3` checks in `main.js` replaced by a `yearLength()` helper.
-- **Hand effects:** Dust Storm and Black Market Caravan hook into `dealNewHand()`. Martial Law and Free Hands change `rerollCost()`.
-- **Choice events** need a two-button modal, styled like the shop overlay.
-- **Draw point:** draw in `settleTurn` when `turn.season` wraps to 0, and show the card after `openShop()` closes, before `dealNewHand()`.
+- **Data:** `src/events.js`. Each event: `{ name, kind, weight, scale?, text(p, e, info), mods, lines, replies | choices, when?(info), apply?(ctx) }`. `mods` may be a function of this year's strength `p`.
+- **Live values:** `turn.event` keeps the key and choice; its `mods` and `summary` are getters, so the Scaling sliders apply straight away. The board counts in the text (camps, settlements, quota) are frozen when the event starts.
+- **Economy mods** (read in `computeEconomy`): `farmPct`, `stationPct`, `capPct`, `foodUpkeepPct`, `drought`, `settlementOil`, `settlementSlots`.
+- **Turn mods** (read in `main.js`): `yearLength`, `quotaMult` (applied once), `coinMult`, `shopMult` (copied to `turn.shopMult` at tribute), `extraWaste` and `handBonus` (`dealNewHand`).
+- **One-off effects:** `apply(ctx)` with helpers `spawnRaider`, `clearAllCamps`, `prospect`, `earthquake`, `showOfForce`. Async follow-ups (the Show of Force missile) are returned by `applyYearEvent` and awaited by `startYearEvent`.
+- **Ground-launched missiles:** a strike target may carry `from: { x, z }`; `missiles.js` then lobs it from that cell instead of from the Overlord's side of the world.
+- **Debug:** `tileIsland.debugEvent.force = 'drought'` then press V (or call `tileIsland.debugEvent()`) to play a given event.
