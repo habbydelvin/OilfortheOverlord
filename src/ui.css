@@ -856,11 +856,46 @@ body.paying #btnReset {
   left: 0;
   right: var(--panel-w);
   bottom: -18px;
-  display: flex;
-  justify-content: center;
-  align-items: flex-end;
-  gap: 14px;
+  height: 300px; /* one hand card; the cards are placed inside by hand.js */
   pointer-events: auto;
+}
+
+/* Hand cards: hand.js moves them every frame (fan, sway, tilt, springs), so no CSS transitions here. */
+#hand .card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transition: none;
+  animation: none;
+  will-change: transform;
+}
+#hand .card.leaving {
+  pointer-events: none;
+}
+
+/*
+ * Sheen over the metal frame; its position follows the card's tilt. A broad, warm, soft glint, masked by
+ * CardSpecMask.png (from tools/make-card-frame.py): only bright metal catches it, rust and grime stay dull,
+ * and grain breaks it up, so it reads as rough old metal rather than a polished streak.
+ */
+#hand .card .shine {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background: linear-gradient(
+      110deg,
+      transparent 22%,
+      rgba(255, 214, 160, 0.3) 38%,
+      rgba(255, 236, 205, 0.8) 50%,
+      rgba(255, 214, 160, 0.3) 62%,
+      transparent 78%
+    )
+    var(--shine, 50%) 0 / 260% 100% no-repeat;
+  -webkit-mask: url('/cards/CardSpecMask.png') 0 0 / 100% 100% no-repeat;
+  mask: url('/cards/CardSpecMask.png') 0 0 / 100% 100% no-repeat;
+  mix-blend-mode: screen;
+  opacity: var(--shine-a, 0.45);
 }
 
 /*
@@ -883,7 +918,7 @@ body.paying #btnReset {
   padding: calc(var(--w) * 0.44) calc(var(--w) * 0.13) calc(var(--w) * 0.27);
   background: url('/cards/CardBaseTall.png') 0 0 / 100% 100% no-repeat;
   isolation: isolate; /* the colour tint blends with the frame only, not the board behind it */
-  filter: drop-shadow(0 6px 8px rgba(0, 0, 0, 0.55));
+  filter: drop-shadow(var(--sx, 0px) var(--sy, 6px) 8px rgba(0, 0, 0, 0.55));
 }
 
 .card {
@@ -906,13 +941,13 @@ body.paying #btnReset {
   pointer-events: none;
 }
 
-.card:hover {
+/* Shop cards keep a simple CSS lift; hand cards are moved by hand.js. */
+#shopCards .card:hover {
   transform: translateY(-10px);
 }
 
 .card.selected {
-  transform: translateY(-34px) scale(1.05);
-  filter: drop-shadow(0 0 1.5px var(--gold)) drop-shadow(0 0 1.5px var(--gold)) drop-shadow(0 14px 14px rgba(0, 0, 0, 0.55));
+  filter: drop-shadow(0 0 1.5px var(--gold)) drop-shadow(0 0 1.5px var(--gold)) drop-shadow(var(--sx, 0px) calc(var(--sy, 6px) + 8px) 14px rgba(0, 0, 0, 0.55));
 }
 
 .card.deal {
@@ -1003,11 +1038,11 @@ body.paying #btnReset {
 }
 
 .card.junk {
-  filter: saturate(0.6) drop-shadow(0 6px 8px rgba(0, 0, 0, 0.55));
+  filter: saturate(0.6) drop-shadow(var(--sx, 0px) var(--sy, 6px) 8px rgba(0, 0, 0, 0.55));
 }
 
 .card.junk.selected {
-  filter: saturate(0.6) drop-shadow(0 0 1.5px var(--gold)) drop-shadow(0 0 1.5px var(--gold)) drop-shadow(0 14px 14px rgba(0, 0, 0, 0.55));
+  filter: saturate(0.6) drop-shadow(0 0 1.5px var(--gold)) drop-shadow(0 0 1.5px var(--gold)) drop-shadow(var(--sx, 0px) calc(var(--sy, 6px) + 8px) 14px rgba(0, 0, 0, 0.55));
 }
 
 /* Text over textured metal: a heavier shadow than on the old flat cards. Centred in what is left under the picture. */
@@ -1331,11 +1366,11 @@ body.shopping #inspect {
 }
 
 .card.action {
-  filter: drop-shadow(0 0 2px var(--top)) drop-shadow(0 6px 8px rgba(0, 0, 0, 0.55));
+  filter: drop-shadow(0 0 2px var(--top)) drop-shadow(var(--sx, 0px) var(--sy, 6px) 8px rgba(0, 0, 0, 0.55));
 }
 
 .card.action.selected {
-  filter: drop-shadow(0 0 1.5px var(--gold)) drop-shadow(0 0 1.5px var(--gold)) drop-shadow(0 14px 14px rgba(0, 0, 0, 0.55));
+  filter: drop-shadow(0 0 1.5px var(--gold)) drop-shadow(0 0 1.5px var(--gold)) drop-shadow(var(--sx, 0px) calc(var(--sy, 6px) + 8px) 14px rgba(0, 0, 0, 0.55));
 }
 
 /* "On trigger" heading above a card's effect lines. */

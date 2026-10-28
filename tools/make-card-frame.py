@@ -6,13 +6,18 @@ plain band of the centre panel (62-72% down the art: brass pipes on the sides), 
 other so there are no hard joins. Baking it into one image (instead of CSS border-image slices) avoids
 the hairline seams browsers draw where slices meet.
 
+It also writes public/cards/CardSpecMask.png: where the hand cards' moving sheen may catch light. It follows
+the frame's own brightness (bright metal shines, dark rust and grime do not), broken up by grain and blotches,
+so the highlight reads as rough, old metal rather than polished chrome.
+
 Usage:  python tools/make-card-frame.py [path/to/CardBase.png]
-Needs Pillow. Writes public/cards/CardBase.png (560 px wide) and public/cards/CardBaseTall.png.
+Needs Pillow and numpy. Writes public/cards/CardBase.png (560 px wide), CardBaseTall.png and CardSpecMask.png.
 """
 import os
 import sys
 
-from PIL import Image
+import numpy as np
+from PIL import Image, ImageFilter
 
 WIDTH = 560  # sharp at the largest card size (205 px shop card) on 2x screens
 RATIO = 1.82  # card height / width, must match .card in src/ui.css
@@ -75,3 +80,29 @@ tall.paste(strip, (0, top.height))
 tall.paste(bottom, (0, top.height + fill))
 tall.save(os.path.join(out_dir, 'CardBaseTall.png'), optimize=True)
 print(f'CardBaseTall.png {WIDTH}x{target}: {n} band copies of {band.height}px in {fill}px')
+
+# ---- sheen mask -----------------------------------------------------------------------------------------
+SPEC_WIDTH = 400  # enough grain detail at hand-card size on 2x screens
+rng = np.random.default_rng(7)  # fixed seed: the same mask every run
+spec_src = tall.resize((SPEC_WIDTH, round(tall.height * SPEC_WIDTH / WIDTH)), Image.LANCZOS)
+lum = np.asarray(spec_src.convert('L'), dtype=np.float32) / 255
+alpha = np.asarray(spec_src.getchannel('A'), dtype=np.float32) / 255
+lo, hi = np.percentile(lum[alpha > 0.5], [25, 92])
+metal = np.clip((lum - lo) / (hi - lo), 0, 1) ** 1.6  # only the brighter metal catches the light
+
+
+def noise(blur):
+    """Random field softened by `blur` px, rescaled to 0-1."""
+    img = Image.fromarray((rng.random(lum.shape) * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(blur))
+    a = np.asarray(img, dtype=np.float32)
+    return (a - a.min()) / max(1e-6, a.max() - a.min())
+
+
+blotch = np.clip((noise(10) - 0.3) * 1.8, 0, 1)  # patches of worn, duller metal
+grain = noise(0.7)  # fine scratchy grain
+spec = metal * (0.25 + 0.75 * blotch) * (0.45 + 0.55 * grain) * alpha
+out = np.zeros(lum.shape + (4,), dtype=np.uint8)
+out[..., :3] = 255
+out[..., 3] = np.clip(spec * 255, 0, 255).astype(np.uint8)
+Image.fromarray(out, 'RGBA').save(os.path.join(out_dir, 'CardSpecMask.png'), optimize=True)
+print(f'CardSpecMask.png {out.shape[1]}x{out.shape[0]}, mean coverage {spec.mean():.2f}')
