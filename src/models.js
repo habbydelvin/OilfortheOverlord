@@ -12,7 +12,7 @@ export const BLOCKOUTS = {
   settlement: 'Village02City01.fbx',
   farm: 'HydroFarm01.fbx',
   pump: 'WaterPump01.fbx',
-  station: 'OilStation01.fbx',
+  station: 'OilStationCity01.fbx',
   refinery: 'RefineryCity01.fbx',
   oasis: 'Oasis01.fbx',
   tarpit: 'TarPit01.fbx',
@@ -30,12 +30,13 @@ export const BLOCKOUTS = {
 const FINISHED = {
   capital: { yaw: 0, fit: 'Capital_HiveCity' },
   refinery: { yaw: 0, fit: 'Refinery_HiveCity' },
+  station: { yaw: 0, fit: 'OilStation_HiveCity' },
   settlement: { yaw: 0, fit: 'Village02_HiveCity' },
 };
 
 const MODEL_URL = '/models/blockouts/';
 // Bump when a model file is re-exported under the same name, so browsers drop the cached copy.
-const MODEL_VERSION = '20261028-0937';
+const MODEL_VERSION = '20261028-1120';
 const ATLAS_URL = '/models/Atlas.jpg?v=20261026-1640';
 // Footprints measure about 96 × 97 cm. One board cell is 1 unit across.
 const CELL = 0.97;
@@ -45,7 +46,9 @@ export function hasBlockout(terrain) {
 }
 
 // Default camera sits on +z. Negative yaw turns the Maya blockouts toward screen-left.
-function fitToCell(root, { yaw = -Math.PI / 2, fit = null } = {}) {
+// ground: the model's own ground height. Blender scenes stand on y = 0, and parts sunk below it
+// (an oil stain, a well shaft) must not lift the tile. Without it, the lowest point goes on the cell.
+function fitToCell(root, { yaw = -Math.PI / 2, fit = null, ground = null } = {}) {
   root.rotation.y = yaw;
   root.scale.set(1, 1, 1);
   root.position.set(0, 0, 0);
@@ -59,7 +62,8 @@ function fitToCell(root, { yaw = -Math.PI / 2, fit = null } = {}) {
   root.scale.setScalar(scale);
   // Base on the cell (y = 0), footprint centred. Measured after the yaw,
   // so the Maya pivot offset does not leave the building in the air.
-  root.position.set(-center.x * scale, -box.min.y * scale, -center.z * scale);
+  const base = ground ?? box.min.y;
+  root.position.set(-center.x * scale, -base * scale, -center.z * scale);
 }
 
 function applyAtlas(root, atlas) {
@@ -178,7 +182,7 @@ export async function loadBlockouts() {
       toStandard(raw);
       // Object3D.clone copies `animations`, so every tile copy can play them.
       raw.animations = raw.animations.map(movingTracksOnly).filter((clip) => clip.tracks.length);
-      fitToCell(raw, finished);
+      fitToCell(raw, { ground: 0, ...finished });
     } else {
       applyAtlas(raw, atlas);
       raw.animations = [];
