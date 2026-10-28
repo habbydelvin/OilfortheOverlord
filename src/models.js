@@ -14,11 +14,12 @@ export const BLOCKOUTS = {
   pump: 'WaterPump01.fbx',
   station: 'OilStationCity01.fbx',
   refinery: 'RefineryCity01.fbx',
-  oasis: 'Oasis01.fbx',
+  oasis: 'Oasis.fbx',
   tarpit: 'TarPit01.fbx',
   cliffs: 'Cliffs01.fbx',
   ruins: 'PreWarRuins01.fbx',
   crater: 'ToxicCrater01.fbx',
+  labourcamp: 'LaborCampCity01.fbx',
 };
 
 /**
@@ -32,12 +33,16 @@ const FINISHED = {
   refinery: { yaw: 0, fit: 'Refinery_HiveCity' },
   station: { yaw: 0, fit: 'OilStation_HiveCity' },
   farm: { yaw: 0, fit: 'HydroFarm_HiveCity' },
+  tarpit: { yaw: 0, fit: 'WasteTar_HiveCity' },
+  pump: { yaw: 0, fit: 'PumpStation_HiveCity' },
+  oasis: { yaw: 0, fit: 'WasteOasis_HiveCity' },
+  labourcamp: { yaw: 0, fit: 'LaborCamp_HiveCity' },
   settlement: { yaw: 0, fit: 'Village02_HiveCity' },
 };
 
 const MODEL_URL = '/models/blockouts/';
 // Bump when a model file is re-exported under the same name, so browsers drop the cached copy.
-const MODEL_VERSION = '20261028-1419';
+const MODEL_VERSION = '20261028-1553';
 const ATLAS_URL = '/models/Atlas.jpg?v=20261026-1640';
 // Footprints measure about 96 × 97 cm. One board cell is 1 unit across.
 const CELL = 0.97;

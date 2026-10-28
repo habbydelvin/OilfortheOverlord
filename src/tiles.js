@@ -475,7 +475,8 @@ export class TileFactory {
       return holder;
     }
     if (isCamp(terrain)) return buildRaiderCamp(this.soilGeo, this.soilMat, TERRAINS[terrain].tent);
-    if (terrain === 'labourcamp') return buildLabourCamp(this.soilGeo, this.soilMat);
+    // The finished model (LaborCampCity01.fbx); the code-built camp only if that file failed to load.
+    if (terrain === 'labourcamp' && !this.models?.has('labourcamp')) return buildLabourCamp(this.soilGeo, this.soilMat);
     const source = this.models?.get(terrain);
     if (!source) return this.#block(terrain);
     // The fitted model keeps its own offset. A holder takes the cell position
