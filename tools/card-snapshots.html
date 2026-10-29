@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Card snapshots · Oil for the Overlord</title>
+    <style>
+      body { margin: 0; padding: 20px; background: #2a2622; color: #e8e2d8; font: 13px system-ui, sans-serif; }
+      h1 { margin: 0 0 6px; font-size: 18px; color: #e8bf68; }
+      p { margin: 0 0 14px; opacity: 0.8; max-width: 760px; line-height: 1.5; }
+      button { padding: 8px 16px; border: 1px solid #e8bf68; border-radius: 4px; background: none; color: #e8bf68; font: inherit; cursor: pointer; }
+      button:disabled { opacity: 0.4; cursor: default; }
+      #status { margin-left: 12px; opacity: 0.8; }
+      #grid { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 16px; }
+      figure { margin: 0; text-align: center; }
+      /* Checkerboard behind each image, so the transparent background is visible. */
+      figure img { display: block; width: 296px; height: 200px; background: repeating-conic-gradient(#3a3530 0 25%, #2f2a26 0 50%) 0 0 / 16px 16px; border-radius: 4px; }
+      figcaption { margin-top: 4px; opacity: 0.8; }
+    </style>
+  </head>
+  <body>
+    <h1>Card snapshots</h1>
+    <p>
+      Renders every tile model from the front on a transparent background, for the picture slot on the cards
+      (public/cards/snapshots/&lt;key&gt;.webp). Same models, materials and lighting as the game. Re-run after
+      changing a model, then save the images into public/cards/snapshots with "Download all".
+    </p>
+    <button id="download" disabled>Download all</button><span id="status">Loading models…</span>
+    <div id="grid"></div>
+    <script type="module" src="/tools/card-snapshots.js"></script>
+  </body>
+</html>

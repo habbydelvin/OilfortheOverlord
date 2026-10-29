@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { recolourSalt } from './saltRecolour.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 /**
@@ -468,65 +469,19 @@ function averageLinear(texture) {
  * scaled by their own brightness so the crack pattern stays as darker sand. The small Waste<Name>_Salt part
  * is tinted to the same sand colour. Grounds with almost no salt are left alone (grey pebbles stay grey).
  */
-function matchSaltToSand(raw, name) {
+async function matchSaltToSand(raw, name) {
   const ground = raw.getObjectByName(`Waste${name}_Ground`);
   const groundMap = [ground?.material].flat()[0]?.map;
-  const img = groundMap?.image;
-  if (!img?.width) return;
-  const canvas = document.createElement('canvas');
-  canvas.width = img.width;
-  canvas.height = img.height;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(img, 0, 0);
-  const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const px = data.data;
-  const smooth = (a, b, v) => Math.min(1, Math.max(0, (v - a) / (b - a)));
-  // How salty a pixel is: pale and unsaturated. Sand reference: the clearly tan pixels.
-  const weight = new Float32Array(px.length / 4);
-  const sand = [0, 0, 0];
-  let sandN = 0;
-  let saltLum = 0;
-  let saltW = 0;
-  for (let i = 0, j = 0; i < px.length; i += 4, j++) {
-    const r = px[i] / 255;
-    const g = px[i + 1] / 255;
-    const b = px[i + 2] / 255;
-    const max = Math.max(r, g, b);
-    const sat = max > 0 ? (max - Math.min(r, g, b)) / max : 0;
-    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-    const w = (1 - smooth(0.1, 0.22, sat)) * smooth(0.25, 0.45, lum);
-    weight[j] = w;
-    if (w > 0.5) {
-      saltLum += lum;
-      saltW++;
-    } else if (sat > 0.25) {
-      sand[0] += r;
-      sand[1] += g;
-      sand[2] += b;
-      sandN++;
-    }
-  }
-  if (!sandN) return;
-  const ref = sand.map((v) => v / sandN);
-  const share = saltW / weight.length;
-  if (share > 0.02) {
-    const meanLum = saltLum / saltW;
-    for (let i = 0, j = 0; i < px.length; i += 4, j++) {
-      const w = weight[j];
-      if (w <= 0) continue;
-      const lum = (0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]) / 255;
-      const k = lum / meanLum;
-      for (let c = 0; c < 3; c++) px[i + c] = Math.round(px[i + c] * (1 - w) + Math.min(1, ref[c] * k) * 255 * w);
-    }
-    ctx.putImageData(data, 0, 0);
-    groundMap.image = canvas;
-    groundMap.needsUpdate = true;
-  }
+  if (!groundMap?.image?.width) return;
+  const { ref, share } = (await recolourInWorker(groundMap)) ?? recolourOnMainThread(groundMap);
+  if (!ref) return;
   // The separate salt part: tinted so its texture averages out at the same sand colour (linear RGB).
   const toLinear = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
   const sandLin = ref.map(toLinear);
-  raw.traverse((obj) => {
-    if (!obj.isMesh || obj.name !== `Waste${name}_Salt`) return;
+  const parts = [];
+  raw.traverse((obj) => obj.isMesh && obj.name === `Waste${name}_Salt` && parts.push(obj));
+  for (const obj of parts) {
+    for (const m of [obj.material].flat()) await decodeImage(m.map?.image);
     const recolour = (m) => {
       const salt = averageLinear(m.map);
       if (!salt) return m;
@@ -535,8 +490,98 @@ function matchSaltToSand(raw, name) {
       return tinted;
     };
     obj.material = Array.isArray(obj.material) ? obj.material.map(recolour) : recolour(obj.material);
-  });
+  }
   if (share > 0.02) console.info(`Wasteland ${name}: salt recoloured to sand (${Math.round(share * 100)}% of the ground).`);
+}
+
+/** The recolour on the main thread (a blocking ~0.5 s per ground): only when the worker can't be used. */
+function recolourOnMainThread(groundMap) {
+  const img = groundMap.image;
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const result = recolourSalt(data.data);
+  if (result.share > 0.02) {
+    ctx.putImageData(data, 0, 0);
+    groundMap.image = canvas;
+    if (img instanceof ImageBitmap) groundMap.flipY = false; // drawn as it was: already flipped
+    groundMap.needsUpdate = true;
+  }
+  return result;
+}
+
+// ---------- off-main-thread image work ----------
+let saltWorker = null; // null: not started yet; false: unavailable
+const saltJobs = new Map(); // job id -> resolve
+let saltJobId = 0;
+
+function startSaltWorker() {
+  try {
+    const worker = new Worker(new URL('./saltWorker.js', import.meta.url), { type: 'module' });
+    worker.onmessage = ({ data }) => {
+      saltJobs.get(data.id)?.(data);
+      saltJobs.delete(data.id);
+    };
+    worker.onerror = (e) => {
+      console.warn('[models] salt worker failed; recolouring on the main thread', e.message);
+      saltWorker = false;
+      for (const resolve of saltJobs.values()) resolve(null);
+      saltJobs.clear();
+    };
+    return worker;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A texture's image as an ImageBitmap, decoded (and resized) by the browser off the main thread from the image
+ * file kept by releaseImageBlobs. ImageBitmaps upload as they are, so it is flipped here as WebGL would and the
+ * texture's flipY is turned off (useBitmap). Null when the file isn't kept or the browser can't.
+ */
+async function textureBitmap(t, resize = {}) {
+  const blob = t.userData.sourceBlob;
+  if (!blob || typeof createImageBitmap !== 'function') return null;
+  try {
+    return await createImageBitmap(blob, {
+      imageOrientation: t.flipY ? 'flipY' : 'from-image',
+      premultiplyAlpha: 'none',
+      colorSpaceConversion: 'none',
+      ...resize,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function useBitmap(t, bitmap) {
+  t.image = bitmap;
+  t.flipY = false;
+  t.needsUpdate = true;
+}
+
+/** matchSaltToSand's pixel work in the worker. Resolves to { ref, share } (texture updated), or null to fall back. */
+async function recolourInWorker(groundMap) {
+  if (saltWorker === null) saltWorker = startSaltWorker();
+  if (!saltWorker) return null;
+  const shrunk = groundMap.image instanceof ImageBitmap; // already a flipped bitmap (see shrink)
+  const bitmap = shrunk ? groundMap.image : await textureBitmap(groundMap);
+  if (!bitmap || !saltWorker) return null;
+  const result = await new Promise((resolve) => {
+    const id = ++saltJobId;
+    saltJobs.set(id, resolve);
+    // A bitmap the texture still uses is copied; a fresh one is handed over.
+    saltWorker.postMessage({ id, bitmap }, shrunk ? [] : [bitmap]);
+  });
+  if (!result) return null;
+  if (result.share > 0.02) {
+    if (shrunk) groundMap.image.close();
+    useBitmap(groundMap, result.bitmap);
+  } else result.bitmap.close();
+  return { ref: result.ref, share: result.share };
 }
 
 // =====================================================================================================
@@ -609,17 +654,49 @@ function textureSlots(roots) {
  * FBXLoader hands each embedded image to the browser as a blob URL and never frees it, so every image file
  * stays in memory twice. With all the models that ran browsers out of blob space (ERR_BLOB_OUT_OF_MEMORY)
  * and textures went missing. Once an image has decoded, its blob is no longer needed.
+ * Before freeing it, the image file's bytes are hashed (crypto.subtle works off the main thread): textures
+ * embedded twice have the same file, so findTwin can match them without reading any pixels. Textures in
+ * `keep` and oversized ones keep their file (as a Blob) for the off-main-thread work in prepareFromFbx.
  */
-async function releaseImageBlobs(root) {
+async function releaseImageBlobs(root, keep = new Set()) {
   const textures = [...new Set(textureSlots([root]).map(([m, k]) => m[k]))];
   await Promise.all(textures.map((t) => imageReady(t)));
-  for (const t of textures) {
-    const src = t.image?.src;
-    if (typeof src === 'string' && src.startsWith('blob:')) URL.revokeObjectURL(src);
-  }
+  await Promise.all(
+    textures.map(async (t) => {
+      const src = t.image?.src;
+      if (typeof src !== 'string' || !src.startsWith('blob:')) return;
+      try {
+        const bytes = await (await fetch(src)).arrayBuffer();
+        const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+        t.userData.sourceHash = `${bytes.byteLength}:${Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('')}`;
+        // Kept until the bundle is prepared: shrink and the salt recolour decode it off the main thread.
+        if (keep.has(t) || Math.max(t.image.width, t.image.height) > MAX_TEXTURE) t.userData.sourceBlob = new Blob([bytes]);
+      } catch {
+        // no hash: findTwin falls back to comparing pixels
+      }
+      URL.revokeObjectURL(src);
+    }),
+  );
 }
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Background loading runs during play (the intro dialogue, the first turns), on the same thread as the game.
+ * Long steps are cut into slices: breathe() hands control back to the browser once a slice has run ~8ms, so
+ * frames keep coming. Cheap when there is time left in the slice.
+ */
+let sliceStart = performance.now();
+export async function breathe(budget = 8) {
+  if (performance.now() - sliceStart < budget) return;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  sliceStart = performance.now();
+}
+
+/** Decode an image off the main thread, so drawing or uploading it later doesn't decode it in one blocking go. */
+export async function decodeImage(img) {
+  if (img && typeof img.decode === 'function') await img.decode().catch(() => {});
+}
 
 async function loadFbx(loader, spec, track) {
   const raw = await loader.loadAsync(`${MODEL_URL}${spec.file}?v=${MODEL_VERSION}`, track ? (e) => trackBytes(spec.file, e) : undefined);
@@ -634,7 +711,8 @@ async function loadFbx(loader, spec, track) {
     })
     .filter((clip) => clip.tracks.length);
   storeFootprint(raw, spec.base, Boolean(spec.piece));
-  await releaseImageBlobs(raw);
+  const groundMap = spec.piece ? [raw.getObjectByName(`Waste${spec.piece}_Ground`)?.material].flat()[0]?.map : null;
+  await releaseImageBlobs(raw, new Set(groundMap ? [groundMap] : []));
   raw.name = spec.key;
   return raw;
 }
@@ -657,8 +735,9 @@ async function prepareFromFbx(keys, { track = false, parallel = false } = {}) {
   const { textures, merged, shrunk } = await prepareTextures([...roots.values()]);
   console.info(`[models] ${keys.length} models from FBX: ${textures} textures, ${merged} shared, ${shrunk} shrunk to ${MAX_TEXTURE}`);
   for (const s of specs) {
+    await breathe();
     const root = roots.get(s.key);
-    if (s.piece) matchSaltToSand(root, s.piece); // before the merge: it finds the ground by name
+    if (s.piece) await matchSaltToSand(root, s.piece); // before the merge: it finds the ground by name
     // ?nomerge in the URL keeps the original meshes (for A/B checks).
     if (!new URLSearchParams(location.search).has('nomerge')) {
       try {
@@ -669,6 +748,7 @@ async function prepareFromFbx(keys, { track = false, parallel = false } = {}) {
       }
     }
   }
+  for (const [m, k] of textureSlots([...roots.values()])) delete m[k].userData.sourceBlob;
   return roots;
 }
 
@@ -713,6 +793,19 @@ function samePixels(a, b) {
   return true;
 }
 
+/** Sampling settings that must match too for two textures to be interchangeable. */
+const samplerKey = (t) => [t.colorSpace, t.flipY, t.wrapS, t.wrapT, t.repeat.x, t.repeat.y, t.offset.x, t.offset.y].join('|');
+const hashRegistry = new Map(); // file hash + sampler -> texture
+
+/** The texture already registered from the same image file (same bytes, same sampling), or null (and this one is registered). */
+function findFileTwin(t) {
+  const key = `${t.userData.sourceHash}|${samplerKey(t)}`;
+  const twin = hashRegistry.get(key);
+  if (twin && twin !== t) return twin;
+  hashRegistry.set(key, t);
+  return null;
+}
+
 /** The texture already registered with exactly these pixels, or null (and this one is registered). */
 function findTwin(t) {
   const key = shortlistKey(t);
@@ -723,17 +816,28 @@ function findTwin(t) {
   return null;
 }
 
-/** Larger than MAX_TEXTURE: redraw at MAX_TEXTURE (the GPU would only ever sample a smaller mip level). */
-function shrink(t) {
+/**
+ * Larger than MAX_TEXTURE: redraw at MAX_TEXTURE (the GPU would only ever sample a smaller mip level).
+ * Decoded and resampled by the browser off the main thread from the kept image file; a canvas otherwise.
+ */
+async function shrink(t) {
   const img = t.image;
   const k = MAX_TEXTURE / Math.max(img.width, img.height);
   if (k >= 1) return false;
+  const width = Math.round(img.width * k);
+  const height = Math.round(img.height * k);
+  const bitmap = await textureBitmap(t, { resizeWidth: width, resizeHeight: height, resizeQuality: 'high' });
+  if (bitmap) {
+    useBitmap(t, bitmap);
+    return true;
+  }
+  await decodeImage(img);
   const canvas = document.createElement('canvas');
-  canvas.width = Math.round(img.width * k);
-  canvas.height = Math.round(img.height * k);
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, width, height);
   t.image = canvas;
   t.needsUpdate = true;
   return true;
@@ -747,11 +851,23 @@ async function prepareTextures(roots) {
   let shrunk = 0;
   const use = new Map();
   for (const t of unique) {
+    await breathe();
     if (!t.image?.width) {
       use.set(t, t);
       continue;
     }
-    if (shrink(t)) shrunk++;
+    if (t.userData.sourceHash) {
+      // Same file embedded twice: share it, and only the one kept is shrunk.
+      const twin = findFileTwin(t);
+      if (twin) {
+        use.set(t, twin);
+        continue;
+      }
+      if (await shrink(t)) shrunk++;
+      use.set(t, t);
+      continue;
+    }
+    if (await shrink(t)) shrunk++;
     use.set(t, findTwin(t) ?? t);
   }
   for (const [m, k] of slots) {
@@ -893,7 +1009,10 @@ function finishModel(root, spec) {
 export async function loadBundle(bundle, { track = false, parallel = false } = {}) {
   const keys = BUNDLES[bundle];
   const roots = await prepareFromFbx(keys, { track, parallel });
-  for (const key of keys) finishModel(roots.get(key), modelSpec(key));
+  for (const key of keys) {
+    await breathe();
+    finishModel(roots.get(key), modelSpec(key));
+  }
   return roots;
 }
 

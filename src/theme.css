@@ -1,0 +1,536 @@
+/*
+ * Dieselpunk theme: weathered steel panels (the card frame's rusted metal, public/ui/metal.webp, made by
+ * tools/make-ui-metal.py) in gunmetal rims with brass trim, brass and gunmetal button plates, a recessed black
+ * score plaque, segmented gauges and gold serif headings.
+ *
+ * Loaded after ui.css and only restyles: colours, backgrounds, frames, fonts. Nothing here moves or resizes
+ * anything; frames are inset shadows or ::before/::after layers, engraved lines are outlines (no layout effect).
+ * The cards keep their own look: they are excluded below (font reset) and nothing here targets them.
+ * Remove the import in main.js to go back to the previous look.
+ */
+:root {
+  --dp-serif: 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  --dp-cream: #f0e4c8;
+  --dp-muted: #b8ad9c;
+  --dp-head: #e8b45a; /* gold headings */
+  --dp-brass: #b8914a;
+  --dp-brass-hi: #ecc97f;
+  --dp-engrave: rgba(12, 10, 9, 0.55); /* engraved line inside plates */
+  /* Weathered steel, darkened a little for the lettering, with darker edges. */
+  --dp-tex: url('/ui/metal.webp') 0 0 / 256px 256px repeat;
+  --dp-metal:
+    radial-gradient(ellipse 130% 100% at 50% 40%, transparent 50%, rgba(0, 0, 0, 0.5)),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.42)),
+    var(--dp-tex);
+  /* Darker steel for tooltips and small plates */
+  --dp-metal-dark:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.62)),
+    var(--dp-tex);
+  /* Gunmetal */
+  --dp-steel: linear-gradient(180deg, #9aa1a5 0%, #646b70 16%, #43494d 52%, #2a2f32 82%, #111314 100%);
+  --dp-steel-v: linear-gradient(90deg, #111314 0%, #42494d 30%, #7d858a 50%, #42494d 70%, #111314 100%);
+  /* Gunmetal rim with a brass hairline inside */
+  --dp-rim:
+    inset 0 0 0 1px #0a0a0a,
+    inset 0 0 0 4px #5e6468,
+    inset 0 0 0 5px #151617,
+    inset 0 0 0 6px rgba(201, 160, 90, 0.6),
+    inset 0 0 18px rgba(0, 0, 0, 0.45);
+  --dp-drop: 0 8px 22px rgba(0, 0, 0, 0.6);
+  /* A brass rivet head */
+  /* A domed steel bolt, like the card frame's rivets */
+  --dp-bolt: radial-gradient(circle at 40% 35%, #dfe2e2 0, #9a9fa1 1.4px, #575c5f 3px, #25282a 4.3px, rgba(0, 0, 0, 0.55) 5.2px, transparent 5.8px);
+  --dp-rivet: radial-gradient(circle at 40% 38%, #f8e2aa 0, #c39a4f 1.2px, #6a4c22 2.4px, rgba(0, 0, 0, 0.55) 3px, transparent 3.4px);
+  --dp-rivets:
+    var(--dp-rivet) left 8px top 8px / 8px 8px no-repeat,
+    var(--dp-rivet) right 8px top 8px / 8px 8px no-repeat,
+    var(--dp-rivet) left 8px bottom 8px / 8px 8px no-repeat,
+    var(--dp-rivet) right 8px bottom 8px / 8px 8px no-repeat;
+}
+
+/* ---------- type ---------- */
+#top,
+#panel,
+#leftcol,
+#toast,
+#resTip,
+#shop,
+#cardPick,
+#gameover,
+.ruin-btn,
+.dlg-banner,
+.dlg-title,
+.dlg-hints,
+.dlg-tag,
+.btn,
+.shop-reroll,
+#eventLabel .event-tip,
+#targetLabel .event-tip {
+  font-family: var(--dp-serif);
+}
+/* Fixed line heights matching the previous font's, so the serif lettering doesn't shift anything. */
+#top .count {
+  line-height: 26px;
+}
+.btn {
+  line-height: 32px;
+}
+.btn span {
+  line-height: 19px;
+  height: 19px; /* the oil icon on Reroll sits lower in this font */
+}
+#libraryLink,
+#btnHelp {
+  letter-spacing: 0.02em; /* same width as before */
+}
+/* The cards keep their own lettering. */
+.card,
+#inspect .card-big {
+  font-family: 'Avenir Next', 'Nunito', 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ---------- steel windows: Controls, game over ---------- */
+#help,
+#gameover .box {
+  border-color: transparent;
+  border-radius: 0;
+  background: var(--dp-rivets), var(--dp-metal);
+  box-shadow: var(--dp-rim), var(--dp-drop);
+  outline: 1px solid var(--dp-engrave);
+  outline-offset: -11px;
+  color: var(--dp-cream);
+}
+#help {
+  font-family: var(--dp-serif);
+}
+#help .help-head {
+  color: var(--dp-head);
+}
+#help b {
+  color: #fff3d8;
+}
+#gameover .box {
+  box-shadow: var(--dp-rim), 0 20px 50px rgba(0, 0, 0, 0.7);
+}
+#gameover h1 {
+  color: var(--dp-head);
+}
+#gameover .stats {
+  color: var(--dp-muted);
+}
+
+/* ---------- tooltips and messages: dark steel, thin gunmetal rim ---------- */
+#resTip,
+#toast,
+#eventLabel .event-tip,
+#targetLabel .event-tip {
+  border-radius: 0;
+  background: var(--dp-metal-dark);
+  box-shadow: inset 0 0 0 1px #0a0a0a, inset 0 0 0 2px #6a7074, inset 0 0 0 3px #151617, var(--dp-drop);
+  color: var(--dp-cream);
+}
+#eventLabel .event-tip,
+#targetLabel .event-tip {
+  border-left-color: transparent;
+  border-right-color: transparent;
+  border-bottom-color: transparent;
+}
+#resTip .title,
+.event-tip-name {
+  color: var(--dp-head);
+}
+#resTip .row.total {
+  border-top-color: rgba(226, 190, 128, 0.4);
+}
+#resTip .row.total b {
+  color: #fff3d8;
+}
+#resTip .row.note {
+  color: var(--dp-muted);
+}
+#toast.bad {
+  color: #ffb7a3;
+}
+#toast.good {
+  color: var(--dp-brass-hi);
+}
+
+/* ---------- top: a weathered steel plate in a gunmetal frame ---------- */
+#top {
+  isolation: isolate; /* keeps the plate behind the text but above the board */
+  color: var(--dp-cream);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+}
+/* The plate (::after) and its glint (::before, see the sheen section). */
+#top::before,
+#top::after {
+  content: '';
+  position: absolute;
+  inset: -5px -19px -5px;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: 11px;
+}
+/* Weathered steel with an engraved line and a bolt in each corner, in a rounded gunmetal rim (outer shadows). */
+#top::after {
+  z-index: -2;
+  background:
+    var(--dp-bolt) left 5px top 5px / 12px 12px no-repeat,
+    var(--dp-bolt) right 5px top 5px / 12px 12px no-repeat,
+    var(--dp-bolt) left 5px bottom 5px / 12px 12px no-repeat,
+    var(--dp-bolt) right 5px bottom 5px / 12px 12px no-repeat,
+    var(--dp-metal);
+  box-shadow:
+    inset 0 0 0 1px #0a0a0a,
+    inset 0 0 0 2px rgba(201, 160, 90, 0.55),
+    inset 0 2px 10px rgba(0, 0, 0, 0.6),
+    0 0 0 1px #0a0a0a,
+    0 0 0 3px #50575b,
+    0 -1px 0 4px #a3aaae,
+    0 0 0 6px #3c4246,
+    0 1px 0 7px #0c0d0e,
+    0 9px 16px 4px rgba(0, 0, 0, 0.55);
+  outline: 1px solid var(--dp-engrave);
+  outline-offset: -6px;
+}
+#top .level {
+  letter-spacing: 0.08em;
+  color: var(--dp-cream);
+  opacity: 1;
+}
+/* Tribute gauge: recessed in steel, segmented, brass fill. */
+#top .bar {
+  position: relative; /* anchor for the segment marks; no offsets, so nothing moves */
+  border-radius: 0;
+  background: #0b0b0b;
+  box-shadow:
+    inset 0 2px 5px rgba(0, 0, 0, 0.9),
+    0 0 0 1px #0a0a0a,
+    0 0 0 3px #5e6468,
+    0 0 0 4px #0a0a0a;
+}
+#top .bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 2px), rgba(10, 8, 7, 0.8) calc(10% - 2px) 10%);
+}
+#top .fill {
+  border-radius: 0;
+  background: linear-gradient(180deg, #f0d495 0%, #c99d4e 50%, #8a6528 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 240, 200, 0.5);
+}
+#top .fill.met {
+  background: linear-gradient(180deg, #ffdc90 0%, #e6a23e 50%, #a8661a 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 240, 200, 0.5), 0 0 12px rgba(255, 190, 80, 0.55);
+}
+/* Score: on a recessed black plaque with a brass rivet at each end. */
+#top .count {
+  color: var(--dp-brass-hi);
+  letter-spacing: 0.04em;
+  background:
+    var(--dp-rivet) calc(50% - 98px) 50% / 8px 8px no-repeat,
+    var(--dp-rivet) calc(50% + 98px) 50% / 8px 8px no-repeat,
+    linear-gradient(180deg, #090909, #191919) center / 220px 100% no-repeat;
+}
+/* Strike markers: brass-rimmed sockets. */
+#top .strikes i {
+  border-color: var(--dp-brass);
+  background: radial-gradient(circle at 50% 35%, #2a2b2c, #0b0b0b 75%);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.8), inset 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+#top .strikes i.on {
+  border-color: #ffb08a;
+  background: radial-gradient(circle at 45% 35%, #ff7a5e, #a8281a);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.8), 0 0 8px rgba(255, 90, 60, 0.7);
+}
+
+/* ---------- right panel: weathered steel with a gunmetal rail and a brass strip on its edge ---------- */
+#panel {
+  color: var(--dp-cream);
+  background:
+    var(--dp-steel-v) left / 8px 100% no-repeat,
+    linear-gradient(var(--dp-brass), var(--dp-brass)) left 8px top 0 / 2px 100% no-repeat,
+    linear-gradient(90deg, rgba(0, 0, 0, 0.5), transparent) left 10px top 0 / 30px 100% no-repeat,
+    linear-gradient(180deg, rgba(0, 0, 0, 0.25), rgba(0, 0, 0, 0.45)),
+    var(--dp-tex);
+}
+#panel .stat {
+  color: var(--dp-brass-hi);
+}
+#panel .big {
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+}
+#panel .label {
+  color: var(--dp-muted);
+}
+/* Section heading: gold, underline fading out. */
+#panel .section {
+  border-image: linear-gradient(90deg, var(--dp-head), rgba(232, 180, 90, 0.4) 55%, transparent) 1;
+  color: var(--dp-head);
+  font-weight: 700;
+}
+/* Resource rows: dark recessed slots in the steel. */
+#panel .res {
+  border-radius: 0;
+  background: linear-gradient(180deg, rgba(8, 8, 8, 0.7), rgba(16, 16, 16, 0.55));
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+#panel .res[data-tip]:hover {
+  background: linear-gradient(180deg, rgba(24, 24, 24, 0.75), rgba(12, 12, 12, 0.7));
+  box-shadow: inset 0 0 0 1px rgba(201, 160, 90, 0.6), 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+#panel .res .pop-bar {
+  border-radius: 0;
+  background: #0a0a0a;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.9), 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+#panel .res .pop-fill {
+  border-radius: 0;
+}
+#panel .res .pop-text,
+#panel .res .d,
+#panel .res .v small {
+  color: var(--dp-muted);
+}
+#report {
+  color: var(--dp-muted);
+}
+#report b {
+  color: var(--dp-cream);
+}
+#inspect .note {
+  border-radius: 0;
+  background: rgba(8, 8, 8, 0.6);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.8), inset 0 0 0 1px rgba(201, 160, 90, 0.35);
+  font-family: var(--dp-serif);
+}
+
+/* ---------- buttons: a plate in a bevelled steel rim, rounded corners, brass corner rivets ---------- */
+.btn {
+  position: relative; /* anchor for the plate; no offsets, so nothing moves */
+  isolation: isolate;
+  border-radius: 12px;
+  background: var(--dp-steel);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.45);
+  color: var(--dp-cream);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+}
+.btn.gold,
+.btn.blue,
+.btn.red {
+  background: var(--dp-steel);
+}
+.btn::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: 8px;
+  background:
+    var(--dp-rivet) left 7px top 7px / 8px 8px no-repeat,
+    var(--dp-rivet) right 7px top 7px / 8px 8px no-repeat,
+    var(--dp-rivet) left 7px bottom 7px / 8px 8px no-repeat,
+    var(--dp-rivet) right 7px bottom 7px / 8px 8px no-repeat,
+    radial-gradient(ellipse 70% 60% at 50% 0%, rgba(255, 255, 255, 0.12), transparent 70%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.3)), var(--dp-tex);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.8), inset 0 1px 0 1px rgba(255, 255, 255, 0.12);
+}
+/* Primary: polished brass. */
+.btn.gold {
+  color: #241808;
+  text-shadow: 0 1px 0 rgba(255, 236, 190, 0.4);
+}
+.btn.gold::before {
+  background:
+    var(--dp-rivet) left 7px top 7px / 8px 8px no-repeat,
+    var(--dp-rivet) right 7px top 7px / 8px 8px no-repeat,
+    var(--dp-rivet) left 7px bottom 7px / 8px 8px no-repeat,
+    var(--dp-rivet) right 7px bottom 7px / 8px 8px no-repeat,
+    radial-gradient(ellipse 70% 60% at 50% 0%, rgba(255, 240, 200, 0.35), transparent 70%),
+    linear-gradient(180deg, #e2bf74 0%, #c09550 50%, #8a652b 100%);
+  box-shadow: inset 0 0 0 1px rgba(40, 28, 10, 0.8), inset 0 1px 0 1px rgba(255, 240, 200, 0.35);
+}
+
+/* ---------- top left: links ---------- */
+#libraryLink,
+#btnHelp {
+  color: var(--dp-head);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+/* "Clear" buttons over Pre-war Ruins: brass tags. */
+.ruin-btn {
+  border-color: #2e2410;
+  background: linear-gradient(180deg, #e2bf74, #a47e3d);
+  color: #241808;
+}
+
+/* Resource icons over tiles when zoomed out: dark steel studs in a gunmetal ring. */
+.map-icon {
+  border-color: #6a7074;
+  background: radial-gradient(circle at 50% 35%, rgba(62, 62, 60, 0.94), rgba(18, 18, 18, 0.94));
+}
+
+/* ---------- shop and card pick: a weathered steel band between gunmetal bars ---------- */
+#shop .title,
+#cardPick .title {
+  color: var(--dp-head);
+  font-weight: 700;
+}
+#shop .coins,
+#cardPick .coins {
+  color: var(--dp-cream);
+}
+#shop p,
+#cardPick p,
+#shop .tag,
+#cardPick .tag {
+  color: var(--dp-muted);
+}
+#shop .shop-band,
+#cardPick .shop-band {
+  border-top-color: #0a0a0a;
+  border-bottom-color: #0a0a0a;
+  background:
+    var(--dp-steel) top / 100% 10px no-repeat,
+    var(--dp-steel) bottom / 100% 10px no-repeat,
+    linear-gradient(var(--dp-brass), var(--dp-brass)) left 0 top 10px / 100% 1px no-repeat,
+    linear-gradient(var(--dp-brass), var(--dp-brass)) left 0 bottom 10px / 100% 1px no-repeat,
+    radial-gradient(ellipse 130% 100% at 50% 50%, transparent 50%, rgba(0, 0, 0, 0.45)),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.42)),
+    var(--dp-tex);
+}
+#shop .price {
+  color: var(--dp-brass-hi);
+}
+.shop-reroll {
+  border-color: #6a7074;
+  border-radius: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.3)), var(--dp-tex);
+  color: var(--dp-cream);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.8), inset 0 1px 0 1px rgba(255, 255, 255, 0.12), 0 3px 0 rgba(0, 0, 0, 0.45);
+}
+.shop-reroll:hover {
+  background: radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, 0.16), transparent 70%), linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.3)), var(--dp-tex);
+}
+
+/* ---------- dialogue ---------- */
+/* Banner: weathered steel over a gunmetal bar. */
+.dlg-banner {
+  background:
+    var(--dp-steel) left 0 bottom 0 / 100% 5px no-repeat,
+    linear-gradient(var(--dp-brass), var(--dp-brass)) left 0 bottom 5px / 100% 1px no-repeat,
+    var(--dp-metal);
+}
+.dlg-title {
+  color: var(--dp-cream);
+  text-shadow: 0 2px 3px rgba(0, 0, 0, 0.75);
+}
+.dlg-effect {
+  color: var(--dp-muted);
+}
+/* Name plate: a brass badge. */
+.dlg-name {
+  background: linear-gradient(180deg, #e2bf74 0%, #c09550 50%, #8a652b 100%);
+  color: #241808;
+  text-shadow: 0 1px 0 rgba(255, 236, 190, 0.4);
+}
+.dlg-text {
+  color: var(--dp-cream);
+}
+.dlg-next {
+  color: var(--dp-brass-hi);
+}
+.dlg-choice {
+  border-bottom-color: var(--dp-brass);
+  color: var(--dp-cream);
+}
+.dlg-choice.on {
+  color: #241808;
+}
+/* Selected reply: brass instead of white. */
+.dlg-choice.on::before {
+  background: linear-gradient(180deg, #ecd08e 0%, #c9a25a 50%, #9e7a3c 100%);
+}
+.dlg-tag {
+  color: var(--dp-brass-hi);
+}
+.dlg-choice.on .dlg-tag {
+  color: #7a1e12;
+}
+.dlg-hints {
+  color: var(--dp-muted);
+}
+.dlg-hints b {
+  border-color: #6a7074;
+  border-radius: 0;
+  background: #0b0b0b;
+  color: var(--dp-cream);
+}
+
+/* ---------- bottom left: music + debug missile, steel in a gunmetal ring ---------- */
+#music,
+#btnMissileTest {
+  background: var(--dp-metal-dark);
+  box-shadow: inset 0 0 0 1px #0a0a0a, inset 0 0 0 3px #6a7074, inset 0 0 0 4px #151617, 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+/* ---------- sheen: the cards' warm glint, caught only by bright bare metal ---------- */
+/*
+ * A soft band masked by public/ui/metal-spec.webp (made with the metal tile, aligned with it), so rust and grime
+ * stay dull and grain breaks it up. Its position follows the mouse (--dp-shine, set by themeShine.js).
+ */
+#panel,
+#help,
+#gameover .box,
+#shop .shop-band,
+#cardPick .shop-band {
+  isolation: isolate; /* keeps the glint above the plate, under the content */
+}
+#help,
+#gameover .box,
+#shop .shop-band,
+#cardPick .shop-band {
+  position: relative; /* anchor for the glint; no offsets, so nothing moves */
+}
+#top::before,
+#panel::before,
+#help::before,
+#gameover .box::before,
+#shop .shop-band::before,
+#cardPick .shop-band::before,
+.btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(
+      110deg,
+      transparent 22%,
+      rgba(255, 214, 160, 0.3) 38%,
+      rgba(255, 236, 205, 0.8) 50%,
+      rgba(255, 214, 160, 0.3) 62%,
+      transparent 78%
+    )
+    var(--dp-shine, 50%) 0 / 260% 100% no-repeat;
+  mask: url('/ui/metal-spec.webp') 0 0 / 256px 256px repeat luminance;
+  mix-blend-mode: screen;
+  opacity: 0.45;
+}
+#top::before {
+  inset: -5px -19px -5px;
+  border-radius: 11px;
+}
+/* Buttons: over the plate (inset 4px), brighter under the pointer, as the hand cards. */
+.btn::after {
+  inset: 4px;
+  border-radius: 8px;
+}
+.btn:hover::after {
+  opacity: 0.9;
+}

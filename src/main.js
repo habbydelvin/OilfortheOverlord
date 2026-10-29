@@ -1,4 +1,6 @@
 import './ui.css';
+import './theme.css';
+import './themeShine.js';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { initMusic } from './music.js';
@@ -6,7 +8,7 @@ import { CameraRig } from './controls.js';
 import { Grid, DIRS, key as plotKey } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
 import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
-import { hasBlockout, loadProgress } from './models.js';
+import { hasBlockout, loadProgress, breathe, decodeImage } from './models.js';
 import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
 import { Hand } from './hand.js';
@@ -2109,7 +2111,6 @@ $('btnNext').addEventListener('click', (e) => {
   e.currentTarget.blur(); // so Space doesn't re-click it
   endTurn();
 });
-$('btnReset').addEventListener('click', resetIsland);
 
 // Controls popup: toggled by its button, closed by ✕, Esc or a click elsewhere.
 const helpOpen = () => !$('help').classList.contains('hidden');
@@ -2427,15 +2428,41 @@ const loadTimer = setInterval(() => {
   if (total) $('loadingFill').style.width = `${Math.round((loaded / total) * 95)}%`;
 }, 100);
 
-/** Send every model texture to the GPU now, so the first landing doesn't stutter while ~60 MB uploads. */
-function warmUpModels(models = factory.models) {
+/** Every texture the models use, once each. */
+function modelTextures(models) {
+  const set = new Set();
   for (const model of models?.values() ?? []) {
     model.traverse((obj) => {
       if (!obj.isMesh) return;
-      for (const m of [obj.material].flat()) {
-        for (const tex of [m.map, m.normalMap, m.emissiveMap]) if (tex) renderer.initTexture(tex);
-      }
+      for (const m of [obj.material].flat()) for (const tex of [m.map, m.normalMap, m.emissiveMap]) if (tex) set.add(tex);
     });
+  }
+  return set;
+}
+
+/** Send every model texture to the GPU now, so the first landing doesn't stutter while ~60 MB uploads. */
+function warmUpModels(models = factory.models) {
+  for (const tex of modelTextures(models)) renderer.initTexture(tex);
+}
+
+/**
+ * The same for models that arrive during play, without freezing it: each image is decoded off the main thread
+ * first, the uploads are spread over frames, then the shaders compile in the background (compileAsync), so the
+ * first tile of each kind lands without a hitch.
+ */
+async function warmUpModelsGradually(models) {
+  for (const tex of modelTextures(models)) {
+    await decodeImage(tex.image);
+    renderer.initTexture(tex);
+    await breathe();
+  }
+  for (const model of models.values()) {
+    try {
+      await renderer.compileAsync(model, camera, scene);
+    } catch {
+      // compiles on first draw instead
+    }
+    await breathe();
   }
 }
 
@@ -2454,16 +2481,16 @@ factory.ready.then(() => {
 });
 
 // The Wasteland piece models (about 330 MB) load after the buildings, while the intro plays.
-factory.piecesReady.then((pieces) => {
+factory.piecesReady.then(async (pieces) => {
   if (!pieces) return;
-  warmUpModels(pieces);
+  await warmUpModelsGradually(pieces);
   adoptWastePieces();
 });
 
 // The remaining buildings and tiles load last; any already placed swap their stand-ins for the real models.
-factory.extrasReady.then((extras) => {
+factory.extrasReady.then(async (extras) => {
   if (!extras) return;
-  warmUpModels(extras);
+  await warmUpModelsGradually(extras);
   adoptBlockouts();
 });
 

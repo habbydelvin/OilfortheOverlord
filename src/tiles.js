@@ -417,6 +417,19 @@ export const SHOP_ITEMS = [
 /** Basic tiles sold in the shop. They are never locked and never offered as a free tile pick. */
 export const BASIC_SHOP = new Set(['station', 'farm', 'settlement']);
 
+/**
+ * Card pictures: front renders of each tile model (public/cards/snapshots, made by tools/card-snapshots.html).
+ * Card key -> image; the four Wasteland colours share one. Bump SNAPSHOT_VERSION after re-rendering.
+ */
+const SNAPSHOT_VERSION = '20261029-1035';
+const SNAPSHOTS = {
+  capital: 'capital', settlement: 'settlement', farm: 'farm', pump: 'pump', station: 'station', refinery: 'refinery',
+  oasis: 'oasis', tarpit: 'tarpit', labourcamp: 'labourcamp', cliffs: 'cliffs', ruins: 'ruins', crater: 'crater',
+  raider: 'raider', bandit_raider: 'bandit_raider', bandit_siphon: 'bandit_siphon', bandit_scav: 'bandit_scav', bandit_smuggle: 'bandit_smuggle',
+  wasteland1: 'wasteland', wasteland2: 'wasteland', wasteland3: 'wasteland', wasteland4: 'wasteland',
+};
+for (const [key, file] of Object.entries(SNAPSHOTS)) if (TERRAINS[key]) TERRAINS[key].snapshot = `/cards/snapshots/${file}.webp?v=${SNAPSHOT_VERSION}`;
+
 export const TERRAIN_KEYS = Object.keys(TERRAINS);
 
 export const isBuilding = (terrain) => TERRAINS[terrain]?.category === 'building';

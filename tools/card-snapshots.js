@@ -1,0 +1,202 @@
+/**
+ * Card snapshots: a close-up of each tile model from the front, slightly raised, on a transparent background,
+ * at the exact shape of the card's picture slot (src/ui.css .card .snap: 0.74 × 0.5 of the card width).
+ * Same models (the game's loaders), lighting, tone mapping and colour output as the game (src/scene.js).
+ * Animated parts (smoke, fire, traffic) are frozen a moment into their loop so they look natural.
+ *
+ * Open /tools/card-snapshots.html on the dev server, wait for the renders, then "Download all" and put the
+ * files in public/cards/snapshots/. The cards pick them up through SNAPSHOTS in src/tiles.js.
+ */
+import * as THREE from 'three';
+import { clone as cloneModel } from 'three/addons/utils/SkeletonUtils.js';
+import { loadBlockouts, loadBundle } from '/src/models.js';
+
+const WIDTH = 740; // 1.48 : 1, the picture slot; sharp on the largest cards at 2× pixel density
+const HEIGHT = 500;
+const ELEVATION = 12; // degrees above the horizon: a low front view that still shows a little of the top
+const FOV = 24; // narrow, so buildings do not look distorted
+const MARGIN = 0; // empty border around the framed area (share of the frame)
+const CLOSE_UP = 0.55; // close-up: share of the building's size kept in frame (1 = the whole building)
+const POSE_TIME = 1.5; // seconds into the animation loop
+const MIN_FRAME = 0.55; // the framed area is at least this share of the tile wide, so flat tiles keep their context
+/** Per-card camera overrides: elevation (degrees), closeUp (share of the building kept), focus (aim height, 0-1). */
+const VIEWS = {
+  wasteland: { elevation: 90 },
+  // The Capital is a tall, thin spire: aim lower, at the tiered city and its lit windows.
+  capital: { focus: 0.3, closeUp: 0.5 },
+  // The crater's glowing pool sits below its rim: look down into it a little more.
+  crater: { elevation: 28 },
+};
+
+/** Card key -> model key. The four Wasteland cards share the single-cell Wasteland piece. */
+const SNAPSHOT_MODELS = {
+  capital: 'capital',
+  settlement: 'settlement',
+  farm: 'farm',
+  pump: 'pump',
+  station: 'station',
+  refinery: 'refinery',
+  oasis: 'oasis',
+  tarpit: 'tarpit',
+  labourcamp: 'labourcamp',
+  cliffs: 'cliffs',
+  ruins: 'ruins',
+  crater: 'crater',
+  raider: 'raider',
+  bandit_raider: 'bandit_raider',
+  bandit_siphon: 'bandit_siphon',
+  bandit_scav: 'bandit_scav',
+  bandit_smuggle: 'bandit_smuggle',
+  wasteland: 'waste-mono',
+};
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(WIDTH, HEIGHT);
+renderer.setClearColor(0x000000, 0); // transparent background
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+const scene = new THREE.Scene();
+scene.add(new THREE.HemisphereLight(0xdfe8e4, 0x2a2622, 1.3));
+const sun = new THREE.DirectionalLight(0xfff0d6, 2.2);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.bias = -0.0005;
+sun.shadow.normalBias = 0.02;
+Object.assign(sun.shadow.camera, { left: -2, right: 2, top: 2, bottom: -2, near: 0.5, far: 60 });
+scene.add(sun, sun.target);
+const SUN_OFFSET = new THREE.Vector3(7, 16, 5); // the game's sun direction
+const camera = new THREE.PerspectiveCamera(FOV, WIDTH / HEIGHT, 0.01, 100);
+
+/**
+ * What to frame: the model's standing, still parts (buildings, tents, rocks, trees), not the flat ground plate
+ * they stand on, so small buildings fill the picture instead of a big empty plate. Animated smoke, fire and
+ * traffic are left out too (they would throw the framing off). Never narrower than MIN_FRAME of the tile.
+ */
+function contentBounds(root) {
+  const animated = new Set();
+  for (const clip of root.animations ?? []) for (const t of clip.tracks) animated.add(THREE.PropertyBinding.parseTrackName(t.name).nodeName);
+  root.updateMatrixWorld(true);
+  const all = new THREE.Box3();
+  const standing = new THREE.Box3();
+  const b = new THREE.Box3();
+  root.traverse((o) => {
+    if (!o.isMesh || !o.visible || o.isSkinnedMesh) return;
+    for (let p = o; p && p !== root; p = p.parent) if (animated.has(p.name)) return;
+    b.setFromObject(o);
+    all.union(b);
+    const flat = b.max.y - b.min.y < 0.03 && b.max.y < 0.05; // ground plates, roads, water, decals
+    if (!flat) standing.union(b);
+  });
+  const box = standing.isEmpty() ? all : standing;
+  box.min.y = Math.min(box.min.y, 0); // keep the ground line in the picture
+  const c = box.getCenter(new THREE.Vector3());
+  for (const k of ['x', 'z']) {
+    if (box.max[k] - box.min[k] < MIN_FRAME) {
+      box.min[k] = c[k] - MIN_FRAME / 2;
+      box.max[k] = c[k] + MIN_FRAME / 2;
+    }
+  }
+  return box;
+}
+
+/**
+ * Hides anything hanging below the tile (a crater's pit, a tar pool) when seen from this low angle: an invisible
+ * wall just in front of the tile, below ground level, that writes depth but no colour. In the game the camera is
+ * high enough that the underside never shows. Looking down into a pit is unaffected (those sight lines enter the
+ * pit from above the ground, behind the wall).
+ */
+const skirt = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 2), new THREE.MeshBasicMaterial({ colorWrite: false }));
+skirt.position.set(0, -0.998, 0.505); // top edge a hair above the ground line, so nothing peeks under the tile
+skirt.renderOrder = -10;
+scene.add(skirt);
+
+/** Camera distance (bisection) at which every corner of the box sits inside the frame, minus the margin. */
+function frame(box, elevation = ELEVATION) {
+  const center = box.getCenter(new THREE.Vector3());
+  const e = THREE.MathUtils.degToRad(elevation);
+  const dir = new THREE.Vector3(0, Math.sin(e), Math.cos(e));
+  // Looking straight down, "up" on screen is the far side of the tile (as in the game: its front at the bottom).
+  camera.up.set(0, 1, 0);
+  if (elevation > 80) camera.up.set(0, 0, -1);
+  const corners = [];
+  for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) corners.push(new THREE.Vector3(x, y, z));
+  const fits = (d) => {
+    camera.position.copy(center).addScaledVector(dir, d);
+    camera.lookAt(center);
+    camera.updateMatrixWorld(true);
+    return corners.every((c) => {
+      const v = c.clone().project(camera);
+      return Math.abs(v.x) <= 1 - MARGIN * 2 && Math.abs(v.y) <= 1 - MARGIN * 2 && v.z < 1;
+    });
+  };
+  let lo = 0.2;
+  let hi = 40;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (fits(mid)) hi = mid;
+    else lo = mid;
+  }
+  fits(hi);
+  return center;
+}
+
+function snapshot(source, view = {}) {
+  const model = cloneModel(source);
+  // Freeze the animation a moment into its loop.
+  if (model.animations.length) {
+    const mixer = new THREE.AnimationMixer(model);
+    for (const clip of model.animations) mixer.clipAction(clip).play();
+    mixer.update(POSE_TIME);
+  }
+  scene.add(model);
+  // Close-up: frame only the middle of the building, so it overflows the picture and its detail fills the slot.
+  const box = contentBounds(model);
+  const mid = box.getCenter(new THREE.Vector3());
+  if (view.focus !== undefined) mid.y = box.min.y + (box.max.y - box.min.y) * view.focus; // aim lower or higher
+  const half = box.getSize(new THREE.Vector3()).multiplyScalar((view.closeUp ?? CLOSE_UP) / 2);
+  box.set(mid.clone().sub(half), mid.clone().add(half));
+  const center = frame(box, view.elevation);
+  sun.position.copy(center).add(SUN_OFFSET);
+  sun.target.position.copy(center);
+  sun.target.updateMatrixWorld();
+  renderer.render(scene, camera);
+  const url = renderer.domElement.toDataURL('image/webp', 0.92); // keeps the alpha channel
+  scene.remove(model);
+  return url;
+}
+
+const status = document.getElementById('status');
+const grid = document.getElementById('grid');
+const button = document.getElementById('download');
+const results = {};
+
+const [buildings, pieces] = await Promise.all([loadBlockouts(), loadBundle('waste')]);
+status.textContent = 'Rendering…';
+for (const [key, modelKey] of Object.entries(SNAPSHOT_MODELS)) {
+  const source = buildings.get(modelKey) ?? pieces.get(modelKey);
+  if (!source) {
+    console.warn(`No model for ${key} (${modelKey})`);
+    continue;
+  }
+  results[key] = snapshot(source, VIEWS[key]);
+  const fig = document.createElement('figure');
+  fig.innerHTML = `<img src="${results[key]}" alt="${key}"><figcaption>${key}.webp</figcaption>`;
+  grid.appendChild(fig);
+  await new Promise((r) => setTimeout(r, 0)); // let the page show progress
+}
+status.textContent = `${Object.keys(results).length} snapshots rendered (${WIDTH} × ${HEIGHT}).`;
+button.disabled = false;
+button.addEventListener('click', () => {
+  for (const [key, url] of Object.entries(results)) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${key}.webp`;
+    a.click();
+  }
+});
+window.__snapshots = results; // for scripted runs
