@@ -2,7 +2,7 @@
  * Moves the glint on the metal panels (src/theme.css, "sheen") with the mouse, like the hand cards' sheen
  * follows their tilt. Sets --dp-shine only on the few elements that show it, at most once per frame.
  */
-const HOSTS = '#top, #panel, #help, #gameover .box, .shop-band, .btn';
+const HOSTS = '#panel, #help, #gameover .box, .shop-band, .btn';
 let hosts = null;
 let x = 0.5;
 let queued = false;
