@@ -1,10 +1,12 @@
+@import './fonts.css';
+
 :root {
   --bg: #0c0e10;
   --ink: #ece6d6;
   --muted: #9aa5a6;
   --gold: #e8bf68;
   --line: rgba(255, 255, 255, 0.08);
-  font-family: 'Avenir Next', 'Nunito', 'Segoe UI', system-ui, sans-serif;
+  font-family: 'Avenir Next', 'Nunito', 'Segoe UI', 'OTO Han Sans', system-ui, sans-serif;
 }
 
 * {

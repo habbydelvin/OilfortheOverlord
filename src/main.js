@@ -33,6 +33,9 @@ import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig,
 import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
 import { MissileStrike, MISSILE_PARAMS, MISSILE_DEFAULTS, loadMissileConfig, saveMissileConfig, clearMissileConfig } from './missiles.js';
 import { Tutorial, TUTORIAL_QUOTA, TUTORIAL_STRIKES, TUTORIAL_SITE, TUTORIAL_KEY, tutorialDone, markTutorialDone } from './tutorial.js';
+import { L, both, isZh, toggleLang, onLangChange, applyStatic, textOf, retranslate } from './i18n.js';
+
+applyStatic(); // the page's own text in the saved language
 
 const HAND_SIZE = 5;
 const SEED_TERRAIN = 'capital';
@@ -277,12 +280,12 @@ const shopPrice = (price) => Math.max(1, Math.round(price * (turn.shopMult ?? 1)
 function campEffect(kind) {
   const e = economyNow();
   const d = TERRAINS[kind].stats.drain;
-  const all = (e.camps[d] ?? 0) > 1 ? ' (all camps)' : '';
-  if (d === 'slots') return `-${P(SCALE.campSlots)} worker slots, -${e.rebelManpower} now${all}`;
-  if (d === 'banditSlots') return `-${SCALE.banditSlots} worker slots`;
-  if (d === 'oil') return `-${SCALE.banditOil} oil each season`;
-  if (d === 'food') return `-${SCALE.banditFood} food each season`;
-  return `steals ${SCALE.banditStockpile} barrels from the stockpile each season`;
+  const all = (e.camps[d] ?? 0) > 1 ? L(' (all camps)', '（所有营地合计）') : '';
+  if (d === 'slots') return L(`-${P(SCALE.campSlots)} worker slots, -${e.rebelManpower} now${all}`, `人力 -${P(SCALE.campSlots)}，当前 -${e.rebelManpower} 人力${all}`);
+  if (d === 'banditSlots') return L(`-${SCALE.banditSlots} worker slots`, `-${SCALE.banditSlots} 人力`);
+  if (d === 'oil') return L(`-${SCALE.banditOil} oil each season`, `每季 -${SCALE.banditOil} 石油`);
+  if (d === 'food') return L(`-${SCALE.banditFood} food each season`, `每季 -${SCALE.banditFood} 食物`);
+  return L(`steals ${SCALE.banditStockpile} barrels from the stockpile each season`, `每季从石油库存偷走 ${SCALE.banditStockpile} 桶`);
 }
 
 /** Keeps the food store within what the Capitals can hold (after rewards, Spark, lost Capitals…). */
@@ -430,14 +433,14 @@ function nukeRandomTile(quiet = false) {
     (c) => c.terrain !== 'capital' && c.terrain !== 'crater' && grid.allowed(c.x, c.z),
   );
   if (!targets.length) {
-    if (!quiet) toast('Nothing for the Overlord to nuke');
+    if (!quiet) toast(L('Nothing for the Overlord to nuke', '没有可供霸主轰炸的目标'));
     return null;
   }
   const { x, z } = targets[Math.floor(Math.random() * targets.length)];
   const lost = TERRAINS[grid.get(x, z).terrain].name;
   addTile(x, z, 'crater');
   grid.get(x, z).onRuins = false; // the ruins are gone too
-  if (!quiet) toast('The Overlord is displeased: a Toxic Crater forms', 'bad');
+  if (!quiet) toast(L('The Overlord is displeased: a Toxic Crater forms', '霸主很不满意：一处毒坑出现了'), 'bad');
   placement.cell = null; // force ghost revalidation
   updateHUD();
   return lost;
@@ -487,9 +490,15 @@ function craterAt(x, z) {
 
 /** "Refinery and two Hydro-farms". */
 function listLost(names) {
+  names = names.map(retranslate); // tile names as they were when destroyed: in the current language
   const WORDS = ['', 'a', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
   const counts = new Map();
   for (const n of names) counts.set(n, (counts.get(n) ?? 0) + 1);
+  if (isZh()) {
+    const ZH = ['', '一', '两', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二'];
+    const zh = [...counts].map(([n, k]) => (k === 1 ? n : `${ZH[k] ?? k}处${n}`));
+    return zh.length < 2 ? zh[0] ?? '' : `${zh.slice(0, -1).join('、')}和${zh.at(-1)}`;
+  }
   const parts = [...counts].map(([n, k]) => (k === 1 ? n : `${WORDS[k] ?? k} ${n.endsWith('y') ? `${n.slice(0, -1)}ies` : `${n}s`}`));
   return parts.length < 2 ? parts[0] ?? '' : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
 }
@@ -564,7 +573,7 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
  * A missile launches from the ground at `spot` and hits `target` (Show of Force's ruins, and an
  * Unexploded Missile). Resolves with the names of the tiles lost, or null if the run was reset meanwhile.
  */
-async function groundStrike(spot, target, lostText = (l) => `The silo's missile destroyed your ${l}`) {
+async function groundStrike(spot, target, lostText = (l) => L(`The silo's missile destroyed your ${l}`, `发射井的导弹摧毁了你的${l}`)) {
   const run = runId;
   eventOpen = true; // locked from the moment it is called, through the lead-in
   hand.select(-1);
@@ -575,7 +584,7 @@ async function groundStrike(spot, target, lostText = (l) => `The silo's missile 
   eventOpen = false;
   reportStrike(lost);
   updateHUD();
-  if (lost.length) toast(lostText(listLost(lost)), 'bad', 2600);
+  if (lost.length) toast(() => lostText(listLost(lost)), 'bad', 2600);
   return lost;
 }
 
@@ -598,13 +607,13 @@ function unexplodedMissile(site, target = nearestBuilding(site.x, site.z)) {
   dust.burst(site.x, site.z, 1.4);
   shake.amount = Math.min(shake.amount + 0.6, 1.2);
   if (!target) {
-    toast('Uncovered an Unexploded Missile... it fizzled into the sand', 'good', 2400);
+    toast(L('Uncovered an Unexploded Missile... it fizzled into the sand', '发现一枚未爆导弹……它在沙地里哑火了'), 'good', 2400);
     return;
   }
   eventOpen = true;
   hand.select(-1);
-  toast('Uncovered an Unexploded Missile!', 'bad', 2400);
-  groundStrike({ x: site.x, z: site.z }, target, (l) => `The unexploded missile destroyed your ${l}`).then((lost) => {
+  toast(L('Uncovered an Unexploded Missile!', '发现一枚未爆导弹！'), 'bad', 2400);
+  groundStrike({ x: site.x, z: site.z }, target, (l) => L(`The unexploded missile destroyed your ${l}`, `未爆导弹摧毁了你的${l}`)).then((lost) => {
     if (lost && tutorial.active) tutorial.notify('missile');
   });
 }
@@ -620,7 +629,10 @@ function landReveals(found, delay) {
 /** Report line once the missiles have landed. */
 function reportStrike(lost) {
   if (!lost.length) return;
-  $('report').innerHTML += `<br /><span class="bad">Missile strike: your ${listLost(lost)} ${lost.length === 1 ? 'is now a Toxic Crater' : 'are now Toxic Craters'}.</span>`;
+  $('report').innerHTML += L(
+    `<br /><span class="bad">Missile strike: your ${listLost(lost)} ${lost.length === 1 ? 'is now a Toxic Crater' : 'are now Toxic Craters'}.</span>`,
+    `<br /><span class="bad">导弹打击：你的${listLost(lost)}已化为毒坑。</span>`,
+  );
 }
 
 /** Debug (M): play a strike right now (Game Debug → Missiles · preview). */
@@ -644,20 +656,20 @@ function previewMissileStrike() {
     if (run !== runId) return;
     eventOpen = false;
     updateHUD();
-    if (lost.length) toast(`The Overlord's missiles destroyed your ${listLost(lost)}`, 'bad', 2600);
+    if (lost.length) toast(() => L(`The Overlord's missiles destroyed your ${listLost(lost)}`, `霸主的导弹摧毁了你的${listLost(lost)}`), 'bad', 2600);
   });
   return `Missile strike: ${targets.length} missile${targets.length === 1 ? '' : 's'}`;
 }
 
 /**
- * Debug button (bottom left, above the music): a strike on random spots anywhere on the island, built on or
+ * Debug (console: tileIsland.debugRandomStrike()): a strike on random spots anywhere on the island, built on or
  * empty (the Capital only if Game Debug → Missiles → "Include the Capital" is on). Uses the preview's missile
  * count and its "Leave craters" setting.
  */
 function debugRandomStrike() {
   if (tutorialBlocks()) return;
-  if (turn.over) return toast('Game over: restart first');
-  if (striking || shopOpen || eventOpen || payout.active) return toast('Finish the current screen first');
+  if (turn.over) return toast(L('Game over: restart first', '游戏已结束：请先重新开始'));
+  if (striking || shopOpen || eventOpen || payout.active) return toast(L('Finish the current screen first', '请先完成当前界面'));
   const cells = [...grid.cells.values()];
   const xs = cells.map((c) => c.x);
   const zs = cells.map((c) => c.z);
@@ -679,14 +691,24 @@ function debugRandomStrike() {
     if (run !== runId) return;
     eventOpen = false;
     updateHUD();
-    if (lost.length) toast(`The Overlord's missiles destroyed your ${listLost(lost)}`, 'bad', 2600);
+    if (lost.length) toast(() => L(`The Overlord's missiles destroyed your ${listLost(lost)}`, `霸主的导弹摧毁了你的${listLost(lost)}`), 'bad', 2600);
   });
 }
-$('btnMissileTest').innerHTML =
-  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4c-4.5.2-8.6 2.6-11 6.5L7 14l3 3 3.5-2c3.9-2.4 6.3-6.5 6.5-11z" fill="currentColor"/><circle cx="15" cy="9" r="1.6" fill="#0a0c0e"/><path d="M7 14l-3 1 2-4 3-1M10 17l-1 3 4-2 1-3" fill="currentColor"/><path d="M6.5 17.5L4 20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
-$('btnMissileTest').addEventListener('click', () => {
-  $('btnMissileTest').blur(); // so Enter (end turn) does not fire it again
-  debugRandomStrike();
+// ---------- language (bottom left, above the music) ----------
+// The button shows the language it switches to. Switching redraws what's on screen in the new language.
+const showLangButton = () => ($('btnLang').textContent = isZh() ? 'EN' : '中文');
+showLangButton();
+$('btnLang').addEventListener('click', () => {
+  $('btnLang').blur(); // so Enter (end turn) does not fire it again
+  toggleLang();
+});
+onLangChange(() => {
+  showLangButton();
+  updateHUD();
+  hand.render();
+  for (const btn of ruinBtns.values()) labelRuinBtn(btn);
+  inspected = null; // the hovered tile's card is redrawn next frame
+  if ($('toast').classList.contains('show')) $('toast').textContent = textOf(toastMsg);
 });
 
 // ---------- Pre-war Ruins ----------
@@ -710,11 +732,20 @@ function clearRuins(x, z) {
   placement.cell = null;
   frontier.rebuild(grid);
   updateHUD();
-  toast(drawn ? `Ruins cleared: salvaged ${drawn} new piece${drawn === 1 ? '' : 's'}` : 'Ruins cleared (hand already full)', 'good');
+  toast(
+    drawn
+      ? L(`Ruins cleared: salvaged ${drawn} new piece${drawn === 1 ? '' : 's'}`, `遗迹已清理：回收了 ${drawn} 个新板块`)
+      : L('Ruins cleared (hand already full)', '遗迹已清理（手牌已满）'),
+    'good',
+  );
 }
 
 const ruinBtns = new Map(); // cell key -> button
 const ruinV = new THREE.Vector3();
+function labelRuinBtn(btn) {
+  btn.textContent = L('Clear ruins', '清理遗迹');
+  btn.title = L('Clear these ruins: refill your hand to 5 with random pieces', '清理这些遗迹：用随机板块把手牌补到 5 张');
+}
 function updateRuinButtons() {
   const layer = $('ruinBtns');
   const live = new Set();
@@ -726,8 +757,7 @@ function updateRuinButtons() {
     if (!btn) {
       btn = document.createElement('button');
       btn.className = 'ruin-btn';
-      btn.textContent = 'Clear ruins';
-      btn.title = 'Clear these ruins: refill your hand to 5 with random pieces';
+      labelRuinBtn(btn);
       btn.addEventListener('pointerdown', (e) => e.stopPropagation());
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -819,9 +849,11 @@ function applyShake(dt) {
 
 // ---------- HUD ----------
 let toastTimer = 0;
+let toastMsg = ''; // a string or a function returning one: redrawn if the language changes while it shows
 function toast(msg, kind = '', ms = 1600, sound = true) {
   const el = $('toast');
-  el.textContent = msg;
+  toastMsg = msg;
+  el.textContent = textOf(msg);
   el.className = `show ${kind}`;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => (el.className = kind), ms);
@@ -896,19 +928,21 @@ function updateHUD() {
   const n = grid.size;
   const quota = turn.quota;
   const left = yearLength() - 1 - turn.season;
-  $('seasonLabel').textContent =
-    `${turn.round === 0 ? 'Year 0 (tutorial)' : `Round ${turn.round}`} · ${SEASONS[turn.season]} · tribute ${left ? `in ${left} season${left === 1 ? '' : 's'}` : `due this ${SEASONS[turn.season]}`}`;
+  $('seasonLabel').textContent = L(
+    `${turn.round === 0 ? 'Year 0 (tutorial)' : `Round ${turn.round}`} · ${SEASONS[turn.season]} · tribute ${left ? `in ${left} season${left === 1 ? '' : 's'}` : `due this ${SEASONS[turn.season]}`}`,
+    `${turn.round === 0 ? '第 0 年（教程）' : `第 ${turn.round} 年`} · ${SEASONS[turn.season]} · ${left ? `${left} 季后缴纳贡品` : '本季缴纳贡品'}`,
+  );
   const ev = turn.event;
   $('eventLabel').classList.toggle('hidden', !ev);
   if (ev) {
     // Hover card: what the event does and how long it lasts.
     $('eventLabel').innerHTML =
-      `Year event: <b>${ev.name}</b>` +
+      `${L('Year event: ', '年度事件：')}<b>${ev.name}</b>` +
       `<div class="event-tip">` +
       `<div class="event-tip-kind">${KIND_LABEL[ev.kind]}</div>` +
       `<div class="event-tip-name">${ev.name}</div>` +
       `<div class="event-tip-text">${iconize(ev.summary)}</div>` +
-      `<div class="event-tip-foot">Lasts until this year's tribute (after ${SEASONS[yearLength() - 1]}).</div>` +
+      `<div class="event-tip-foot">${L(`Lasts until this year's tribute (after ${SEASONS[yearLength() - 1]}).`, `持续到今年缴纳贡品（${SEASONS[yearLength() - 1]}季之后）。`)}</div>` +
       `</div>`;
     $('eventLabel').className = `event-label ${ev.kind}`;
     $('eventLabel').removeAttribute('title');
@@ -919,12 +953,18 @@ function updateHUD() {
     const t = TIERS[tg.tier];
     const r = tg.reward ? REWARDS[tg.reward] : null;
     $('targetLabel').innerHTML =
-      `Target: <b>${t.label}</b>` +
+      `${L('Target: ', '目标：')}<b>${t.label}</b>` +
       `<div class="event-tip">` +
-      `<div class="event-tip-kind">Tribute target</div>` +
-      `<div class="event-tip-name">${t.label} · ${Math.round(t.mult * 100)}% of ${turn.quotaBase}</div>` +
-      `<div class="event-tip-text">Tribute this year: ${turn.quota} oil.<br />${r ? `Reward if met: ${iconize(r.text)}` : 'No reward.'}</div>` +
-      `<div class="event-tip-foot">${turn.lowStreak >= LOW_STREAK_LIMIT ? 'Next year the Overlord forces a High target.' : turn.lowStreak ? `Low targets in a row: ${turn.lowStreak} of ${LOW_STREAK_LIMIT}.` : 'Rewards are lost if the tribute is missed.'}</div>` +
+      `<div class="event-tip-kind">${L('Tribute target', '贡品目标')}</div>` +
+      `<div class="event-tip-name">${t.label} · ${L(`${Math.round(t.mult * 100)}% of ${turn.quotaBase}`, `${turn.quotaBase} 的 ${Math.round(t.mult * 100)}%`)}</div>` +
+      `<div class="event-tip-text">${L(`Tribute this year: ${turn.quota} oil.`, `今年贡品：${turn.quota} 石油。`)}<br />${r ? `${L('Reward if met: ', '达成奖励：')}${iconize(r.text)}` : L('No reward.', '无奖励。')}</div>` +
+      `<div class="event-tip-foot">${
+        turn.lowStreak >= LOW_STREAK_LIMIT
+          ? L('Next year the Overlord forces a High target.', '明年霸主将强制设定高目标。')
+          : turn.lowStreak
+            ? L(`Low targets in a row: ${turn.lowStreak} of ${LOW_STREAK_LIMIT}.`, `已连续选择低目标：${turn.lowStreak} / ${LOW_STREAK_LIMIT}。`)
+            : L('Rewards are lost if the tribute is missed.', '若未缴足贡品，奖励作废。')
+      }</div>` +
       `</div>`;
     $('targetLabel').className = `event-label target-${tg.tier}`;
   }
@@ -939,7 +979,7 @@ function updateHUD() {
   // Manpower is a cap: big number = free slots / total slots, small = idle buildings (if any).
   $('resMp').textContent = `${e.free}/${e.cap}`;
   $('resMp').classList.toggle('neg', e.idle > 0);
-  $('resMpD').textContent = e.idle ? `(${e.idle} idle)` : '';
+  $('resMpD').textContent = e.idle ? L(`(${e.idle} idle)`, `(${e.idle} 闲置)`) : '';
   $('resMpD').className = e.idle ? 'down' : '';
   shadeIdle(e);
   // Oil: big number = the stockpile (the Overlord takes it all after Winter), small = this season's yield.
@@ -951,15 +991,15 @@ function updateHUD() {
 
   $('btnReroll').classList.toggle('hidden', hand.isEmpty);
   $('btnReroll').classList.toggle('disabled', !turn.freeRerolls && turn.stockpile < rerollCost());
-  $('btnRerollSub').innerHTML = turn.freeRerolls ? `free ×${turn.freeRerolls}` : `-${rerollCost()}${ICONS.oil}`;
+  $('btnRerollSub').innerHTML = turn.freeRerolls ? L(`free ×${turn.freeRerolls}`, `免费 ×${turn.freeRerolls}`) : `-${rerollCost()}${ICONS.oil}`;
   // Greyed out while Wasteland that still fits must be placed (endTurn refuses then, with a toast).
   const blocking = hand.placeableForced.length;
   $('btnNext').classList.toggle('disabled', blocking > 0);
   $('btnNextSub').textContent = blocking
-    ? `place your Wasteland first (${blocking} left)`
+    ? L(`place your Wasteland first (${blocking} left)`, `请先放置荒地（还剩 ${blocking} 块）`)
     : turn.season === yearLength() - 1
-      ? `collect oil, pay ${quota} tribute`
-      : 'collect oil, draw a new hand';
+      ? L(`collect oil, pay ${quota} tribute`, `采油，缴纳 ${quota} 桶贡品`)
+      : L('collect oil, draw a new hand', '采油，抽取新手牌');
   if (tipKind) renderResTip(e);
 }
 
@@ -985,77 +1025,88 @@ function breakdown(kind, e) {
   const total = (label, v) => rows.push([label, v, 'total']);
   const note = (text) => rows.push([text, '', 'note']);
 
+  const nm = (t) => TERRAINS[t].name; // Chinese labels use the tile names
   if (kind === 'food') {
-    add(`Hydro-farms ×${c('farm')}`, 2 * c('farm'));
-    add(`Pump bonus ×${e.bonus.pumpFarms}`, 2 * e.bonus.pumpFarms);
-    add(`Oasis bonus ×${e.bonus.oasisFarms}`, 3 * e.bonus.oasisFarms);
-    add('Capital doubles', e.bonus.capitalFood);
+    add(L(`Hydro-farms ×${c('farm')}`, `${nm('farm')} ×${c('farm')}`), 2 * c('farm'));
+    add(L(`Pump bonus ×${e.bonus.pumpFarms}`, `${nm('pump')}加成 ×${e.bonus.pumpFarms}`), 2 * e.bonus.pumpFarms);
+    add(L(`Oasis bonus ×${e.bonus.oasisFarms}`, `${nm('oasis')}加成 ×${e.bonus.oasisFarms}`), 3 * e.bonus.oasisFarms);
+    add(L('Capital doubles', `${nm('capital')}翻倍`), e.bonus.capitalFood);
     if (turn.event) add(turn.event.name, e.eventFood);
-    if (e.droughtFood) note(`Drought: pumps and oases give nothing (-${e.droughtFood} food)`);
-    total('Grown', Math.round(e.foodGrown));
-    add('Capital eats', -3 * c('capital'));
-    add(`Settlements ×${c('settlement')}`, -2 * c('settlement'));
-    add(`Population ×${e.population}`, -e.popFood);
+    if (e.droughtFood)
+      note(L(`Drought: pumps and oases give nothing (-${e.droughtFood} food)`, `干旱：${nm('pump')}和${nm('oasis')}没有产出（-${e.droughtFood} 食物）`));
+    total(L('Grown', '产出'), Math.round(e.foodGrown));
+    add(L('Capital eats', `${nm('capital')}消耗`), -3 * c('capital'));
+    add(L(`Settlements ×${c('settlement')}`, `${nm('settlement')} ×${c('settlement')}`), -2 * c('settlement'));
+    add(L(`Population ×${e.population}`, `人口 ×${e.population}`), -e.popFood);
     if (turn.event) add(turn.event.name, -e.eventUpkeep - e.mods.foodUpkeep);
-    add('Toxic craters', -e.craterFood);
-    add(`Scavenger camps ×${c('bandit_scav')}`, -e.banditFood);
-    total('Balance', signed(Math.round(e.foodBalance)));
+    add(L('Toxic craters', nm('crater')), -e.craterFood);
+    add(L(`Scavenger camps ×${c('bandit_scav')}`, `${nm('bandit_scav')} ×${c('bandit_scav')}`), -e.banditFood);
+    total(L('Balance', '结余'), signed(Math.round(e.foodBalance)));
     if (e.foodBalance < 0) {
       note(
         e.fed < 1
-          ? `Store can't cover it: people go hungry, stations run at ${pct(e.fed)}`
-          : `Shortfall covered from the store (${e.foodStore})`,
+          ? L(`Store can't cover it: people go hungry, stations run at ${pct(e.fed)}`, `粮仓不够填补：人们在挨饿，${nm('station')}只能以 ${pct(e.fed)} 运转`)
+          : L(`Shortfall covered from the store (${e.foodStore})`, `缺口由粮仓补足（${e.foodStore}）`),
       );
     }
-    note(`Stores ${e.foodStore} → ${e.storeAfter} / ${e.foodCap}`);
-    if (e.foodWasted) note(`${e.foodWasted} food wasted (stores full)`);
-    if (rebelsRise(e)) note('Stores empty: rebels will rise');
+    note(L(`Stores ${e.foodStore} → ${e.storeAfter} / ${e.foodCap}`, `粮仓 ${e.foodStore} → ${e.storeAfter} / ${e.foodCap}`));
+    if (e.foodWasted) note(L(`${e.foodWasted} food wasted (stores full)`, `浪费了 ${e.foodWasted} 食物（粮仓已满）`));
+    if (rebelsRise(e)) note(L('Stores empty: rebels will rise', '粮仓已空：叛军即将起事'));
   } else if (kind === 'mp') {
-    add('Capital', 4 * c('capital'));
-    add(`Settlements ×${c('settlement')}`, 2 * c('settlement'));
-    add('Built on ruins', e.bonus.ruins);
-    add('Labour camps', e.bonus.labourCamps);
-    add('Taxed settlements', e.taxSlots);
-    add(`Population`, e.population);
-    add('Toxic craters', -e.craterManpower);
-    add(`Raider camps ×${c('raider') + c('bandit_raider')}`, -e.raiderManpower);
+    add(L('Capital', nm('capital')), 4 * c('capital'));
+    add(L(`Settlements ×${c('settlement')}`, `${nm('settlement')} ×${c('settlement')}`), 2 * c('settlement'));
+    add(L('Built on ruins', `建在${nm('ruins')}上`), e.bonus.ruins);
+    add(L('Labour camps', nm('labourcamp')), e.bonus.labourCamps);
+    add(L('Taxed settlements', `被征税的${nm('settlement')}`), e.taxSlots);
+    add(L(`Population`, '人口'), e.population);
+    add(L('Toxic craters', nm('crater')), -e.craterManpower);
+    add(L(`Raider camps ×${c('raider') + c('bandit_raider')}`, `${nm('raider')} ×${c('raider') + c('bandit_raider')}`), -e.raiderManpower);
     if (turn.event) add(turn.event.name, e.eventCap + e.mods.capDelta);
-    total('Worker slots', e.cap);
-    add(`Hydro-farms ×${c('farm')}`, -c('farm'));
-    add(`Stations ×${c('station')}`, -c('station'));
-    add(`Refineries ×${c('refinery')}`, -c('refinery'));
-    total(e.idle ? 'Idle' : 'Free', e.idle ? e.idle : e.free);
+    total(L('Worker slots', '人力总数'), e.cap);
+    add(L(`Hydro-farms ×${c('farm')}`, `${nm('farm')} ×${c('farm')}`), -c('farm'));
+    add(L(`Stations ×${c('station')}`, `${nm('station')} ×${c('station')}`), -c('station'));
+    add(L(`Refineries ×${c('refinery')}`, `${nm('refinery')} ×${c('refinery')}`), -c('refinery'));
+    total(e.idle ? L('Idle', '闲置') : L('Free', '空闲'), e.idle ? e.idle : e.free);
     note(
       e.idle
-        ? `Not enough workers: your ${e.idle} newest building${e.idle === 1 ? '' : 's'} sit idle and produce nothing`
-        : 'Each farm, station and refinery needs 1 worker. Housing raises the cap.',
+        ? L(
+            `Not enough workers: your ${e.idle} newest building${e.idle === 1 ? '' : 's'} sit idle and produce nothing`,
+            `人力不足：你最新建造的 ${e.idle} 座建筑处于闲置，没有任何产出`,
+          )
+        : L('Each farm, station and refinery needs 1 worker. Housing raises the cap.', '每座农场、采油站和炼油厂各需 1 人力。住房能提高上限。'),
     );
   } else {
-    add(`Stations ×${c('station')}`, 2 * c('station'));
-    add(`Tar pit bonus ×${e.bonus.tarpitStations}`, 2 * e.bonus.tarpitStations);
-    add('Capital doubles', e.bonus.capitalCrude);
+    add(L(`Stations ×${c('station')}`, `${nm('station')} ×${c('station')}`), 2 * c('station'));
+    add(L(`Tar pit bonus ×${e.bonus.tarpitStations}`, `${nm('tarpit')}加成 ×${e.bonus.tarpitStations}`), 2 * e.bonus.tarpitStations);
+    add(L('Capital doubles', `${nm('capital')}翻倍`), e.bonus.capitalCrude);
     if (turn.event) add(turn.event.name, e.eventCrude);
-    add(`Refineries (${e.refineryLinks} adjacent station${e.refineryLinks === 1 ? '' : 's'})`, e.refineryCrude);
-    total('Crude', e.crude);
-    mul('Hunger', e.fed);
-    add('Settlement tax', e.taxOil);
-    add(`Siphoner camps ×${c('bandit_siphon')}`, -e.oilStolen);
-    total('This season', signed(e.oil));
+    add(
+      L(`Refineries (${e.refineryLinks} adjacent station${e.refineryLinks === 1 ? '' : 's'})`, `${nm('refinery')}（${e.refineryLinks} 座相邻${nm('station')}）`),
+      e.refineryCrude,
+    );
+    total(L('Crude', '原油'), e.crude);
+    mul(L('Hunger', '饥饿'), e.fed);
+    add(L('Settlement tax', `${nm('settlement')}税收`), e.taxOil);
+    add(L(`Siphoner camps ×${c('bandit_siphon')}`, `${nm('bandit_siphon')} ×${c('bandit_siphon')}`), -e.oilStolen);
+    total(L('This season', '本季'), signed(e.oil));
     const theft = Math.min(turn.stockpile + e.oil, e.stockpileTheft);
-    add(`Smuggler dens ×${c('bandit_smuggle')}`, -theft);
-    note(`Stockpile ${turn.stockpile} → ${turn.stockpile + e.oil - theft} / ${turn.quota} tribute`);
-    note(`The Overlord takes all of it after ${SEASONS[yearLength() - 1]}.`);
+    add(L(`Smuggler dens ×${c('bandit_smuggle')}`, `${nm('bandit_smuggle')} ×${c('bandit_smuggle')}`), -theft);
+    note(
+      L(
+        `Stockpile ${turn.stockpile} → ${turn.stockpile + e.oil - theft} / ${turn.quota} tribute`,
+        `石油库存 ${turn.stockpile} → ${turn.stockpile + e.oil - theft} / 贡品 ${turn.quota}`,
+      ),
+    );
+    note(L(`The Overlord takes all of it after ${SEASONS[yearLength() - 1]}.`, `${SEASONS[yearLength() - 1]}季结束后，霸主会全部拿走。`));
   }
   return rows;
 }
 
-const TIP_TITLE = 'How this season adds up';
-
 function renderResTip(e = economyNow()) {
   const rows = breakdown(tipKind, e);
   $('resTip').innerHTML =
-    `<div class="title">${TIP_TITLE}</div>` +
-    (rows.length ? '' : '<div class="row note">Nothing yet</div>') +
+    `<div class="title">${L('How this season adds up', '本季收支明细')}</div>` +
+    (rows.length ? '' : `<div class="row note">${L('Nothing yet', '暂无')}</div>`) +
     rows
       .map(([label, value, type]) => `<div class="row ${type}"><span>${label}</span><b>${value}</b></div>`)
       .join('');
@@ -1095,20 +1146,38 @@ function updateInspect(cell) {
   el.style.setProperty('--edge', hex(t.edge));
   const notes = [];
   if (c.onRuins && t.category === 'building')
-    notes.push(`Built on Pre-war Ruins: +${c.terrain === 'settlement' ? 2 : 1} worker slot${c.terrain === 'settlement' ? 's' : ''}`);
+    notes.push(
+      L(
+        `Built on Pre-war Ruins: +${c.terrain === 'settlement' ? 2 : 1} worker slot${c.terrain === 'settlement' ? 's' : ''}`,
+        `建在${TERRAINS.ruins.name}上：+${c.terrain === 'settlement' ? 2 : 1} 人力`,
+      ),
+    );
   if (economyNow().perCell.find((p) => p.x === c.x && p.z === c.z)?.idle)
-    notes.push('Idle: no free workers. Build housing to staff it.');
-  if (c.terrain === 'raider') notes.push('Unhappy citizens. Fix the food shortage to drive them off (one camp leaves per fed season), or Send in the Militia.');
-  if (t.bandit) notes.push('Bandits drawn by a 3×3 block of Wasteland. They stay until you Send in the Militia.');
-  if (isCamp(c.terrain)) notes.push(`Right now: ${campEffect(c.terrain)}`);
-  if (t.buildable) notes.push('A building can be placed on top of this tile');
+    notes.push(L('Idle: no free workers. Build housing to staff it.', '闲置：没有空闲人力。建造住房来为它配备人手。'));
+  if (c.terrain === 'raider')
+    notes.push(
+      L(
+        'Unhappy citizens. Fix the food shortage to drive them off (one camp leaves per fed season), or Send in the Militia.',
+        `不满的民众。解决食物短缺即可赶走他们（每个吃饱的季节撤走一座营地），或者${cardDef('militia').name}。`,
+      ),
+    );
+  if (t.bandit)
+    notes.push(
+      L(
+        'Bandits drawn by a 3×3 block of Wasteland. They stay until you Send in the Militia.',
+        `被 3×3 荒地区域引来的匪徒。在你${cardDef('militia').name}之前，他们不会离开。`,
+      ),
+    );
+  if (isCamp(c.terrain)) notes.push(L(`Right now: ${campEffect(c.terrain)}`, `当前：${campEffect(c.terrain)}`));
+  if (t.buildable) notes.push(L('A building can be placed on top of this tile', '可以在这个地块上放置建筑'));
+  const KINDS = { building: L('building', '建筑'), land: L('land', '地形'), junk: L('junk', '废料') };
   el.innerHTML = `
     <div class="card-slot"><div class="card-big">
       <div class="art">${cardArtHTML(c.terrain)}</div>
       ${snapHTML(t)}
       <div class="name">${t.name}</div>
       <div class="rule">${cardText(t)}</div>
-      <div class="kind">${t.category}</div>
+      <div class="kind">${KINDS[t.category] ?? t.category}</div>
     </div></div>
     ${notes.map((n) => `<div class="note">${n}</div>`).join('')}`;
   el.classList.remove('hidden');
@@ -1129,7 +1198,7 @@ function endTurn() {
   // Wasteland must be placed first, but only if it fits somewhere; if there's no room, the turn can end.
   const blocking = hand.placeableForced.length;
   if (blocking) {
-    toast(`Place your Wasteland first (${blocking} left in hand)`, 'bad');
+    toast(L(`Place your Wasteland first (${blocking} left in hand)`, `请先放置荒地（手牌中还剩 ${blocking} 张）`), 'bad');
     return;
   }
   hand.select(-1);
@@ -1167,7 +1236,8 @@ function showStore(amount, cap, bumpIt = false) {
   $('popFill').classList.toggle('full', cap > 0 && shown >= cap);
   $('popFill').classList.toggle('empty', amount <= 0);
   $('popText').textContent =
-    `Food stores ${shown} / ${cap}` + (turn.population ? ` · population ${turn.population}` : '');
+    L(`Food stores ${shown} / ${cap}`, `粮仓 ${shown} / ${cap}`) +
+    (turn.population ? L(` · population ${turn.population}`, ` · 人口 ${turn.population}`) : '');
   if (bumpIt) bump($('popText'));
 }
 
@@ -1182,7 +1252,7 @@ function showOil(amount, bump = false) {
   const quota = turn.quota;
   $('oilStock').textContent = amount;
   $('resOil').textContent = amount;
-  $('quotaCount').textContent = `${amount} / ${quota} barrels`;
+  $('quotaCount').textContent = L(`${amount} / ${quota} barrels`, `${amount} / ${quota} 桶`);
   $('quotaFill').style.width = `${Math.min(1, amount / quota) * 100}%`;
   $('quotaFill').classList.toggle('met', amount >= quota);
   if (bump) {
@@ -1260,17 +1330,25 @@ function spawnRaider() {
   let x, z, text;
   if (empty.length) {
     [x, z] = pick(empty);
-    text = 'Raiders made camp on open ground.';
+    text = L('Raiders made camp on open ground.', '掠夺者在空地上扎了营。');
   } else if (waste.length) {
     ({ x, z } = pick(waste));
-    text = 'Raiders made camp in the wasteland.';
+    text = L('Raiders made camp in the wasteland.', '掠夺者在荒地中扎了营。');
   } else if (buildings.length) {
     ({ x, z } = pick(buildings));
-    text = `Raiders razed your ${TERRAINS[grid.get(x, z).terrain].name} and made camp.`;
+    const razed = grid.get(x, z).terrain;
+    text = both(() => L(`Raiders razed your ${TERRAINS[razed].name} and made camp.`, `掠夺者夷平了你的${TERRAINS[razed].name}，就地扎营。`));
   } else return null;
   addTile(x, z, 'raider');
   grid.get(x, z).onRuins = false;
-  spawnRaider.last = { x, z, effect: campEffect('raider') };
+  // Getters: the camp's text in the current language whenever it's read (a scene may show it after a switch).
+  spawnRaider.last = {
+    x,
+    z,
+    get effect() {
+      return campEffect('raider');
+    },
+  };
   placement.cell = null;
   frontier.rebuild(grid);
   return text;
@@ -1309,7 +1387,17 @@ function spawnBandits() {
     }
     const kind = BANDIT_KEYS[Math.floor(Math.random() * BANDIT_KEYS.length)];
     addTile(x, z, kind);
-    spawned.push({ x, z, name: TERRAINS[kind].name, effect: campEffect(kind) });
+    spawned.push({
+      x,
+      z,
+      kind,
+      get name() {
+        return TERRAINS[kind].name;
+      },
+      get effect() {
+        return campEffect(kind);
+      },
+    });
   }
   if (spawned.length) {
     placement.cell = null;
@@ -1322,7 +1410,7 @@ function spawnBandits() {
 function militia(x, z) {
   const name = TERRAINS[grid.get(x, z).terrain].name;
   clearCamp(x, z);
-  toast(`The militia cleared the ${name}`, 'good');
+  toast(L(`The militia cleared the ${name}`, `民兵清除了${name}`), 'good');
 }
 
 /** Removes a camp (militia, bribe, fed or crushed rebels), leaving empty ground. */
@@ -1370,11 +1458,11 @@ function crushRebels() {
   shake.amount = Math.min(shake.amount + 0.9, 1.2);
   if (turn.population >= LEADER_COSTS.crushPopulation) {
     turn.population -= LEADER_COSTS.crushPopulation;
-    return `-${LEADER_COSTS.crushPopulation} population`;
+    return L(`-${LEADER_COSTS.crushPopulation} population`, `-${LEADER_COSTS.crushPopulation} 人口`);
   }
   const lost = Math.min(turn.food, LEADER_COSTS.crushFoodFallback);
   turn.food -= lost;
-  return lost ? `-${lost} food` : 'no survivors to spare';
+  return lost ? L(`-${lost} food`, `-${lost} 食物`) : L('no survivors to spare', '已无幸存者可供牺牲');
 }
 
 /** "The militia will burn you out": a free Send in the Militia in the next hand. */
@@ -1409,14 +1497,23 @@ function showStrikes() {
   shownStrikes = turn.strikes;
 }
 
+/** `reason`: a function returning the text, so it can be redrawn after a language switch. */
+let gameOverReason = null;
 function gameOver(reason) {
   turn.over = true;
   hand.select(-1);
-  $('gameoverReason').textContent = reason;
-  $('gameoverStats').textContent =
-    `Survived to ${SEASONS[turn.season]}, round ${turn.round} · ${turn.total} barrels delivered in total`;
+  gameOverReason = reason;
+  showGameOver();
   $('gameover').classList.remove('hidden');
   doom();
+}
+
+function showGameOver() {
+  $('gameoverReason').textContent = typeof gameOverReason === 'function' ? gameOverReason() : (gameOverReason ?? '');
+  $('gameoverStats').textContent = L(
+    `Survived to ${SEASONS[turn.season]}, round ${turn.round} · ${turn.total} barrels delivered in total`,
+    `坚持到第 ${turn.round} 年${SEASONS[turn.season]} · 共上交 ${turn.total} 桶`,
+  );
 }
 
 function settleTurn(e) {
@@ -1426,7 +1523,10 @@ function settleTurn(e) {
   // The tutorial year always runs to Winter (it never meets the quota early anyway).
   const tut = tutorial.active;
   let yearEnds = turn.season >= yearLength() - 1 || (!tut && turn.stockpile + e.oil - stolen >= turn.quota);
-  const label = `${SEASONS[turn.season]}, round ${turn.round}`;
+  // Text below is built in the current language when shown (functions), so the toast follows a language switch.
+  const season = turn.season;
+  const round = turn.round;
+  const label = () => L(`${SEASONS[season]}, round ${round}`, `第 ${round} 年${SEASONS[season]}`);
   turn.stockpile += e.oil - stolen;
   turn.total += e.oil;
   turn.food = e.storeAfter;
@@ -1437,41 +1537,52 @@ function settleTurn(e) {
   };
   const tag = (n) => `<span class="${Math.round(n) < 0 ? 'bad' : 'good'}">${sgn(n)}</span>`;
   const lines = [
-    `<b>${label}</b>`,
-    `Food ${tag(e.foodBalance)} · Free workers ${e.free}/${e.cap}${e.idle ? ` <span class="bad">(${e.idle} idle)</span>` : ''} · Oil ${tag(e.oil)}`,
+    `<b>${label()}</b>`,
+    L(
+      `Food ${tag(e.foodBalance)} · Free workers ${e.free}/${e.cap}${e.idle ? ` <span class="bad">(${e.idle} idle)</span>` : ''} · Oil ${tag(e.oil)}`,
+      `食物 ${tag(e.foodBalance)} · 空闲人力 ${e.free}/${e.cap}${e.idle ? ` <span class="bad">（${e.idle} 闲置）</span>` : ''} · 石油 ${tag(e.oil)}`,
+    ),
   ];
-  let msg = `${label}: +${e.oil} oil`;
+  // The toast: parts that are each one L() sentence (switchable as they are) or a function.
+  const msg = [() => L(`${label()}: +${e.oil} oil`, `${label()}：+${e.oil} 石油`)];
   let kind = 'good';
-  if (e.foodWasted) lines.push(`<span class="bad">The stores are full: ${e.foodWasted} food spoiled.</span>`);
+  if (e.foodWasted)
+    lines.push(`<span class="bad">${L(`The stores are full: ${e.foodWasted} food spoiled.`, `粮仓已满：${e.foodWasted} 食物腐坏了。`)}</span>`);
 
   // Bandits already camped: what they took this season.
-  if (e.oilStolen) lines.push(`<span class="bad">Siphoners drained ${e.oilStolen} oil from your pipelines.</span>`);
-  if (e.banditFood) lines.push(`<span class="bad">Scavengers stole ${e.banditFood} food.</span>`);
+  if (e.oilStolen)
+    lines.push(`<span class="bad">${L(`Siphoners drained ${e.oilStolen} oil from your pipelines.`, `窃油者从你的输油管里抽走了 ${e.oilStolen} 石油。`)}</span>`);
+  if (e.banditFood) lines.push(`<span class="bad">${L(`Scavengers stole ${e.banditFood} food.`, `拾荒者偷走了 ${e.banditFood} 食物。`)}</span>`);
   if (stolen) {
-    lines.push(`<span class="bad">Smugglers made off with ${stolen} barrels from the stockpile.</span>`);
-    msg += ` · Smugglers stole ${stolen}`;
+    lines.push(`<span class="bad">${L(`Smugglers made off with ${stolen} barrels from the stockpile.`, `走私者从石油库存中卷走了 ${stolen} 桶。`)}</span>`);
+    msg.push(L(` · Smugglers stole ${stolen}`, ` · 走私者偷走 ${stolen} 桶`));
     kind = 'bad';
   }
   // A full 3×3 block of Wasteland draws a new bandit camp. (Not in the scripted tutorial.)
   for (const camp of tut ? [] : spawnBandits()) {
     queueScene('bandit', camp);
-    lines.push(`<span class="bad">Bandits settled the wasteland: ${camp.name} (${camp.effect}).</span>`);
-    msg += ` · Bandits: ${camp.name}!`;
+    lines.push(`<span class="bad">${L(`Bandits settled the wasteland: ${camp.name} (${camp.effect}).`, `匪徒占据了荒地：${camp.name}（${camp.effect}）。`)}</span>`);
+    msg.push(() => L(` · Bandits: ${TERRAINS[camp.kind].name}!`, ` · 匪患：${TERRAINS[camp.kind].name}！`));
     kind = 'bad';
   }
 
   // Rebels: a season with a food surplus drives one camp off; a season that ends with
   // no food at all (net ≤ 0 and empty stores) brings a new camp, in place for the next season.
   if (!tut && Math.round(e.foodBalance) > 0 && departRaider()) {
-    lines.push('<span class="good">Your people are fed: a raider camp packed up and left.</span>');
-    msg += ' · Raiders left';
+    lines.push(`<span class="good">${L('Your people are fed: a raider camp packed up and left.', '你的子民吃饱了：一座掠夺者营地拔营离去。')}</span>`);
+    msg.push(L(' · Raiders left', ' · 掠夺者已离去'));
   }
   if (!tut && rebelsRise(e)) {
     const raid = spawnRaider();
     if (raid) {
       queueScene('rebel', spawnRaider.last);
-      lines.push(`<span class="bad">The food ran out and the people turned on you. ${raid} (${spawnRaider.last.effect})</span>`);
-      msg += ' · Starvation: raiders arrived!';
+      lines.push(
+        `<span class="bad">${L(
+          `The food ran out and the people turned on you. ${raid} (${spawnRaider.last.effect})`,
+          `粮食耗尽，民众反了你。${raid}（${spawnRaider.last.effect}）`,
+        )}</span>`,
+      );
+      msg.push(L(' · Starvation: raiders arrived!', ' · 饥荒：掠夺者来了！'));
       kind = 'bad';
     }
   }
@@ -1494,7 +1605,7 @@ function settleTurn(e) {
     $('report').innerHTML = lines.join('<br />');
     if (!yearEnds) {
       turn.season++;
-      toast(msg, kind, 3200);
+      toast(() => msg.map(textOf).join(''), kind, 3200);
       dealNewHand();
       return;
     }
@@ -1508,8 +1619,10 @@ function settleTurn(e) {
   let failure = null; // set when the tribute is missed: the Overlord comes to speak instead of the shop
   if (yearEnds) {
     if (turn.season < yearLength() - 1) {
-      lines.push(`<span class="good">Quota met in ${SEASONS[turn.season]}: the year ends early.</span>`);
-      msg += ` · Quota met early: skipping to the next year.`;
+      lines.push(
+        `<span class="good">${L(`Quota met in ${SEASONS[turn.season]}: the year ends early.`, `${SEASONS[turn.season]}季便已完成配额：本年提前结束。`)}</span>`,
+      );
+      msg.push(L(` · Quota met early: skipping to the next year.`, ` · 提前完成配额：直接进入下一年。`));
     }
     const quota = turn.quota;
     const delivered = turn.stockpile;
@@ -1534,30 +1647,47 @@ function settleTurn(e) {
     turn.target = null;
     const rise = turn.quotaBase - prevBase;
     if (met) {
-      lines.push(`<span class="good">Tribute of ${quota} met. The Overlord seized all ${delivered} barrels.</span>`);
-      msg += ` · Tribute of ${quota} met. The Overlord seized all ${delivered} barrels.`;
+      const seized = L(
+        `Tribute of ${quota} met. The Overlord seized all ${delivered} barrels.`,
+        `${quota} 桶贡品已缴足。霸主收走了全部 ${delivered} 桶。`,
+      );
+      lines.push(`<span class="good">${seized}</span>`);
+      msg.push(' · ', seized);
       if (reward) {
         const extra = reward.grant?.({ turn }) ?? '';
         clampFood();
-        lines.push(`<span class="good">${TIERS[target.tier].label} target met: reward earned (${iconize(reward.text)}). ${extra}</span>`);
-        msg += ` · Target reward: ${reward.text}`;
+        const tier = TIERS[target.tier].label;
+        lines.push(
+          `<span class="good">${L(
+            `${tier} target met: reward earned (${iconize(reward.text)}). ${extra}`,
+            `已达成${tier}目标：获得奖励（${iconize(reward.text)}）。${extra}`,
+          )}</span>`,
+        );
+        msg.push(() => L(` · Target reward: ${reward.text}`, ` · 目标奖励：${reward.text}`));
       }
     } else {
-      if (target?.reward)
-        lines.push(`<span class="bad">${TIERS[target.tier].label} target missed: the reward (${iconize(REWARDS[target.reward].text)}) is lost.</span>`);
+      if (target?.reward) {
+        const tier = TIERS[target.tier].label;
+        const lost = iconize(REWARDS[target.reward].text);
+        lines.push(
+          `<span class="bad">${L(`${tier} target missed: the reward (${lost}) is lost.`, `未达成${tier}目标：奖励（${lost}）作废。`)}</span>`,
+        );
+      }
       const short = quota - delivered;
       turn.strikes++;
       // The missiles themselves fly during the Overlord's speech (playTributeFailure).
       const count = strikeCount(turn.strikes);
-      const launched = `The Overlord launched ${count} missile${count === 1 ? '' : 's'} at your city.`;
-      lines.push(`<span class="bad">Tribute short by ${short}. ${launched}</span>`);
-      msg += ` · Tribute short by ${short}! ${launched}`;
+      const launched = () =>
+        L(`The Overlord launched ${count} missile${count === 1 ? '' : 's'} at your city.`, `霸主向你的城市发射了 ${count} 枚导弹。`);
+      lines.push(`<span class="bad">${L(`Tribute short by ${short}.`, `贡品短缺 ${short} 桶。`)} ${launched()}</span>`);
+      msg.push(() => L(` · Tribute short by ${short}! ${launched()}`, ` · 贡品短缺 ${short} 桶！${launched()}`));
       kind = 'bad';
       failure = { quota, delivered, short, missiles: count, nextQuota: turn.quota };
     }
-    const greed = delivered > quota ? "Your excess whetted the Overlord's appetite. " : '';
-    lines.push(`<span class="bad">${greed}Next base tribute: ${turn.quota} (+${rise}).</span>`);
-    msg += ` · ${greed}Next base tribute: ${turn.quota} (+${rise}).`;
+    const greed = delivered > quota ? L("Your excess whetted the Overlord's appetite. ", '你的盈余吊起了霸主的胃口。') : '';
+    const next = L(`Next base tribute: ${turn.quota} (+${rise}).`, `下一年基础贡品：${turn.quota}（+${rise}）。`);
+    lines.push(`<span class="bad">${greed}${next}</span>`);
+    msg.push(' · ', greed, next);
   }
 
   $('report').innerHTML = lines.join('<br />');
@@ -1576,7 +1706,12 @@ function settleTurn(e) {
       if (run !== runId) return; // the island was reset mid-speech
       if (final) {
         showStrikes(true);
-        gameOver("Three tributes missed. The Overlord's missiles have turned your Hive City into a toxic crater.");
+        gameOver(() =>
+          L(
+            "Three tributes missed. The Overlord's missiles have turned your Hive City into a toxic crater.",
+            '三次未缴足贡品。霸主的导弹已将你的蜂巢城化为一片毒坑。',
+          ),
+        );
       } else startNewYear(dealNewHand, { continued: true });
     });
     return;
@@ -1584,13 +1719,15 @@ function settleTurn(e) {
 
   if (turn.strikes >= MAX_STRIKES) {
     showStrikes(true);
-    gameOver('Three tributes missed. The Overlord has lost his patience and razed your city.');
+    gameOver(() =>
+      L('Three tributes missed. The Overlord has lost his patience and razed your city.', '三次未缴足贡品。霸主耐心耗尽，夷平了你的城市。'),
+    );
     return;
   }
 
   turn.season = yearEnds ? 0 : turn.season + 1;
   if (yearEnds) turn.round++;
-  toast(msg, kind, 3200);
+  toast(() => msg.map(textOf).join(''), kind, 3200);
   // A new year opens with the shop; the hand is dealt when it closes.
   if (turn.season === 0) {
     updateHUD();
@@ -1650,7 +1787,10 @@ async function startTarget({ continued = false, gifted = false } = {}) {
 function targetTag({ tier, reward }) {
   const q = scaledQuota(turn.quotaBase, tier);
   const pct = Math.round(TIERS[tier].mult * 100);
-  return `${q} oil (${pct}%) · ${reward ? `reward: ${iconize(REWARDS[reward].text)}` : 'no reward'}`;
+  return L(
+    `${q} oil (${pct}%) · ${reward ? `reward: ${iconize(REWARDS[reward].text)}` : 'no reward'}`,
+    `${q} 石油（${pct}%） · ${reward ? `奖励：${iconize(REWARDS[reward].text)}` : '无奖励'}`,
+  );
 }
 
 async function playTargetDialogue(offers, { forced, continued, gifted }) {
@@ -1660,42 +1800,77 @@ async function playTargetDialogue(offers, { forced, continued, gifted }) {
   const base = turn.quotaBase;
   dialogue.open({
     kind: forced ? 'pressure' : 'choice',
-    kindLabel: `Year ${turn.round} · tribute target`,
-    title: forced ? 'No More Excuses' : pleased ? 'The Overlord Is Pleased' : 'A Chance to Redeem Yourself',
+    kindLabel: L(`Year ${turn.round} · tribute target`, `第 ${turn.round} 年 · 贡品目标`),
+    title: forced
+      ? L('No More Excuses', '休想再找借口')
+      : pleased
+        ? L('The Overlord Is Pleased', '霸主很满意')
+        : L('A Chance to Redeem Yourself', '将功赎罪的机会'),
     effect: forced
-      ? `${LOW_STREAK_LIMIT} low targets in a row: this year's target is forced to High.`
-      : `Base tribute ${base} oil · rewards are paid only if the target is met.`,
+      ? L(
+          `${LOW_STREAK_LIMIT} low targets in a row: this year's target is forced to High.`,
+          `已连续 ${LOW_STREAK_LIMIT} 次选择低目标：今年被强制定为高目标。`,
+        )
+      : L(`Base tribute ${base} oil · rewards are paid only if the target is met.`, `基础贡品 ${base} 石油 · 只有达成目标才发放奖励。`),
   });
   let lines;
   let ask;
   if (forced) {
     lines = [
       continued
-        ? `And do not think I have forgotten your ${LOW_STREAK_LIMIT} timid little targets in a row.`
-        : `${LOW_STREAK_LIMIT} years of timid little targets, Overseer. Did you think I would not notice?`,
-      'My legions do not march on modest ambitions.',
+        ? L(
+            `And do not think I have forgotten your ${LOW_STREAK_LIMIT} timid little targets in a row.`,
+            `也别以为我忘了你接连 ${LOW_STREAK_LIMIT} 次定下的那些畏畏缩缩的小目标。`,
+          )
+        : L(
+            `${LOW_STREAK_LIMIT} years of timid little targets, Overseer. Did you think I would not notice?`,
+            `连续 ${LOW_STREAK_LIMIT} 年都是畏畏缩缩的小目标，总督。你以为我不会察觉吗？`,
+          ),
+      L('My legions do not march on modest ambitions.', '我的军团可不会为这点微末的野心出征。'),
     ];
-    ask = `This year you will give me ${scaledQuota(base, 'high')} barrels. I am not asking.`;
+    ask = L(
+      `This year you will give me ${scaledQuota(base, 'high')} barrels. I am not asking.`,
+      `今年你要给我 ${scaledQuota(base, 'high')} 桶。这不是在跟你商量。`,
+    );
   } else if (pleased) {
     lines = [
-      gifted ? 'I trust my gift will serve you well, Overseer.' : 'Your harvest reached my tanks in full. I am... pleased, Overseer.',
-      `My clerks reckon ${base} barrels for the coming year. But a loyal servant may name his own target.`,
+      gifted
+        ? L('I trust my gift will serve you well, Overseer.', '相信我的赏赐会让你物尽其用，总督。')
+        : L('Your harvest reached my tanks in full. I am... pleased, Overseer.', '你的收成如数灌进了我的油罐。我……很满意，总督。'),
+      L(
+        `My clerks reckon ${base} barrels for the coming year. But a loyal servant may name his own target.`,
+        `我的书记官估算来年需 ${base} 桶。不过，忠仆可以自己定下目标。`,
+      ),
     ];
-    ask = 'Promise me less and play it safe, or promise me more and be rewarded. Choose.';
+    ask = L(
+      'Promise me less and play it safe, or promise me more and be rewarded. Choose.',
+      '少许诺些以求稳妥，或多许诺些以博赏赐。选吧。',
+    );
   } else {
     lines = [
-      continued ? 'Still. I have some use for you yet.' : 'You failed me, and yet here you stand.',
-      `My clerks reckon ${base} barrels for the coming year. Perhaps you wish to prove them wrong.`,
+      continued
+        ? L('Still. I have some use for you yet.', '不过，你对我还有点用处。')
+        : L('You failed me, and yet here you stand.', '你辜负了我，却还敢站在这里。'),
+      L(
+        `My clerks reckon ${base} barrels for the coming year. Perhaps you wish to prove them wrong.`,
+        `我的书记官估算来年需 ${base} 桶。也许你想证明他们算错了。`,
+      ),
     ];
-    ask = 'Name your target, Overseer. Promise little and keep your head, or promise more and earn back my favour.';
+    ask = L(
+      'Name your target, Overseer. Promise little and keep your head, or promise more and earn back my favour.',
+      '说出你的目标，总督。少许诺，保住你的脑袋；或多许诺，赢回我的恩宠。',
+    );
   }
   for (const line of lines) await dialogue.say(OVERLORD, line);
+  // Functions: rebuilt in the new language if it changes while the choices are up.
   const options = forced
-    ? [{ text: 'As you command, Overlord.', tag: targetTag(offers[0]) }]
-    : offers.map((o) => ({ text: `${TIERS[o.tier].label}: ${TIERS[o.tier].say}`, tag: targetTag(o) }));
+    ? [{ text: L('As you command, Overlord.', '遵命，霸主。'), tag: () => targetTag(offers[0]) }]
+    : offers.map((o) => ({ text: () => `${TIERS[o.tier].label}${L(': ', '：')}${TIERS[o.tier].say}`, tag: () => targetTag(o) }));
   const i = await dialogue.ask(OVERLORD, ask, options);
   const picked = offers[i];
-  await dialogue.say(OVERLORD, forced ? 'Good. Do not make me regret indulging you all these years.' : TIERS[picked.tier].retort);
+  await dialogue.say(OVERLORD, () =>
+    forced ? L('Good. Do not make me regret indulging you all these years.', '很好。别让我后悔这些年对你的纵容。') : TIERS[picked.tier].retort,
+  );
   return picked;
 }
 
@@ -1703,10 +1878,13 @@ function applyTarget({ tier, reward }) {
   turn.target = { tier, reward };
   turn.quota = scaledQuota(turn.quotaBase, tier);
   turn.lowStreak = tier === 'low' ? turn.lowStreak + 1 : 0;
-  const rewardText = reward ? `Reward if met: ${REWARDS[reward].text}.` : 'No reward.';
+  const rewardText = reward ? L(`Reward if met: ${REWARDS[reward].text}.`, `达成奖励：${REWARDS[reward].text}。`) : L('No reward.', '无奖励。');
   const cls = tier === 'low' ? '' : 'good';
-  $('report').innerHTML =
-    `${$('report').innerHTML}<br /><span class="${cls}">Target set: <b>${TIERS[tier].label}</b>, tribute ${turn.quota} oil. ${iconize(rewardText)}</span>`;
+  const set = L(
+    `Target set: <b>${TIERS[tier].label}</b>, tribute ${turn.quota} oil. `,
+    `目标已定：<b>${TIERS[tier].label}</b>，贡品 ${turn.quota} 石油。`,
+  );
+  $('report').innerHTML = `${$('report').innerHTML}<br /><span class="${cls}">${set}${iconize(rewardText)}</span>`;
   updateHUD();
 }
 
@@ -1741,16 +1919,30 @@ function targetToast() {
   const tg = turn.target;
   if (!tg || turn.season !== 0) return;
   const r = tg.reward ? REWARDS[tg.reward] : null;
-  toast(`${TIERS[tg.tier].label} target: ${turn.quota} oil${r ? ` · reward: ${r.text}` : ''}`, 'good', 3200);
+  const quota = turn.quota;
+  toast(
+    () => {
+      const label = TIERS[tg.tier].label;
+      return L(
+        `${label} target: ${quota} oil${r ? ` · reward: ${r.text}` : ''}`,
+        `${label}目标：${quota} 石油${r ? ` · 奖励：${r.text}` : ''}`,
+      );
+    },
+    'good',
+    3200,
+  );
 }
 
 /** What the Overlord says to move on from the target to the year's event. */
-const EVENT_BRIDGE = {
-  pressure: 'One more thing, Overseer. My demands have grown this year.',
-  disaster: 'Before you scurry off. There is news from your city, and you will not like it.',
-  fortune: 'And before you go: some news that may even please you.',
-  choice: 'One more thing. A matter for you to decide.',
-};
+const EVENT_BRIDGE = () => ({
+  pressure: L('One more thing, Overseer. My demands have grown this year.', '还有一件事，总督。今年我的胃口更大了。'),
+  disaster: L(
+    'Before you scurry off. There is news from your city, and you will not like it.',
+    '先别急着溜走。你的城里传来了消息，你不会喜欢的。',
+  ),
+  fortune: L('And before you go: some news that may even please you.', '走之前，还有个消息，说不定会让你高兴。'),
+  choice: L('One more thing. A matter for you to decide.', '还有一件事，要由你来定夺。'),
+});
 
 /**
  * The Overlord announces the event. His last line comes with your replies: for choice events
@@ -1760,28 +1952,37 @@ const EVENT_BRIDGE = {
 async function playEventDialogue(key, ev, continued = false) {
   const OVERLORD = 'The Overlord';
   dialogue.allowSkip(true);
+  // Every text is a function, so it's rebuilt in the new language if the language changes while it's on screen.
   dialogue.open({
     kind: ev.kind,
-    kindLabel: `Year event · ${KIND_LABEL[ev.kind]}`,
-    title: ev.name,
-    effect: iconize(ev.choices ? 'Your answer decides what happens.' : eventText(key)),
+    kindLabel: () => `${L('Year event', '年度事件')} · ${KIND_LABEL[ev.kind]}`,
+    title: () => ev.name,
+    effect: () => iconize(ev.choices ? L('Your answer decides what happens.', '你的回答将决定后果。') : eventText(key)),
   });
   const { p } = eventSetup(key);
-  if (continued && EVENT_BRIDGE[ev.kind]) await dialogue.say(OVERLORD, EVENT_BRIDGE[ev.kind]);
-  const evLines = typeof ev.lines === 'function' ? ev.lines(p) : ev.lines;
-  const lines = evLines?.length ? evLines : [eventText(key)];
-  for (const line of lines.slice(0, -1)) await dialogue.say(OVERLORD, line);
+  const bridge = () => EVENT_BRIDGE()[ev.kind];
+  if (continued && bridge()) await dialogue.say(OVERLORD, bridge);
+  const lines = () => {
+    const evLines = typeof ev.lines === 'function' ? ev.lines(p) : ev.lines;
+    return evLines?.length ? evLines : [eventText(key)];
+  };
+  const n = lines().length;
+  for (let k = 0; k < n - 1; k++) await dialogue.say(OVERLORD, () => lines()[k]);
   const options = ev.choices
     ? ev.choices.map((c, ci) => {
         const { mods } = eventSetup(key, ci);
         const info = eventInfo();
         const off = c.disabled?.(info);
-        return { text: c.say ?? c.label, tag: off ? 'not possible' : iconize(c.text(p, previewEconomy(mods), info)), disabled: off };
+        return {
+          text: () => ev.choices[ci].say ?? ev.choices[ci].label,
+          tag: () => (off ? L('not possible', '无法选择') : iconize(ev.choices[ci].text(p, previewEconomy(mods), info))),
+          disabled: off,
+        };
       })
-    : (ev.replies ?? [{ say: 'Understood.' }]).map((r) => ({ text: r.say }));
-  const i = await dialogue.ask(OVERLORD, lines[lines.length - 1], options);
-  const picked = ev.choices ? ev.choices[i] : ev.replies?.[i];
-  if (picked?.retort) await dialogue.say(OVERLORD, picked.retort);
+    : (ev.replies ?? [{ say: L('Understood.', '明白。') }]).map((r, ri) => ({ text: () => ev.replies?.[ri]?.say ?? L('Understood.', '明白。') }));
+  const i = await dialogue.ask(OVERLORD, () => lines()[n - 1], options);
+  const retort = () => (ev.choices ? ev.choices[i] : ev.replies?.[i])?.retort;
+  if (retort()) await dialogue.say(OVERLORD, retort);
   return ev.choices ? i : -1;
 }
 
@@ -1795,7 +1996,9 @@ function applyYearEvent(key, ev, choiceIdx) {
     key,
     choiceIdx,
     round,
-    name: ev.name,
+    get name() {
+      return ev.name;
+    },
     kind: ev.kind,
     get mods() {
       return eventSetup(key, choiceIdx, round).mods;
@@ -1816,7 +2019,13 @@ function applyYearEvent(key, ev, choiceIdx) {
       const raid = spawnRaider();
       if (!raid) return null;
       queueScene('rebel', spawnRaider.last);
-      return { text: raid, effect: spawnRaider.last.effect };
+      const last = spawnRaider.last;
+      return {
+        text: raid,
+        get effect() {
+          return last.effect;
+        },
+      };
     },
     clearAllCamps: () => {
       const camps = [...grid.cells.values()].filter((c) => isCamp(c.terrain));
@@ -1828,11 +2037,11 @@ function applyYearEvent(key, ev, choiceIdx) {
       if (!found) return '';
       if (found.terrain === 'missile') {
         later.push(async () => unexplodedMissile(found));
-        return 'The map led you to an Unexploded Missile.';
+        return L('The map led you to an Unexploded Missile.', '地图把你引向了一枚未爆导弹。');
       }
       addTile(found.x, found.z, found.terrain, 0.25);
       frontier.rebuild(grid);
-      return `The map led you to a ${TERRAINS[found.terrain].name}.`;
+      return both(() => L(`The map led you to a ${TERRAINS[found.terrain].name}.`, `地图把你引向了一处${TERRAINS[found.terrain].name}。`));
     },
     earthquake: () => {
       const cells = shuffled(emptyEdgeCells()).slice(0, Math.round(SCALE.earthquakeCliffs));
@@ -1843,7 +2052,9 @@ function applyYearEvent(key, ev, choiceIdx) {
       shake.amount = Math.min(shake.amount + 0.8, 1.2);
       placement.cell = null;
       frontier.rebuild(grid);
-      return cells.length ? `${cells.length} cell${cells.length === 1 ? '' : 's'} turned into Cliffs.` : '';
+      return cells.length
+        ? L(`${cells.length} cell${cells.length === 1 ? '' : 's'} turned into Cliffs.`, `${cells.length} 个格子变成了悬崖。`)
+        : '';
     },
     showOfForce: () => {
       // Ruins surface on an empty cell next to your land; a missile from their silo hits a building.
@@ -1854,13 +2065,23 @@ function applyYearEvent(key, ev, choiceIdx) {
       dust.burst(spot[0], spot[1], 1.4);
       frontier.rebuild(grid);
       later.push(() => groundStrike({ x: spot[0], z: spot[1] }, target));
-      return 'Pre-war Ruins surfaced, and their missile launched.';
+      return L('Pre-war Ruins surfaced, and their missile launched.', '战前遗迹破土而出，其中的导弹随即发射。');
     },
   };
-  const extra = [ev.apply?.(ctx), choice?.apply?.(ctx)].filter(Boolean).join(' ');
-  const line = `<span class="${ev.kind === 'fortune' ? 'good' : ev.kind === 'choice' ? '' : 'bad'}">Year event: <b>${ev.name}</b>. ${summary}${extra ? ` ${extra}` : ''}</span>`;
+  const extraParts = [ev.apply?.(ctx), choice?.apply?.(ctx)].filter(Boolean);
+  const extra = extraParts.join(' ');
+  const head = L(`Year event: <b>${ev.name}</b>. `, `年度事件：<b>${ev.name}</b>。`);
+  const line = `<span class="${ev.kind === 'fortune' ? 'good' : ev.kind === 'choice' ? '' : 'bad'}">${head}${summary}${extra ? ` ${extra}` : ''}</span>`;
   $('report').innerHTML = `${$('report').innerHTML}<br />${line}`;
-  toast(`${ev.name}${choice ? `: ${choice.label}` : ''}${extra ? ` · ${extra}` : ''}`, ev.kind === 'fortune' ? 'good' : 'bad', 3200);
+  toast(
+    () => {
+      const picked = choice ? ev.choices[choiceIdx] : null; // read again: in the current language
+      const more = extraParts.map(textOf).join(' ');
+      return `${ev.name}${picked ? `${L(': ', '：')}${picked.label}` : ''}${more ? ` · ${more}` : ''}`;
+    },
+    ev.kind === 'fortune' ? 'good' : 'bad',
+    3200,
+  );
   frontier.rebuild(grid);
   updateHUD();
   return later;
@@ -1969,12 +2190,12 @@ function debugShop() {
 }
 
 function renderShop(animate = false) {
-  $('shopCoins').textContent = `${turn.coins} barrel${turn.coins === 1 ? '' : 's'} of excess oil`;
+  $('shopCoins').textContent = L(`${turn.coins} barrel${turn.coins === 1 ? '' : 's'} of excess oil`, `盈余石油 ${turn.coins} 桶`);
   $('shopHint').textContent = turn.coins
-    ? 'Bought cards go straight into your hand. Special tiles unlock for good.'
-    : 'Nothing to spend: only oil above the tribute can be spent here.';
+    ? L('Bought cards go straight into your hand. Special tiles unlock for good.', '买下的卡牌直接加入手牌。特殊地块将永久解锁。')
+    : L('Nothing to spend: only oil above the tribute can be spent here.', '无可花费：只有超出贡品的石油才能在这里使用。');
   const cost = shopRerollCost();
-  $('shopRerollCost').textContent = `· ${cost} barrel${cost === 1 ? '' : 's'}`;
+  $('shopRerollCost').textContent = L(`· ${cost} barrel${cost === 1 ? '' : 's'}`, `· ${cost} 桶`);
   $('btnShopReroll').classList.toggle('cant', turn.coins < cost);
   $('shopCards').innerHTML = shopStock.map(([k, price], i) => {
     const t = cardDef(k);
@@ -1989,16 +2210,23 @@ function renderShop(animate = false) {
           <div class="name">${t.name}</div>
           <div class="rule">${cardText(t)}</div>
         </div>
-        <div class="price">${price} barrel${price === 1 ? '' : 's'}${(turn.shopMult ?? 1) !== 1 ? ' <small>black market</small>' : ''}</div>
-        <div class="tag">${BASIC_SHOP.has(k) ? 'Basic' : turn.unlocked.has(k) ? 'Unlocked' : 'Locked'}${ACTIONS[k] ? ' · one use' : ''}${inHand ? ` · ${inHand} in hand` : ''}</div>
+        <div class="price">${L(`${price} barrel${price === 1 ? '' : 's'}`, `${price} 桶`)}${(turn.shopMult ?? 1) !== 1 ? ` <small>${L('black market', '黑市')}</small>` : ''}</div>
+        <div class="tag">${BASIC_SHOP.has(k) ? L('Basic', '基础') : unlockTag(k)}${inHand ? L(` · ${inHand} in hand`, ` · 手牌中 ${inHand} 张`) : ''}</div>
       </div>`;
   }).join('');
 }
 
+/** A market card's status line: unlocked or not, and whether it's a one-use action. */
+function unlockTag(k) {
+  return (
+    (turn.unlocked.has(k) ? L('Unlocked', '已解锁') : L('Locked', '未解锁')) + (ACTIONS[k] ? L(' · one use', ' · 一次性') : '')
+  );
+}
+
 function buy(k) {
   const price = shopPrice(SHOP_ITEMS.find(([key]) => key === k)[1]);
-  if (turn.coins < price) return toast('Not enough excess oil', 'bad');
-  if (turn.pinned.length >= HAND_SIZE) return toast('Your next hand is full', 'bad');
+  if (turn.coins < price) return toast(L('Not enough excess oil', '盈余石油不足'), 'bad');
+  if (turn.pinned.length >= HAND_SIZE) return toast(L('Your next hand is full', '下一手牌已满'), 'bad');
   turn.coins -= price;
   if (!BASIC_SHOP.has(k)) turn.unlocked.add(k); // action cards too: once bought, they can be drawn at random
   turn.pinned.push(k);
@@ -2013,7 +2241,7 @@ $('shopCards').addEventListener('click', (e) => {
 });
 $('btnShopReroll').addEventListener('click', () => {
   const cost = shopRerollCost();
-  if (turn.coins < cost) return toast('Not enough excess oil to reroll', 'bad');
+  if (turn.coins < cost) return toast(L('Not enough excess oil to reroll', '盈余石油不足，无法重抽'), 'bad');
   turn.coins -= cost;
   shopRerolls++;
   shuffle();
@@ -2032,31 +2260,36 @@ $('btnShopDone').addEventListener('click', () => {
 // ---------- free tile pick (target reward) ----------
 const PICK_SLOTS = 3;
 let pickResolve = null;
+let pickOptions = [];
 
 /** Show 3 random market tiles; the clicked one is unlocked and put in the next hand for free. */
 function openCardPick() {
-  const options = SHOP_ITEMS.filter(([k]) => !BASIC_SHOP.has(k)).sort(() => Math.random() - 0.5).slice(0, PICK_SLOTS);
+  pickOptions = SHOP_ITEMS.filter(([k]) => !BASIC_SHOP.has(k)).sort(() => Math.random() - 0.5).slice(0, PICK_SLOTS);
   eventOpen = true;
   hand.select(-1);
-  $('pickCards').innerHTML = options.map(([k], i) => {
-    const t = cardDef(k);
-    return `
-      <div class="shop-item">
-        <div class="card deal" data-k="${k}" style="--top:${hex(t.top)};--edge:${hex(t.edge)};animation-delay:${0.15 + i * 0.07}s">
-          <div class="art">${cardArtHTML(k)}</div>
-          ${snapHTML(t)}
-          <div class="name">${t.name}</div>
-          <div class="rule">${cardText(t)}</div>
-        </div>
-        <div class="tag">${turn.unlocked.has(k) ? 'Unlocked' : 'Locked'}${ACTIONS[k] ? ' · one use' : ''}</div>
-      </div>`;
-  }).join('');
+  renderCardPick(true);
   const el = $('cardPick');
   el.classList.remove('hidden', 'opening');
   void el.offsetWidth;
   el.classList.add('opening');
   document.body.classList.add('shopping');
   return new Promise((resolve) => (pickResolve = resolve));
+}
+
+function renderCardPick(animate = false) {
+  $('pickCards').innerHTML = pickOptions.map(([k], i) => {
+    const t = cardDef(k);
+    return `
+      <div class="shop-item">
+        <div class="card${animate ? ' deal' : ''}" data-k="${k}" style="--top:${hex(t.top)};--edge:${hex(t.edge)};animation-delay:${0.15 + i * 0.07}s">
+          <div class="art">${cardArtHTML(k)}</div>
+          ${snapHTML(t)}
+          <div class="name">${t.name}</div>
+          <div class="rule">${cardText(t)}</div>
+        </div>
+        <div class="tag">${unlockTag(k)}</div>
+      </div>`;
+  }).join('');
 }
 
 /** `resume` false (a reset) drops the waiting new-year flow instead of continuing it. */
@@ -2080,8 +2313,22 @@ $('pickCards').addEventListener('click', (e) => {
     if (holdingPurchases) hand.addPinned(k);
   }
   coin();
-  toast(`${cardDef(k).name} unlocked${inHand ? ' and added to your next hand' : ''}`, 'good', 2600);
+  toast(
+    () => {
+      const name = cardDef(k).name;
+      return L(`${name} unlocked${inHand ? ' and added to your next hand' : ''}`, `已解锁${name}${inHand ? '，并加入你的下一手牌' : ''}`);
+    },
+    'good',
+    2600,
+  );
   closeCardPick();
+});
+
+// A language switch while the market, the tile pick or the game-over screen is up: redraw them.
+onLangChange(() => {
+  if (shopOpen) renderShop();
+  if (pickResolve) renderCardPick();
+  if (!$('gameover').classList.contains('hidden')) showGameOver();
 });
 
 // ---------- input ----------
@@ -2144,7 +2391,14 @@ function revealMysteries(cells) {
   if (!found.length) return;
   const tiles = landReveals(found, (i) => 0.25 + i * 0.15);
   if (tiles.length < found.length) return; // a missile: its own toast
-  toast(`Uncovered ${tiles.map((f) => `a ${TERRAINS[f.terrain].name}`).join(', ')}!`, 'good', 2400);
+  toast(
+    () => L(
+      `Uncovered ${tiles.map((f) => `a ${TERRAINS[f.terrain].name}`).join(', ')}!`,
+      `发现了${tiles.map((f) => TERRAINS[f.terrain].name).join('、')}！`,
+    ),
+    'good',
+    2400,
+  );
 }
 
 // ---------- territory expansion (debug mode) ----------
@@ -2163,7 +2417,7 @@ function checkExpansion() {
   if (!full || expansion.active) return;
   expansion.show(grid);
   fog.setOptions(grid.expansionOptions());
-  toast('Territory full: pick a plot on the edge to expand', 'good');
+  toast(L('Territory full: pick a plot on the edge to expand', '领土已满：选择边缘的一块区域来扩张'), 'good');
 }
 
 function expand(option) {
@@ -2177,9 +2431,12 @@ function expand(option) {
   placement.cell = null; // force ghost revalidation
   rig.focus(...grid.territoryCenter());
   toast(
-    found.length
-      ? `Territory expanded · found ${found.map((f) => `a ${TERRAINS[f.terrain].name}`).join(', ')}!`
-      : 'Territory expanded',
+    () => found.length
+      ? L(
+          `Territory expanded · found ${found.map((f) => `a ${TERRAINS[f.terrain].name}`).join(', ')}!`,
+          `领土已扩张 · 发现了${found.map((f) => TERRAINS[f.terrain].name).join('、')}！`,
+        )
+      : L('Territory expanded', '领土已扩张'),
     'good',
   );
   updateHUD();
@@ -2191,7 +2448,13 @@ function setExpansionMode(on) {
   localStorage.setItem(MODE_KEY, on ? 'expansion' : 'free');
   debug.refreshMode?.();
   resetIsland();
-  toast(on ? 'Expansion mode on: fill your territory, then expand (new run)' : 'Free placement on: build anywhere next to your land (new run)', 'good', 2600);
+  toast(
+    on
+      ? L('Expansion mode on: fill your territory, then expand (new run)', '扩张模式开启：填满领土后再扩张（新一局）')
+      : L('Free placement on: build anywhere next to your land (new run)', '自由放置开启：可在你的土地旁任意建造（新一局）'),
+    'good',
+    2600,
+  );
 }
 
 function tryPlace() {
@@ -2203,13 +2466,13 @@ function tryPlace() {
   if (expansion.active) {
     const option = expansion.optionAt(hoveredCell());
     if (option) expand(option);
-    else toast('Territory full: click a highlighted plot to expand');
+    else toast(L('Territory full: click a highlighted plot to expand', '领土已满：点击高亮的区域来扩张'));
     return;
   }
   const piece = hand.piece;
   if (!piece) {
     if (tutorial.active) return tutorial.nudge();
-    toast(hand.isEmpty ? 'Hand used up: press Next turn' : 'Pick a piece from your hand');
+    toast(hand.isEmpty ? L('Hand used up: press Next turn', '手牌已用完：请按“下一回合”') : L('Pick a piece from your hand', '从手牌中选择一个板块'));
     return;
   }
   const cell = hoveredCell();
@@ -2229,7 +2492,7 @@ function tryPlace() {
     else if (piece.terrain === 'demolish2') {
       const targets = placement.demolishable(cells);
       targets.forEach(([x, z]) => demolish(x, z, true));
-      toast(`Demolished ${targets.length} tile${targets.length === 1 ? '' : 's'}`);
+      toast(L(`Demolished ${targets.length} tile${targets.length === 1 ? '' : 's'}`, `拆除了 ${targets.length} 个地块`));
     } else demolish(...cells[0]);
     return;
   }
@@ -2242,7 +2505,8 @@ function tryPlace() {
   if (!grid.expansionMode) revealMysteries(cells);
   frontier.rebuild(grid);
   updateHUD();
-  if (economyNow().idle > idleBefore) toast('No free workers: this building sits idle until you add housing', 'bad', 2400);
+  if (economyNow().idle > idleBefore)
+    toast(L('No free workers: this building sits idle until you add housing', '没有空闲人力：这座建筑将一直闲置，直到你建造更多住房'), 'bad', 2400);
   tutorial.notify('placed');
 }
 
@@ -2255,7 +2519,7 @@ function showPlacementCost(piece, cells) {
   const { workers, food } = pieceCost(piece);
   const rows = [];
   if (workers) rows.push(`<div class="row neg"><b>-${workers}</b>${ICONS.manpower}</div>`);
-  if (food) rows.push(`<div class="row neg"><b>-${food}</b>${ICONS.food}<span>/ season</span></div>`);
+  if (food) rows.push(`<div class="row neg"><b>-${food}</b>${ICONS.food}<span>${L('/ season', '/ 季')}</span></div>`);
   if (!rows.length) return;
   const cx = cells.reduce((s, c) => s + c[0], 0) / cells.length;
   const cz = cells.reduce((s, c) => s + c[1], 0) / cells.length;
@@ -2295,7 +2559,7 @@ function spark(cells) {
     }
   }
   if (!hit.length) {
-    toast('Spark fizzled: nothing in range produces oil or food', 'bad');
+    toast(L('Spark fizzled: nothing in range produces oil or food', '火花熄灭了：范围内没有能产出石油或食物的地块'), 'bad');
     updateHUD();
     return;
   }
@@ -2333,7 +2597,7 @@ function demolish(x, z, quiet = false) {
   if (cell.onRuins && cell.terrain !== 'ruins') addTile(x, z, 'ruins');
   frontier.rebuild(grid);
   placement.cell = null; // force ghost revalidation
-  if (!quiet) toast(`Demolished the ${name}`);
+  if (!quiet) toast(L(`Demolished the ${name}`, `拆除了${name}`));
   updateHUD();
 }
 
@@ -2384,8 +2648,9 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'c') rig.focus(...(grid.expansionMode ? grid.territoryCenter() : grid.centroid()));
   else if (k === 'n') nukeRandomTile();
   else if (k === 'm' && !e.repeat) {
+    const blocked = turn.over || striking || shopOpen || eventOpen || payout.active;
     const msg = previewMissileStrike();
-    if (msg.startsWith('Finish') || msg.startsWith('Game over')) toast(msg);
+    if (blocked) toast(msg);
   }
   else if (k === 'p' && !e.repeat) debugShop();
   else if (k === 'v' && !e.repeat) debugEvent();
@@ -2413,12 +2678,18 @@ $('btnReroll').addEventListener('click', (e) => {
     shuffle();
     hand.reroll();
     updateHUD();
-    toast(`Hand rerolled for free (${turn.freeRerolls} free reroll${turn.freeRerolls === 1 ? '' : 's'} left)`, 'good');
+    toast(
+      L(
+        `Hand rerolled for free (${turn.freeRerolls} free reroll${turn.freeRerolls === 1 ? '' : 's'} left)`,
+        `已免费重抽手牌（剩余 ${turn.freeRerolls} 次免费重抽）`,
+      ),
+      'good',
+    );
     return;
   }
   const cost = rerollCost();
   if (turn.stockpile < cost) {
-    toast(`Not enough oil to reroll (costs ${cost})`, 'bad');
+    toast(L(`Not enough oil to reroll (costs ${cost})`, `石油不足，无法重抽（花费 ${cost}）`), 'bad');
     return;
   }
   shuffle();
@@ -2426,7 +2697,7 @@ $('btnReroll').addEventListener('click', (e) => {
   turn.rerolls++;
   turn.stockpile -= cost;
   updateHUD();
-  toast(`Hand rerolled: -${cost} oil (next reroll costs ${rerollCost()})`);
+  toast(L(`Hand rerolled: -${cost} oil (next reroll costs ${rerollCost()})`, `已重抽手牌：-${cost} 石油（下次重抽花费 ${rerollCost()}）`));
 });
 $('btnNext').addEventListener('click', (e) => {
   e.currentTarget.blur(); // so Space doesn't re-click it
@@ -2513,7 +2784,7 @@ function resetIsland(opts) {
   $('shop').classList.add('hidden');
   document.body.classList.remove('shopping');
   $('gameover').classList.add('hidden');
-  $('report').textContent = 'No seasons played yet.';
+  $('report').textContent = L('No seasons played yet.', '尚未度过任何季节。');
   addTile(0, 0, SEED_TERRAIN, 0, true); // the game opens with the Capital already standing
   if (tut) {
     // Year 0: the old Overseer's last year. Two strikes already, one hand-placed "?" (an unexploded missile), scripted hands.
@@ -2552,31 +2823,49 @@ function skipTutorial() {
 async function playTutorialIntro() {
   const run = runId;
   const live = () => run === runId;
-  const OVERLORD = 'The Overlord';
-  const say = async (text) => live() && dialogue.say(OVERLORD, text);
+  const overlord = () => 'The Overlord'; // speaker key (portrait); dialogue.js shows the name
+  const say = async (text) => live() && dialogue.say(overlord(), text);
   eventOpen = true;
   hand.select(-1);
   dialogue.open({
     kind: 'pressure',
-    kindLabel: 'Year 0 · Tutorial',
-    title: 'The Last Warning',
-    effect: `Two tributes missed · ${TUTORIAL_QUOTA} barrels due after Winter · one more miss and the city falls`,
+    kindLabel: L('Year 0 · Tutorial', '第 0 年 · 教程'),
+    title: L('The Last Warning', '最后通牒'),
+    effect: L(
+      `Two tributes missed · ${TUTORIAL_QUOTA} barrels due after Winter · one more miss and the city falls`,
+      `已两次失职 · 冬季结束后须上缴 ${TUTORIAL_QUOTA} 桶 · 再失职一次，城市就会沦陷`,
+    ),
   });
-  await say('Overseer. Two tributes missed. Two.');
-  await say('My legions march against the technobarbarians of the Wastelands, and my tanks are drinking sand. Because of you.');
+  await say(L('Overseer. Two tributes missed. Two.', '总督。两次未缴贡品。两次。'));
+  await say(
+    L(
+      'My legions march against the technobarbarians of the Wastelands, and my tanks are drinking sand. Because of you.',
+      '我的军团正在荒原上征讨技术蛮族，而我的坦克却在喝沙子。都是因为你。',
+    ),
+  );
   if (!live()) return;
-  const i = await dialogue.ask(OVERLORD, `This is your last year. ${TUTORIAL_QUOTA} barrels when Winter ends, or I find an Overseer who can count.`, [
-    { text: 'You will have them, Overlord.' },
-    { text: 'The wells are drying up...' },
-    { text: 'I need more time.' },
-  ]);
+  const i = await dialogue.ask(
+    overlord(),
+    L(
+      `This is your last year. ${TUTORIAL_QUOTA} barrels when Winter ends, or I find an Overseer who can count.`,
+      `这是你的最后一年。冬季结束时交出 ${TUTORIAL_QUOTA} 桶，否则我就去找一个会数数的总督。`,
+    ),
+    [
+      { text: L('You will have them, Overlord.', '您会如数得到的，霸主。') },
+      { text: L('The wells are drying up...', '油井正在枯竭……') },
+      { text: L('I need more time.', '我需要更多时间。') },
+    ],
+  );
   const retorts = [
-    'I have heard that before. Twice.',
-    'Then build more of them. Your advisor will show you how, since you seem to have forgotten.',
-    'Time is the one thing you have run out of.',
+    L('I have heard that before. Twice.', '这话我听过。两次。'),
+    L(
+      'Then build more of them. Your advisor will show you how, since you seem to have forgotten.',
+      '那就多建几座。既然你似乎已经忘了怎么做，就让你的顾问教教你。',
+    ),
+    L('Time is the one thing you have run out of.', '时间，恰恰是你已经用光的东西。'),
   ];
   await say(retorts[i]);
-  await say('Do not make me come back early.');
+  await say(L('Do not make me come back early.', '别逼我提前回来。'));
   if (!live()) return;
   await dialogue.leave();
   if (!live()) return;
@@ -2591,8 +2880,8 @@ async function playTutorialIntro() {
 async function playPredecessorJudgement({ quota, delivered }) {
   const run = runId;
   const live = () => run === runId;
-  const OVERLORD = 'The Overlord';
-  const say = async (text) => live() && dialogue.say(OVERLORD, text);
+  const overlord = () => 'The Overlord'; // speaker key (portrait); dialogue.js shows the name
+  const say = async (text) => live() && dialogue.say(overlord(), text);
   eventOpen = true;
   hand.select(-1);
   turn.strikes = MAX_STRIKES;
@@ -2600,21 +2889,40 @@ async function playPredecessorJudgement({ quota, delivered }) {
   dialogue.allowSkip(true);
   dialogue.open({
     kind: 'disaster',
-    kindLabel: `Tribute missed · strike ${MAX_STRIKES} of ${MAX_STRIKES}`,
-    title: "The Overlord's Judgement",
-    effect: `Short by ${quota - delivered} barrels · the Overseer is relieved of duty`,
+    kindLabel: L(`Tribute missed · strike ${MAX_STRIKES} of ${MAX_STRIKES}`, `贡品未缴 · 失职 ${MAX_STRIKES}/${MAX_STRIKES}`),
+    title: L("The Overlord's Judgement", '霸主的审判'),
+    effect: L(
+      `Short by ${quota - delivered} barrels · the Overseer is relieved of duty`,
+      `短缺 ${quota - delivered} 桶 · 总督被解除职务`,
+    ),
   });
-  await say(`${delivered} barrels. I asked for ${quota}.`);
-  await say('An old missile? An accident? Three years, Overseer. Three years of accidents.');
+  await say(L(`${delivered} barrels. I asked for ${quota}.`, `${delivered} 桶。我要的是 ${quota} 桶。`));
+  await say(
+    L(
+      'An old missile? An accident? Three years, Overseer. Three years of accidents.',
+      '一枚旧导弹？一场意外？三年了，总督。三年的意外。',
+    ),
+  );
   if (!live()) return;
   const replies = [
-    ['The missile was not my fault!', 'Nothing ever is. That is precisely the problem.'],
-    ['Give me one more year.', 'I gave you three. I am not a generous man; I was a patient one.'],
-    ['...', 'Nothing to say? For once, you have pleased me.'],
+    [
+      L('The missile was not my fault!', '那枚导弹不是我的错！'),
+      L('Nothing ever is. That is precisely the problem.', '从来都不是你的错。问题恰恰就在这里。'),
+    ],
+    [
+      L('Give me one more year.', '再给我一年。'),
+      L('I gave you three. I am not a generous man; I was a patient one.', '我给了你三年。我从不慷慨，只是曾经有耐心。'),
+    ],
+    [L('...', '……'), L('Nothing to say? For once, you have pleased me.', '无话可说？难得你让我满意了一次。')],
   ];
-  const i = await dialogue.ask(OVERLORD, 'Anything to say for yourself?', replies.map(([text]) => ({ text })));
+  const i = await dialogue.ask(overlord(), L('Anything to say for yourself?', '你还有什么要为自己辩解的吗？'), replies.map(([text]) => ({ text })));
   await say(replies[i][1]);
-  await say('The Hive City stays. It is mine, after all. Everything else you built... goes with you.');
+  await say(
+    L(
+      'The Hive City stays. It is mine, after all. Everything else you built... goes with you.',
+      '蜂巢城留下。毕竟它是我的。你建造的其他一切……都随你一起消失。',
+    ),
+  );
   if (!live()) return;
   await dialogue.leave();
   if (!live()) return;
@@ -2630,7 +2938,10 @@ async function playPredecessorJudgement({ quota, delivered }) {
 async function fadeToYearOne() {
   markTutorialDone();
   const fade = $('fade');
-  fade.querySelector('.fade-text').innerHTML = 'Some weeks later<br /><small>A new Overseer arrives at the Hive City</small>';
+  fade.querySelector('.fade-text').innerHTML = L(
+    'Some weeks later<br /><small>A new Overseer arrives at the Hive City</small>',
+    '数周之后<br /><small>一位新总督抵达蜂巢城</small>',
+  );
   fade.classList.add('on');
   const run = runId;
   await wait(3.2);
@@ -2655,21 +2966,35 @@ async function fadeToYearOne() {
  * then he comes back to gloat. On the final strike one of them hits the Capital.
  */
 async function playTributeFailure({ quota, delivered, short, missiles: count, strikes, final }) {
-  const OVERLORD = 'The Overlord';
+  const overlord = () => 'The Overlord'; // speaker key (portrait); dialogue.js shows the name
   const run = runId;
   const live = () => run === runId;
-  const say = async (text) => live() && text && dialogue.say(OVERLORD, text);
+  const say = async (text) => live() && text && dialogue.say(overlord(), text);
   const left = MAX_STRIKES - strikes;
-  const many = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'][count] ?? String(count);
+  const many = () =>
+    L(
+      ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'][count] ?? String(count),
+      ['', '一', '两', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二'][count] ?? String(count),
+    );
   eventOpen = true;
   hand.select(-1);
   const banner = {
     kind: 'disaster',
-    kindLabel: `Tribute missed · strike ${strikes} of ${MAX_STRIKES}`,
-    title: final ? "The Overlord's Judgement" : strikes === MAX_STRIKES - 1 ? 'Last Warning' : 'The Overlord Is Displeased',
+    kindLabel: L(`Tribute missed · strike ${strikes} of ${MAX_STRIKES}`, `贡品未缴 · 失职 ${strikes}/${MAX_STRIKES}`),
+    title: final
+      ? L("The Overlord's Judgement", '霸主的审判')
+      : strikes === MAX_STRIKES - 1
+        ? L('Last Warning', '最后警告')
+        : L('The Overlord Is Displeased', '霸主很不满'),
     effect: final
-      ? `Short by ${short} barrels · ${count} missile${count === 1 ? '' : 's'} · the Hive City falls`
-      : `Short by ${short} barrels · ${count} missile${count === 1 ? '' : 's'} · no market this year · ${left} more miss${left === 1 ? '' : 'es'} and the city falls`,
+      ? L(
+          `Short by ${short} barrels · ${count} missile${count === 1 ? '' : 's'} · the Hive City falls`,
+          `短缺 ${short} 桶 · ${count} 枚导弹 · 蜂巢城沦陷`,
+        )
+      : L(
+          `Short by ${short} barrels · ${count} missile${count === 1 ? '' : 's'} · no market this year · ${left} more miss${left === 1 ? '' : 'es'} and the city falls`,
+          `短缺 ${short} 桶 · ${count} 枚导弹 · 今年没有市场 · 再失职 ${left} 次，城市就会沦陷`,
+        ),
   };
   dialogue.open(banner);
 
@@ -2684,18 +3009,28 @@ async function playTributeFailure({ quota, delivered, short, missiles: count, st
   };
 
   if (final) {
-    await say('Three times.');
-    await say(`${delivered} barrels, when I asked for ${quota}. Three years, three failures.`);
-    await say('I gave you a city, its workers and my patience. You squandered all three.');
+    await say(L('Three times.', '三次了。'));
+    await say(
+      L(
+        `${delivered} barrels, when I asked for ${quota}. Three years, three failures.`,
+        `我要 ${quota} 桶，你只交了 ${delivered} 桶。三年，三次失败。`,
+      ),
+    );
+    await say(
+      L(
+        'I gave you a city, its workers and my patience. You squandered all three.',
+        '我给了你一座城市、城里的劳工，还有我的耐心。你把这三样全都挥霍光了。',
+      ),
+    );
     if (!live()) return;
     const replies = [
-      ['I did everything I could.', 'Then everything was not enough. Launch them all.'],
-      ['The wastes will take you too, one day.', 'Perhaps. But not today. Burn it.'],
-      ['Please...', 'Begging. How fitting. Burn it to the sand.'],
+      [L('I did everything I could.', '我已经尽力了。'), L('Then everything was not enough. Launch them all.', '那你的尽力还远远不够。全部发射。')],
+      [L('The wastes will take you too, one day.', '总有一天，荒原也会吞没你。'), L('Perhaps. But not today. Burn it.', '也许吧。但不是今天。烧了它。')],
+      [L('Please...', '求求您……'), L('Begging. How fitting. Burn it to the sand.', '乞求。真是恰如其分。把它烧成一片沙地。')],
     ];
-    const i = await dialogue.ask(OVERLORD, 'Do you have any last words, Overseer?', replies.map(([text]) => ({ text })));
+    const i = await dialogue.ask(overlord(), L('Do you have any last words, Overseer?', '还有什么遗言吗，总督？'), replies.map(([text]) => ({ text })));
     await say(replies[i][1]);
-    await say(`${many} missiles, Overseer. Watch your city burn.`);
+    await say(() => L(`${many()} missiles, Overseer. Watch your city burn.`, `${many()}枚导弹，总督。看着你的城市燃烧吧。`));
     await strike(pickStrikeTargets(count, true), { restoreCamera: false });
     if (live()) eventOpen = false;
     return;
@@ -2705,29 +3040,46 @@ async function playTributeFailure({ quota, delivered, short, missiles: count, st
   if (left === 1) {
     script = {
       lines: [
-        'Again. You have failed me again.',
-        `${delivered} barrels. My generals no longer say your name; they just call you "the shortfall".`,
+        () => L('Again. You have failed me again.', '又一次。你又一次让我失望了。'),
+        () =>
+          L(
+            `${delivered} barrels. My generals no longer say your name; they just call you "the shortfall".`,
+            `${delivered} 桶。我的将军们已经不提你的名字了，他们直接叫你“亏空”。`,
+          ),
       ],
-      launch: `${many} missile${count === 1 ? '' : 's'} this time. Look to the sky, Overseer.`,
-      ask: 'This is your last warning. Fail me once more, and I will raze the Hive City to the sand.',
-      replies: [
-        ["You'll have your oil. All of it.", 'Words. Bring me barrels.'],
-        ['Give me more time.', 'Time is the one thing I have stopped giving you.'],
-        ['Then do it now.', 'Ha! No. I want to watch you try first.'],
+      launch: () =>
+        L(`${many()} missile${count === 1 ? '' : 's'} this time. Look to the sky, Overseer.`, `这次是${many()}枚导弹。抬头看看天空吧，总督。`),
+      ask: () =>
+        L(
+          'This is your last warning. Fail me once more, and I will raze the Hive City to the sand.',
+          '这是最后的警告。再让我失望一次，我就把蜂巢城夷为沙地。',
+        ),
+      replies: () => [
+        [L("You'll have your oil. All of it.", '您会得到您的石油。一滴不少。'), L('Words. Bring me barrels.', '空话。把油桶给我拿来。')],
+        [L('Give me more time.', '再给我一些时间。'), L('Time is the one thing I have stopped giving you.', '时间，正是我不会再给你的东西。')],
+        [L('Then do it now.', '那就现在动手吧。'), L('Ha! No. I want to watch you try first.', '哈！不。我要先看着你挣扎一番。')],
       ],
     };
   } else {
     script = {
       lines: [
-        `Short. ${delivered} barrels, when I asked for ${quota}.`,
-        'My tanks sat idle in the dunes while the technobarbarians laughed. Because of you, Overseer.',
+        () => L(`Short. ${delivered} barrels, when I asked for ${quota}.`, `不够。我要 ${quota} 桶，你只交了 ${delivered} 桶。`),
+        () =>
+          L(
+            'My tanks sat idle in the dunes while the technobarbarians laughed. Because of you, Overseer.',
+            '我的坦克在沙丘里趴窝，技术蛮族在一旁嘲笑。都是因为你，总督。',
+          ),
       ],
-      launch: count === 1 ? 'Perhaps a demonstration will focus your mind. One missile. Watch the sky.' : `Perhaps a demonstration will focus your mind. ${many} missiles. Watch the sky.`,
-      ask: 'There will be no market for you this year. Fail me twice more and your city burns.',
-      replies: [
-        ["It won't happen again.", "See that it doesn't."],
-        ['The wells ran dry.', 'Then dig new ones. With your bare hands, if you must.'],
-        ['...', 'Silence will not fill my tanks.'],
+      launch: () =>
+        count === 1
+          ? L('Perhaps a demonstration will focus your mind. One missile. Watch the sky.', '也许一次示范能让你集中精神。一枚导弹。看好天空。')
+          : L(`Perhaps a demonstration will focus your mind. ${many()} missiles. Watch the sky.`, `也许一次示范能让你集中精神。${many()}枚导弹。看好天空。`),
+      ask: () =>
+        L('There will be no market for you this year. Fail me twice more and your city burns.', '今年不会为你开放市场。再失败两次，你的城市就会化为火海。'),
+      replies: () => [
+        [L("It won't happen again.", '不会再有下次了。'), L("See that it doesn't.", '最好如此。')],
+        [L('The wells ran dry.', '油井干涸了。'), L('Then dig new ones. With your bare hands, if you must.', '那就挖新的。必要的话，用你的双手去挖。')],
+        [L('...', '……'), L('Silence will not fill my tanks.', '沉默填不满我的油箱。')],
       ],
     };
   }
@@ -2741,14 +3093,21 @@ async function playTributeFailure({ quota, delivered, short, missiles: count, st
     eventOpen = true;
     dialogue.open(banner); // he comes back to gloat
   }
-  await say(
+  await say(() =>
     lost.length
-      ? `I have left a reminder where your ${listLost(lost)} used to stand.`
-      : 'You have nothing standing worth one of my missiles. Remember that. I will.',
+      ? L(
+          `I have left a reminder where your ${listLost(lost)} used to stand.`,
+          `我在你的${listLost(lost)}原本矗立的地方，留下了一点纪念。`,
+        )
+      : L(
+          'You have nothing standing worth one of my missiles. Remember that. I will.',
+          '你连一座值得我浪费一枚导弹的建筑都没有。记住这一点。我会记住的。',
+        ),
   );
   if (!live()) return;
-  const i = await dialogue.ask(OVERLORD, script.ask, script.replies.map(([text]) => ({ text })));
-  await say(script.replies[i][1]);
+  const replies = script.replies();
+  const i = await dialogue.ask(overlord(), script.ask, replies.map((_, k) => ({ text: () => script.replies()[k][0] })));
+  await say(() => script.replies()[i][1]);
   // Not the end: he stays on and moves straight on to next year's target (startNewYear).
 }
 
@@ -2756,33 +3115,48 @@ async function playTributeFailure({ quota, delivered, short, missiles: count, st
 let introRun = 0;
 async function playIntro() {
   const run = ++introRun; // a reset mid-intro cancels the old one
-  const OVERLORD = 'The Overlord';
-  const say = async (text) => run === introRun && dialogue.say(OVERLORD, text);
+  const overlord = () => 'The Overlord'; // speaker key (portrait); dialogue.js shows the name
+  const say = async (text) => run === introRun && dialogue.say(overlord(), text);
   eventOpen = true;
   hand.select(-1);
-  dialogue.open({ kind: 'pressure', kindLabel: 'A new Overseer', title: 'The Hive City', effect: 'Year 1 · Spring' });
-  await say('So. You are the new Overseer of the Hive City.');
-  await say('Your predecessor... disappointed me. I trust you will not.');
-  await say('My legions march against the technobarbarians of the Wastelands. Scrap-eaters. Machine-worshippers. Vermin.');
-  await say('War is thirsty work. My tanks, my airships, my engines of conquest: all of them drink oil.');
+  dialogue.open({
+    kind: 'pressure',
+    kindLabel: L('A new Overseer', '新任总督'),
+    title: L('The Hive City', '蜂巢城'),
+    effect: L('Year 1 · Spring', '第 1 年 · 春'),
+  });
+  await say(L('So. You are the new Overseer of the Hive City.', '那么。你就是蜂巢城的新任总督。'));
+  await say(L('Your predecessor... disappointed me. I trust you will not.', '你的前任……让我失望了。我相信你不会。'));
+  await say(
+    L(
+      'My legions march against the technobarbarians of the Wastelands. Scrap-eaters. Machine-worshippers. Vermin.',
+      '我的军团正在荒原上征讨技术蛮族。啃废铁的家伙。机器崇拜者。害虫。',
+    ),
+  );
+  await say(
+    L(
+      'War is thirsty work. My tanks, my airships, my engines of conquest: all of them drink oil.',
+      '战争是件口渴的差事。我的坦克、我的飞艇、我的征服机器：全都要喝石油。',
+    ),
+  );
   if (run !== introRun) return;
-  const i = await dialogue.ask(OVERLORD, 'You will send me a constant supply. Every year. Without fail.', [
-    { text: 'The oil will flow, Overlord.' },
-    { text: 'And if the wells run dry?' },
-    { text: 'What do I get in return?' },
+  const i = await dialogue.ask(overlord(), L('You will send me a constant supply. Every year. Without fail.', '你要源源不断地向我供油。每一年。绝不可断。'), [
+    { text: L('The oil will flow, Overlord.', '石油会源源不断，霸主。') },
+    { text: L('And if the wells run dry?', '如果油井干涸了呢？') },
+    { text: L('What do I get in return?', '那我能得到什么回报？') },
   ]);
   const retorts = [
-    'Of course it will.',
-    'Then you will dig deeper. With your hands, if you must.',
-    'You get to keep your city. And your head.',
+    L('Of course it will.', '当然会。'),
+    L('Then you will dig deeper. With your hands, if you must.', '那你就挖得更深。必要的话，用你的双手。'),
+    L('You get to keep your city. And your head.', '你可以保住你的城市。还有你的脑袋。'),
   ];
   await say(retorts[i]);
-  await say('Good luck, Overseer. You will need it.');
+  await say(L('Good luck, Overseer. You will need it.', '祝你好运，总督。你会需要它的。'));
   if (run !== introRun) return;
   await dialogue.leave();
   if (run !== introRun) return;
   eventOpen = false;
-  toast(`First tribute: ${turn.quota} barrels, due after Winter`, 'bad', 3200);
+  toast(L(`First tribute: ${turn.quota} barrels, due after Winter`, `首次贡品：${turn.quota} 桶，冬季结束后上缴`), 'bad', 3200);
 }
 
 let last = performance.now();
@@ -2967,7 +3341,9 @@ factory.ready.then(() => {
     return true;
   };
   if (go()) return;
-  $('loadingHint').textContent = 'Click to begin';
+  // data-en / data-zh: applyStatic() swaps it if the language changes on the loading screen.
+  Object.assign($('loadingHint').dataset, { en: 'Click to begin', zh: '点击开始' });
+  $('loadingHint').textContent = L('Click to begin', '点击开始');
   const onGesture = (e) => {
     if (e.type === 'pointerdown') swallowNextClick = true;
     if (go()) {
@@ -3000,4 +3376,4 @@ factory.extrasReady.then(async (extras) => {
 });
 
 // Handy for debugging in the console.
-window.tileIsland = { tutorial, resetIsland, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };
+window.tileIsland = { tutorial, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };

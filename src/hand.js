@@ -2,6 +2,7 @@ import { pieceOf, randomPiece, rotateCells, shapeFits, SHAPES } from './pieces.j
 import { ACTIONS, ICONS, TERRAINS, cardDef, cardText, hex, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
 import { WORKERS } from './economy.js';
 import { bindCardHover, chirp, deal as dealSfx, tick } from './sfx.js';
+import { L } from './i18n.js';
 
 const MP_ICON = ICONS.manpower;
 const FOOD_ICON = ICONS.food;
@@ -12,9 +13,9 @@ const FOOD_ICON = ICONS.food;
  */
 function costBadge(p, t) {
   const c = pieceCost(p);
-  if (c.workers) return `<div class="badge" title="manpower needed">-${c.workers}${MP_ICON}</div>`;
-  if (c.food) return `<div class="badge" title="food eaten each season">-${c.food}${FOOD_ICON}</div>`;
-  return `<div class="badge free" title="no manpower needed">0${MP_ICON}</div>`;
+  if (c.workers) return `<div class="badge" title="${L('manpower needed', '所需人力')}">-${c.workers}${MP_ICON}</div>`;
+  if (c.food) return `<div class="badge" title="${L('food eaten each season', '每季消耗的食物')}">-${c.food}${FOOD_ICON}</div>`;
+  return `<div class="badge free" title="${L('no manpower needed', '无需人力')}">0${MP_ICON}</div>`;
 }
 
 /** What a piece takes (per tile × tiles): workers it needs, or food it eats each season. Same as its card badge. */

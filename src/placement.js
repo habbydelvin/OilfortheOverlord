@@ -3,6 +3,7 @@ import { pieceOffsets } from './pieces.js';
 import { inWorld } from './grid.js';
 import { hasBlockout } from './models.js';
 import { ACTIONS, TERRAINS, cardDef, isBuilding, isCamp, applyTileGap, fitFull } from './tiles.js';
+import { L, both, onLangChange } from './i18n.js';
 
 const OK_COLOR = new THREE.Color(0x8be39a);
 const BAD_COLOR = new THREE.Color(0xe0563f);
@@ -40,6 +41,10 @@ export class Placement {
     this.footGeo = new THREE.PlaneGeometry(s, s).rotateX(-Math.PI / 2);
     this.blockMat = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.82, roughness: 0.8 });
     this.footMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.4, depthWrite: false });
+    // The reason text is cached per cell: rebuild it in the new language.
+    onLangChange(() => {
+      if (this.piece && this.cell) this.result = this.validate(this.cellsAt(this.cell));
+    });
   }
 
   setPiece(piece) {
@@ -106,44 +111,44 @@ export class Placement {
 
   validate(cells) {
     if (this.piece?.terrain === 'spark') {
-      if (!cells.some(([x, z]) => this.grid.has(x, z))) return { ok: false, reason: 'No tiles in range' };
+      if (!cells.some(([x, z]) => this.grid.has(x, z))) return { ok: false, reason: L('No tiles in range', '范围内没有地块') };
       return { ok: true, reason: '' };
     }
     if (this.piece?.terrain === 'demolish') {
       const cell = this.grid.get(...cells[0]);
-      if (!cell) return { ok: false, reason: 'Nothing to demolish here' };
-      if (cell.terrain === 'capital') return { ok: false, reason: "A Capital can't be demolished" };
-      if (isCamp(cell.terrain)) return { ok: false, reason: 'Send in the Militia to clear bandits' };
+      if (!cell) return { ok: false, reason: L('Nothing to demolish here', '这里没有可拆除的东西') };
+      if (cell.terrain === 'capital') return { ok: false, reason: L("A Capital can't be demolished", '首都不能被拆除') };
+      if (isCamp(cell.terrain)) return { ok: false, reason: L('Send in the Militia to clear bandits', '派遣民兵来清除土匪') };
       return { ok: true, reason: '' };
     }
     if (this.piece?.terrain === 'demolish2') {
-      if (!this.demolishable(cells).length) return { ok: false, reason: 'Nothing to demolish here' };
+      if (!this.demolishable(cells).length) return { ok: false, reason: L('Nothing to demolish here', '这里没有可拆除的东西') };
       return { ok: true, reason: '' };
     }
     if (this.piece?.terrain === 'militia') {
       const cell = this.grid.get(...cells[0]);
-      if (!cell || !isCamp(cell.terrain)) return { ok: false, reason: 'The militia only clears bandit camps' };
+      if (!cell || !isCamp(cell.terrain)) return { ok: false, reason: L('The militia only clears bandit camps', '民兵只能清除匪营') };
       return { ok: true, reason: '' };
     }
     // Optional extra rule (the tutorial: only the highlighted cells).
     const guarded = this.guard?.(cells, this.piece);
     if (guarded) return guarded;
     const building = this.piece && isBuilding(this.piece.terrain);
-    if (cells.some(([x, z]) => !inWorld(x, z))) return { ok: false, reason: 'Edge of the world' };
-    if (cells.some(([x, z]) => !this.grid.allowed(x, z))) return { ok: false, reason: 'Outside your territory' };
+    if (cells.some(([x, z]) => !inWorld(x, z))) return { ok: false, reason: L('Edge of the world', '世界边缘') };
+    if (cells.some(([x, z]) => !this.grid.allowed(x, z))) return { ok: false, reason: L('Outside your territory', '超出你的领地') };
     if (!this.grid.expansionMode && this.mysteries && cells.some(([x, z]) => this.mysteries.has(x, z)))
-      return { ok: false, reason: 'Build next to a ? site to uncover it' };
+      return { ok: false, reason: L('Build next to a ? site to uncover it', '在“?”神秘地点旁建造即可揭开它') };
     for (const [x, z] of cells) {
       const cell = this.grid.get(x, z);
       if (!cell) continue;
       const t = TERRAINS[cell.terrain];
       if (building && t.buildable) continue; // buildings may go on Wasteland / Ruins
-      if (t.buildable) return { ok: false, reason: `Only buildings can go on ${t.name}` };
-      return { ok: false, reason: `Can't build on ${t.name}` };
+      if (t.buildable) return { ok: false, reason: both(() => L(`Only buildings can go on ${t.name}`, `只有建筑可以放在${t.name}上`)) };
+      return { ok: false, reason: both(() => L(`Can't build on ${t.name}`, `不能在${t.name}上建造`)) };
     }
     // Every piece must touch existing land (cells it builds over count as touching).
     if (!cells.some(([x, z]) => this.grid.has(x, z) || this.grid.touchesIsland(x, z)))
-      return { ok: false, reason: 'Pieces must touch your land' };
+      return { ok: false, reason: L('Pieces must touch your land', '板块必须与你的领地相连') };
     return { ok: true, reason: '' };
   }
 

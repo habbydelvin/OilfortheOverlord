@@ -1,0 +1,38 @@
+/*
+ * Chinese characters (src/i18n.js). These faces only cover Chinese characters and full-width punctuation
+ * (unicode-range), so wherever they sit in a font stack they never draw a Latin letter or a digit: English text
+ * keeps exactly the fonts it had. Put 'OTO Han Sans' (or 'OTO Han Serif') before the generic family of every stack.
+ * Each face is the first of these installed fonts: macOS, Windows, then Linux / Android.
+ */
+@font-face {
+  font-family: 'OTO Han Sans';
+  font-weight: 100 599;
+  src: local('PingFangSC-Regular'), local('PingFang SC'), local('Microsoft YaHei'), local('Microsoft YaHei UI'), local('NotoSansSC-Regular'),
+    local('Noto Sans SC'), local('NotoSansCJKsc-Regular'), local('Noto Sans CJK SC'), local('SourceHanSansSC-Regular'), local('Source Han Sans SC'),
+    local('Hiragino Sans GB W3'), local('WenQuanYi Micro Hei');
+  unicode-range: U+2E80-2FDF, U+3000-303F, U+3100-312F, U+31A0-31BF, U+3200-33FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF, U+20000-2FA1F;
+}
+@font-face {
+  font-family: 'OTO Han Sans';
+  font-weight: 600 900;
+  src: local('PingFangSC-Semibold'), local('PingFang SC Semibold'), local('Microsoft YaHei Bold'), local('Microsoft YaHei UI Bold'), local('NotoSansSC-Bold'),
+    local('Noto Sans SC Bold'), local('NotoSansCJKsc-Bold'), local('Noto Sans CJK SC Bold'), local('SourceHanSansSC-Bold'), local('Source Han Sans SC Bold'),
+    local('Hiragino Sans GB W6'), local('Microsoft YaHei'), local('PingFang SC');
+  unicode-range: U+2E80-2FDF, U+3000-303F, U+3100-312F, U+31A0-31BF, U+3200-33FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF, U+20000-2FA1F;
+}
+@font-face {
+  font-family: 'OTO Han Serif';
+  font-weight: 100 599;
+  src: local('STSongti-SC-Regular'), local('Songti SC Regular'), local('Songti SC'), local('NotoSerifSC-Regular'), local('Noto Serif SC'),
+    local('NotoSerifCJKsc-Regular'), local('Noto Serif CJK SC'), local('SourceHanSerifSC-Regular'), local('Source Han Serif SC'), local('STSong'),
+    local('SimSun'), local('Microsoft YaHei');
+  unicode-range: U+2E80-2FDF, U+3000-303F, U+3100-312F, U+31A0-31BF, U+3200-33FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF, U+20000-2FA1F;
+}
+@font-face {
+  font-family: 'OTO Han Serif';
+  font-weight: 600 900;
+  src: local('STSongti-SC-Bold'), local('Songti SC Bold'), local('NotoSerifSC-Bold'), local('Noto Serif SC Bold'), local('NotoSerifCJKsc-Bold'),
+    local('Noto Serif CJK SC Bold'), local('SourceHanSerifSC-Bold'), local('Source Han Serif SC Bold'), local('STSong'), local('SimSun'),
+    local('Microsoft YaHei Bold'), local('Microsoft YaHei');
+  unicode-range: U+2E80-2FDF, U+3000-303F, U+3100-312F, U+31A0-31BF, U+3200-33FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF, U+20000-2FA1F;
+}

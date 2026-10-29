@@ -9,7 +9,7 @@
  * Remove the import in main.js to go back to the previous look.
  */
 :root {
-  --dp-serif: 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  --dp-serif: 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, 'OTO Han Serif', serif;
   --dp-cream: #f0e4c8;
   --dp-muted: #b8ad9c;
   --dp-head: #e8b45a; /* gold headings */
@@ -86,7 +86,7 @@
 /* The cards keep their own lettering. */
 .card,
 #inspect .card-big {
-  font-family: 'Avenir Next', 'Nunito', 'Segoe UI', system-ui, sans-serif;
+  font-family: 'Avenir Next', 'Nunito', 'Segoe UI', 'OTO Han Sans', system-ui, sans-serif;
 }
 
 /* ---------- steel windows: Controls, game over ---------- */
@@ -438,9 +438,9 @@
   color: var(--dp-cream);
 }
 
-/* ---------- bottom left: music + debug missile, steel in a gunmetal ring ---------- */
+/* ---------- bottom left: music + language, steel in a gunmetal ring ---------- */
 #music,
-#btnMissileTest {
+#btnLang {
   background: var(--dp-metal-dark);
   box-shadow: inset 0 0 0 1px #0a0a0a, inset 0 0 0 3px #6a7074, inset 0 0 0 4px #151617, 0 2px 8px rgba(0, 0, 0, 0.6);
 }

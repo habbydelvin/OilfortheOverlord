@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SHAPES, rotateCells } from './pieces.js';
+import { L, onLangChange } from './i18n.js';
 
 /**
  * Year 0: the tutorial. You play the last year of the previous Overseer (the one the Overlord mentions
@@ -31,7 +32,11 @@ export const tutorialDone = () => localStorage.getItem(TUTORIAL_KEY) === '1';
 export const markTutorialDone = () => localStorage.setItem(TUTORIAL_KEY, '1');
 
 const CAPITAL = [[0, 0]];
-const ROTATE_HINT = '<div class="coach-hint">It does not fit this way round. Rotate it: <b>R</b>, <b>right-click</b>, or the <b>mouse wheel</b> while dragging.</div>';
+const rotateHint = () =>
+  L(
+    '<div class="coach-hint">It does not fit this way round. Rotate it: <b>R</b>, <b>right-click</b>, or the <b>mouse wheel</b> while dragging.</div>',
+    '<div class="coach-hint">这个方向放不进去。旋转它：拖动时按 <b>R</b>、<b>右键</b>，或滚动<b>鼠标滚轮</b>。</div>',
+  );
 
 /**
  * The script. Each step:
@@ -50,67 +55,67 @@ const STEPS = [
   {
     wait: 'next',
     dim: true,
-    text: '<b>Year 0 · Tutorial.</b> I am your advisor, Overseer. One year to show you how the Hive City runs, and to keep the Overlord happy.',
+    text: () => L('<b>Year 0 · Tutorial.</b> I am your advisor, Overseer. One year to show you how the Hive City runs, and to keep the Overlord happy.', '<b>第 0 年 · 教程。</b>总督，我是您的顾问。我们有一年时间，让我带您了解蜂巢城如何运转，同时让霸主满意。'),
   },
   {
     wait: 'next',
     dim: true,
     target: '#top .bar, #quotaCount',
-    text: 'The <b>tribute</b>. Every barrel of oil you make fills this bar. When Winter ends the Overlord takes all of it, and it has to reach <b>25 barrels</b>.',
+    text: () => L('The <b>tribute</b>. Every barrel of oil you make fills this bar. When Winter ends the Overlord takes all of it, and it has to reach <b>25 barrels</b>.', '这是<b>贡品</b>。您产出的每一桶石油都会填进这根条。冬季结束时，霸主会全部收走，而且必须达到 <b>25 桶</b>。'),
   },
   {
     wait: 'next',
     dim: true,
     target: '#strikes',
-    text: 'Missed tributes. You have already missed <b>two</b>. A third, and the Overlord stops sending warnings.',
+    text: () => L('Missed tributes. You have already missed <b>two</b>. A third, and the Overlord stops sending warnings.', '这是失职次数。您已经失职<b>两次</b>了。再有第三次，霸主就不会再警告了。'),
   },
   {
     wait: 'next',
     dim: true,
     target: '#panel .stat',
-    text: 'Your <b>oil stockpile</b>: everything collected so far this year. The Oil row below shows it too, with what this season will add in brackets.',
+    text: () => L('Your <b>oil stockpile</b>: everything collected so far this year. The Oil row below shows it too, with what this season will add in brackets.', '这是您的<b>石油库存</b>：今年迄今收集的全部石油。下方的石油一栏也会显示它，括号里是本季将增加的数量。'),
   },
   {
     wait: 'next',
     dim: true,
     target: '#panel .res.food',
-    text: '<b>Food</b>. Farms grow it; the Capital and Settlements eat it. Spare food goes into the stores. If the stores run dry, people go hungry and your stations slow down.',
+    text: () => L('<b>Food</b>. Farms grow it; the Capital and Settlements eat it. Spare food goes into the stores. If the stores run dry, people go hungry and your stations slow down.', '<b>食物</b>。农场生产食物，首都和定居点消耗食物。多余的食物会存进粮仓。粮仓一旦见底，人们就会挨饿，采油站也会减产。'),
   },
   {
     wait: 'next',
     dim: true,
     target: '#panel .res.mp',
-    text: '<b>Manpower</b>: free worker slots out of the total. The Capital and Settlements provide workers. Every farm and Oil Station needs one, or it sits idle and makes nothing.',
+    text: () => L('<b>Manpower</b>: free worker slots out of the total. The Capital and Settlements provide workers. Every farm and Oil Station needs one, or it sits idle and makes nothing.', '<b>人力</b>：空闲人力 / 总人力。首都和定居点提供人力。每座农场和采油站都需要 1 人力，否则就会闲置，什么也不产出。'),
   },
   {
     wait: 'next',
     dim: true,
     target: { cells: CAPITAL },
     focus: [0.5, 0],
-    text: 'This is the <b>Capital</b>. Buildings right next to it (not diagonally) work twice: their output is <b>doubled</b>.',
+    text: () => L('This is the <b>Capital</b>. Buildings right next to it (not diagonally) work twice: their output is <b>doubled</b>.', '这是<b>首都</b>。紧挨着它（不含斜角）的建筑效率加倍：产出<b>翻倍</b>。'),
   },
   {
     wait: 'place',
     terrain: 'farm',
     cells: [[0, 1]],
-    text: 'Drag the <b>Hydro-farm</b> onto the glowing cell next to the Capital. (Or click the card, then click the cell.) It grows 2 food, 4 here.',
+    text: () => L('Drag the <b>Hydro-farm</b> onto the glowing cell next to the Capital. (Or click the card, then click the cell.) It grows 2 food, 4 here.', '把<b>水培农场</b>拖到首都旁发光的格子上。（或者先点击卡牌，再点击格子。）它产出 2 食物，在这里是 4 食物。'),
   },
   {
     wait: 'place',
     terrain: 'station',
     cells: [[1, 0]],
-    text: 'Now the <b>Oil Station</b>, also next to the Capital. Stations pump 2 oil a season, <b>4</b> next to the Capital.',
+    text: () => L('Now the <b>Oil Station</b>, also next to the Capital. Stations pump 2 oil a season, <b>4</b> next to the Capital.', '现在放<b>采油站</b>，同样放在首都旁边。采油站每季产出 2 石油，在首都旁边是 <b>4</b> 石油。'),
   },
   {
     wait: 'next',
     dim: true,
     target: '#panel .res',
-    text: 'The panel shows what this season will make: <b>+1 food</b>, <b>2 of 4</b> workers free, <b>+4 oil</b>. Hover a row any time to see how it adds up.',
+    text: () => L('The panel shows what this season will make: <b>+1 food</b>, <b>2 of 4</b> workers free, <b>+4 oil</b>. Hover a row any time to see how it adds up.', '面板显示本季的产出：<b>+1 食物</b>，<b>4 人力中 2 人力</b>空闲，<b>+4 石油</b>。随时把鼠标悬停在某一栏上，就能看到明细。'),
   },
   {
     wait: 'endTurn',
     target: '#btnNext',
-    text: 'Press <b>Next turn</b> (or <b>Enter</b>). Every tile pays out, then the next season starts with a fresh hand.',
+    text: () => L('Press <b>Next turn</b> (or <b>Enter</b>). Every tile pays out, then the next season starts with a fresh hand.', '按下<b>下一回合</b>（或 <b>Enter</b>）。每个地块都会结算产出，然后下一季开始，发一手新牌。'),
   },
 
   // ---------- Summer ----------
@@ -120,27 +125,27 @@ const STEPS = [
     dim: true,
     target: '#hand',
     enter: (api) => api.deal([{ terrain: 'settlement' }, { terrain: 'wasteland1', shape: 'domino', rot: 0 }]),
-    text: '<b>Summer.</b> Each season brings a new hand. Cards you leave unplayed are lost when the season ends.',
+    text: () => L('<b>Summer.</b> Each season brings a new hand. Cards you leave unplayed are lost when the season ends.', '<b>夏季。</b>每一季都会发一手新牌。没有打出的卡牌会在季节结束时作废。'),
   },
   {
     wait: 'place',
     terrain: 'settlement',
     cells: [[0, -1]],
-    text: 'A <b>Settlement</b> houses workers: <b>+2 manpower</b>. It eats 2 food a season, so it needs farms to feed it.',
+    text: () => L('A <b>Settlement</b> houses workers: <b>+2 manpower</b>. It eats 2 food a season, so it needs farms to feed it.', '<b>定居点</b>为工人提供住所：<b>+2 人力</b>。它每季消耗 2 食物，所以需要农场来供养。'),
   },
   {
     wait: 'place',
     terrain: 'wasteland',
     cells: [[-2, 1], [-1, 1]],
-    text: '<b>Wasteland</b> is junk from the dunes. It does nothing, but it <b>must be placed</b> before you can end the turn. Tuck it out of the way here.',
+    text: () => L('<b>Wasteland</b> is junk from the dunes. It does nothing, but it <b>must be placed</b> before you can end the turn. Tuck it out of the way here.', '<b>荒地</b>是沙丘里来的废料。它没有任何作用，但结束回合前<b>必须放下</b>。把它塞到这个不碍事的角落吧。'),
   },
   {
     wait: 'next',
     dim: true,
     target: '#panel .res.food',
-    text: 'Food is now <b>−1</b> a season. That is fine for a while: the stores cover the shortfall. Just never let them run empty.',
+    text: () => L('Food is now <b>−1</b> a season. That is fine for a while: the stores cover the shortfall. Just never let them run empty.', '现在食物每季 <b>−1</b>。暂时没问题：粮仓会补上缺口。只是千万别让它见底。'),
   },
-  { wait: 'endTurn', target: '#btnNext', text: 'End the season: <b>Next turn</b>.' },
+  { wait: 'endTurn', target: '#btnNext', text: () => L('End the season: <b>Next turn</b>.', '结束本季：<b>下一回合</b>。') },
 
   // ---------- Autumn ----------
   { wait: 'season' },
@@ -149,20 +154,20 @@ const STEPS = [
     terrain: 'station',
     cells: [[-1, 0]],
     enter: (api) => api.deal([{ terrain: 'station' }, { terrain: 'wasteland3', shape: 'l', rot: 0 }]),
-    text: '<b>Autumn.</b> Another <b>Oil Station</b>, on the other side of the Capital: 4 more oil a season.',
+    text: () => L('<b>Autumn.</b> Another <b>Oil Station</b>, on the other side of the Capital: 4 more oil a season.', '<b>秋季。</b>再放一座<b>采油站</b>，放在首都另一侧：每季再多 4 石油。'),
   },
   {
     wait: 'place',
     terrain: 'wasteland',
     cells: [[-1, -1], [-2, -1], [-3, -1], [-3, 0]],
-    text: 'More Wasteland. Pieces can be <b>rotated</b> before you place them. Fit this one onto the glowing cells.',
+    text: () => L('More Wasteland. Pieces can be <b>rotated</b> before you place them. Fit this one onto the glowing cells.', '又是荒地。板块在放置前可以<b>旋转</b>。把这块对准发光的格子放好。'),
   },
   {
     wait: 'next',
     dim: true,
     target: { cells: [[TUTORIAL_SITE.x, TUTORIAL_SITE.z]] },
     focus: [1.5, 0],
-    text: 'See that <b>?</b> site? Something is buried there. Build <b>next to</b> a ? to dig it up: a free city, a Tar Pit, Pre-war Ruins... Some are dangerous, but you never know until you dig.',
+    text: () => L('See that <b>?</b> site? Something is buried there. Build <b>next to</b> a ? to dig it up: a free city, a Tar Pit, Pre-war Ruins... Some are dangerous, but you never know until you dig.', '看到那个 <b>?</b> 神秘地点了吗？那里埋着东西。在神秘地点<b>相邻</b>处建造就能把它挖出来：一座免费的城市、焦油坑、战前遗迹……有些很危险，但不挖开永远不知道。'),
   },
   {
     wait: 'next',
@@ -170,10 +175,13 @@ const STEPS = [
     target: '#top .bar, #quotaCount',
     text: (api) => {
       const f = api.forecast();
-      return `After this season you will have <b>${f.after} of ${f.quota}</b> barrels. Winter has to bring in the rest.`;
+      return L(
+        `After this season you will have <b>${f.after} of ${f.quota}</b> barrels. Winter has to bring in the rest.`,
+        `本季结束后，您将有 <b>${f.after} / ${f.quota}</b> 桶。剩下的要靠冬季补上。`,
+      );
     },
   },
-  { wait: 'endTurn', target: '#btnNext', text: 'End the season: <b>Next turn</b>.' },
+  { wait: 'endTurn', target: '#btnNext', text: () => L('End the season: <b>Next turn</b>.', '结束本季：<b>下一回合</b>。') },
 
   // ---------- Winter ----------
   { wait: 'season' },
@@ -182,13 +190,13 @@ const STEPS = [
     dim: true,
     target: '#hand',
     enter: (api) => api.deal([{ terrain: 'settlement' }, { terrain: 'farm' }]),
-    text: '<b>Winter</b>, the last season before the tribute. And not a single Oil Station in this hand.',
+    text: () => L('<b>Winter</b>, the last season before the tribute. And not a single Oil Station in this hand.', '<b>冬季</b>，上缴贡品前的最后一季。可这手牌里一座采油站都没有。'),
   },
   {
     wait: 'reroll',
     target: '#btnReroll',
     enter: (api) => api.setFreeRerolls(1),
-    text: '<b>Reroll</b> it. A reroll redraws your whole hand. It normally costs oil (1 barrel, then 2, 3...), but this one is free.',
+    text: () => L('<b>Reroll</b> it. A reroll redraws your whole hand. It normally costs oil (1 barrel, then 2, 3...), but this one is free.', '<b>重抽</b>吧。重抽会重新发一整手牌。通常要花石油（1 桶，然后 2 桶、3 桶……），但这次免费。'),
   },
   {
     wait: 'place',
@@ -196,25 +204,31 @@ const STEPS = [
     cells: [[2, 0]],
     focus: [1.5, 0],
     text: (api) =>
-      `An Oil Station. Place it next to the <b>?</b> site. That brings Winter's oil to <b>${api.forecast().oil + 2}</b>: <b>${api.forecast().after + 2} of ${api.forecast().quota}</b>, just enough.`,
+      L(
+        `An Oil Station. Place it next to the <b>?</b> site. That brings Winter's oil to <b>${api.forecast().oil + 2}</b>: <b>${api.forecast().after + 2} of ${api.forecast().quota}</b>, just enough.`,
+        `一座采油站。把它放在 <b>?</b> 神秘地点旁边。这样冬季的石油就达到 <b>${api.forecast().oil + 2}</b>：<b>${api.forecast().after + 2} / ${api.forecast().quota}</b>，刚好够。`,
+      ),
   },
-  { wait: 'missile', text: 'Wait. The ground is shaking...' },
+  { wait: 'missile', text: () => L('Wait. The ground is shaking...', '等等，地面在震动……') },
   {
     wait: 'next',
     dim: true,
     target: '#top .bar, #quotaCount',
     text: (api) => {
       const f = api.forecast();
-      return `An <b>unexploded missile</b> from the old wars. It woke up and flew straight into your best Oil Station. Winter now brings in only <b>${f.oil}</b> oil: <b>${f.after} of ${f.quota}</b>.`;
+      return L(
+        `An <b>unexploded missile</b> from the old wars. It woke up and flew straight into your best Oil Station. Winter now brings in only <b>${f.oil}</b> oil: <b>${f.after} of ${f.quota}</b>.`,
+        `是旧时代战争留下的一枚<b>未爆导弹</b>。它被唤醒了，径直撞上了您最好的采油站。冬季现在只能产出 <b>${f.oil}</b> 石油：<b>${f.after} / ${f.quota}</b>。`,
+      );
     },
   },
   {
     wait: 'next',
     dim: true,
     target: '#hand',
-    text: 'Nothing left in your hand makes oil, and there are no seasons left. All you can do is pay what you have and face the Overlord.',
+    text: () => L('Nothing left in your hand makes oil, and there are no seasons left. All you can do is pay what you have and face the Overlord.', '手牌里已经没有能产油的东西了，也没有剩下的季节了。您只能交出现有的石油，去面对霸主。'),
   },
-  { wait: 'endTurn', target: '#btnNext', text: 'Press <b>Next turn</b>. Good luck, Overseer.' },
+  { wait: 'endTurn', target: '#btnNext', text: () => L('Press <b>Next turn</b>. Good luck, Overseer.', '按下<b>下一回合</b>。祝您好运，总督。') },
   { wait: 'end' },
 ];
 
@@ -243,12 +257,12 @@ export class Tutorial {
     root.innerHTML = `
       <div class="coach-ring hidden"></div>
       <div class="coach-bubble hidden">
-        <div class="coach-who">Advisor</div>
+        <div class="coach-who"></div>
         <div class="coach-text"></div>
         <div class="coach-foot">
-          <button type="button" class="coach-skip">Skip tutorial</button>
+          <button type="button" class="coach-skip"></button>
           <span class="coach-step"></span>
-          <button type="button" class="coach-next">Next <b>▸</b></button>
+          <button type="button" class="coach-next"></button>
         </div>
       </div>`;
     this.ring = root.querySelector('.coach-ring');
@@ -256,8 +270,15 @@ export class Tutorial {
     this.textEl = root.querySelector('.coach-text');
     this.nextBtn = root.querySelector('.coach-next');
     this.stepEl = root.querySelector('.coach-step');
+    this.whoEl = root.querySelector('.coach-who');
+    this.skipBtn = root.querySelector('.coach-skip');
     this.nextBtn.addEventListener('click', () => this.notify('next'));
-    root.querySelector('.coach-skip').addEventListener('click', () => this.api.skip());
+    this.skipBtn.addEventListener('click', () => this.api.skip());
+    this.#labels();
+    onLangChange(() => {
+      this.#labels();
+      this.html = null; // the step text is rebuilt on the next frame
+    });
     for (const el of [this.bubble]) el.addEventListener('pointerdown', (e) => e.stopPropagation());
 
     // Glowing cells on the board for the current step.
@@ -269,6 +290,12 @@ export class Tutorial {
     this.edgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(0.98, 0.02, 0.98));
     this.edgeMat = new THREE.LineBasicMaterial({ color: 0xffe2a0, transparent: true });
     this.v = new THREE.Vector3();
+  }
+
+  #labels() {
+    this.whoEl.textContent = L('Advisor', '顾问');
+    this.skipBtn.textContent = L('Skip tutorial', '跳过教程');
+    this.nextBtn.innerHTML = L('Next <b>▸</b>', '下一步 <b>▸</b>');
   }
 
   get step() {
@@ -316,7 +343,7 @@ export class Tutorial {
   placeGuard(cells, piece) {
     if (!this.active || !piece) return null;
     if (this.allows('place', { cells, piece })) return null;
-    return { ok: false, reason: 'Place it on the glowing cells' };
+    return { ok: false, reason: L('Place it on the glowing cells', '请放在发光的格子上') };
   }
 
   /** Something happened in the game: placed | endTurn | reroll | season | missile | next. */
@@ -432,7 +459,7 @@ export class Tutorial {
     const piece = this.hand.piece;
     if (s.wait === 'place' && piece && matches(s, piece.terrain) && s.cells.length > 1) {
       const now = rotateCells(SHAPES[piece.shape].cells, piece.rot);
-      if (shapeKey(now) !== shapeKey(s.cells)) html += ROTATE_HINT;
+      if (shapeKey(now) !== shapeKey(s.cells)) html += rotateHint();
     }
     return html;
   }

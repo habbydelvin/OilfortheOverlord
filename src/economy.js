@@ -1,6 +1,7 @@
 import { DIRS } from './grid.js';
 import { TERRAINS } from './tiles.js';
 import { SCALE, campShare, scaled } from './scalingConfig.js';
+import { L } from './i18n.js';
 
 /** Workers each building needs to run. */
 export const WORKERS = { farm: 1, station: 1, refinery: 1 };
@@ -353,4 +354,12 @@ export function nextQuota(quota, delivered) {
   return Math.round(quota * QUOTA_GROWTH + QUOTA_STEP + Math.max(0, delivered - quota) * EXCESS_FACTOR);
 }
 
-export const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter'];
+/** Season names in the current language: SEASONS[i] is read when it's shown, so it follows a language switch. */
+const SEASON_NAMES = [
+  ['Spring', '春'],
+  ['Summer', '夏'],
+  ['Autumn', '秋'],
+  ['Winter', '冬'],
+];
+export const SEASONS = SEASON_NAMES.map(([en]) => en);
+SEASON_NAMES.forEach(([en, zh], i) => Object.defineProperty(SEASONS, i, { get: () => L(en, zh), enumerable: true }));

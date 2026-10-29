@@ -11,6 +11,7 @@
  */
 
 import { choiceClick, choiceHover, click as clickSfx, speak } from './sfx.js';
+import { L, onLangChange, textOf } from './i18n.js';
 
 /** Portrait per speaker. A string starting with '<svg' is inlined; anything else is used as an image URL. */
 export const PORTRAITS = {
@@ -21,6 +22,15 @@ export const PORTRAITS = {
   // No art yet: add an image path here to give them a portrait.
   'Field Report': '',
 };
+
+/** Speaker ids stay English (they key PORTRAITS); this is the name shown on the plate. */
+const speakerName = (speaker) =>
+  ({
+    'The Overlord': L('The Overlord', '霸主'),
+    'Rebel Leader': L('Rebel Leader', '叛军首领'),
+    'Bandit Leader': L('Bandit Leader', '匪首'),
+    'Field Report': L('Field Report', '前线报告'),
+  })[speaker] ?? speaker;
 
 const CHARS_PER_SEC = 55;
 
@@ -34,12 +44,17 @@ export class Dialogue {
       <div class="dlg-choices"></div>
       <div class="dlg-box">
         <div class="dlg-name"></div>
-        <button class="dlg-skip hidden" type="button">Skip</button>
+        <button class="dlg-skip hidden" type="button"></button>
         <div class="dlg-text"></div>
         <div class="dlg-next">▼</div>
       </div>
-      <div class="dlg-hints"><span><b>↑↓</b> Select</span><span><b>Enter</b> Confirm</span></div>`;
+      <div class="dlg-hints"></div>`;
     this.$ = (s) => root.querySelector(s);
+    this.#renderStatic();
+    onLangChange(() => {
+      this.#renderStatic();
+      this.#relang();
+    });
     this.active = false;
     this.skip = false; // jump through plain lines until a choice
     this.skippable = true; // off for the yearly target scene
@@ -53,7 +68,11 @@ export class Dialogue {
     this.#syncSkip();
   }
 
-  /** Show the overlay, with an optional banner ({ kind, title, effect } — effect may contain HTML). */
+  /**
+   * Show the overlay, with an optional banner ({ kind, title, effect } — effect may contain HTML).
+   * Text (banner fields, lines, choice text and tags) may be a string or a function returning one; either way it is
+   * redrawn in the new language if the language changes while it's on screen (see textOf in i18n.js).
+   */
   open(banner = null) {
     // Already showing: keep the portrait and box in place and just swap the banner (re-dropping it).
     const continuing = this.active;
@@ -62,10 +81,9 @@ export class Dialogue {
     this.root.className = banner?.kind ? `kind-${banner.kind}` : '';
     const b = this.$('.dlg-banner');
     b.classList.toggle('hidden', !banner);
+    this.banner = banner;
     if (banner) {
-      this.$('.dlg-kind').textContent = banner.kindLabel ?? banner.kind ?? '';
-      this.$('.dlg-title').textContent = banner.title ?? '';
-      this.$('.dlg-effect').innerHTML = banner.effect ?? '';
+      this.#renderBanner();
       if (continuing) {
         b.style.animation = 'none';
         void b.offsetWidth;
@@ -94,6 +112,8 @@ export class Dialogue {
     this.skip = false;
     this.skippable = true;
     this.#stopTyping();
+    this.source = undefined;
+    this.banner = null;
     this.root.classList.add('hidden');
     document.body.classList.remove('dialogue');
     this.$('.dlg-choices').innerHTML = '';
@@ -118,12 +138,46 @@ export class Dialogue {
 
   // ---------- internals ----------
 
+  #renderBanner() {
+    const b = this.banner;
+    this.$('.dlg-kind').textContent = textOf(b.kindLabel ?? b.kind ?? '');
+    this.$('.dlg-title').textContent = textOf(b.title ?? '');
+    this.$('.dlg-effect').innerHTML = textOf(b.effect ?? '');
+  }
+
+  /** The language changed: the banner, the line being said and the reply choices, in the new language. */
+  #relang() {
+    if (!this.active) return;
+    if (this.banner) this.#renderBanner();
+    if (this.source === undefined) return;
+    const text = textOf(this.source);
+    if (text === this.full) return;
+    if (this.typing) {
+      // Carry on typing the new line from the same share of it.
+      const share = this.full.length ? this.shown / this.full.length : 0;
+      this.#type(text, Math.round(share * text.length));
+    } else {
+      this.full = text;
+      this.$('.dlg-text').textContent = text;
+      if (this.choices && this.$('.dlg-choices').children.length) this.#renderChoices();
+    }
+  }
+
+  /** Skip button, key hints and the current name plate, in the current language. */
+  #renderStatic() {
+    this.$('.dlg-skip').textContent = L('Skip', '跳过');
+    this.$('.dlg-hints').innerHTML =
+      `<span><b>↑↓</b> ${L('Select', '选择')}</span><span><b>Enter</b> ${L('Confirm', '确认')}</span>`;
+    if (this.speaker) this.$('.dlg-name').textContent = speakerName(this.speaker);
+  }
+
   #show(speaker, text, choices, resolve) {
     if (!this.active) this.open();
     this.resolve = resolve;
     this.choices = choices;
     this.selected = Math.max(0, choices?.findIndex((c) => !c.disabled) ?? 0);
-    this.$('.dlg-name').textContent = speaker;
+    this.speaker = speaker;
+    this.$('.dlg-name').textContent = speakerName(speaker);
     const art = PORTRAITS[speaker];
     const portrait = this.$('.dlg-portrait');
     if (portrait.dataset.who !== speaker) {
@@ -136,23 +190,25 @@ export class Dialogue {
     this.$('.dlg-choices').innerHTML = '';
     this.$('.dlg-next').classList.add('hidden');
     this.#syncSkip();
-    this.#type(text);
+    this.source = text;
+    this.#type(textOf(text));
   }
 
-  #type(text) {
+  /** Type `text` out, starting `from` characters in (a language switch mid-line carries on where it was). */
+  #type(text, from = 0) {
     this.#stopTyping();
     const el = this.$('.dlg-text');
     this.full = text;
-    this.shown = 0;
+    this.shown = from;
     this.typing = true;
-    el.textContent = '';
+    el.textContent = text.slice(0, from);
     // Start time comes from the first frame's own timestamp: rAF's `now` can be slightly earlier
     // than performance.now(), and a negative count made slice(0, -1) flash almost the whole line.
     let start = null;
     let voiced = 0;
     const step = (now) => {
       start ??= now;
-      const next = Math.max(0, Math.min(text.length, Math.floor(((now - start) / 1000) * CHARS_PER_SEC)));
+      const next = Math.max(from, Math.min(text.length, from + Math.floor(((now - start) / 1000) * CHARS_PER_SEC)));
       let talk = false;
       for (let i = this.shown; i < next; i++) {
         if (text[i] === ' ') continue;
@@ -186,7 +242,7 @@ export class Dialogue {
       .map(
         (c, i) =>
           `<button class="dlg-choice${i === this.selected ? ' on' : ''}${c.disabled ? ' off' : ''}" data-i="${i}" style="animation-delay:${i * 60}ms">` +
-          `<span class="dlg-label">${c.text}${c.tag ? ` <span class="dlg-tag">[${c.tag}]</span>` : ''}</span></button>`,
+          `<span class="dlg-label">${textOf(c.text)}${c.tag ? ` <span class="dlg-tag">[${textOf(c.tag)}]</span>` : ''}</span></button>`,
       )
       .join('');
   }

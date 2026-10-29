@@ -1,11 +1,18 @@
 import * as THREE from 'three';
 import { ICONS } from './tiles.js';
+import { L } from './i18n.js';
 
 // Each number carries its resource icon (the same ones as the cards); population keeps a word too.
 const RES = {
   food: { word: '', color: '#9be36f', icon: ICONS.food },
   oil: { word: '', color: '#ffb347', icon: ICONS.oil },
-  population: { word: 'population', color: '#8fe0ff', icon: ICONS.manpower },
+  population: {
+    get word() {
+      return L('population', '人口');
+    },
+    color: '#8fe0ff',
+    icon: ICONS.manpower,
+  },
 };
 
 /** Pause before the finale (population growth), and between several finales. */
@@ -104,10 +111,10 @@ export class Payout {
           )
           .join('') +
           // Idle buildings (no free workers) produce nothing.
-          (tile.idle ? '<div class="row zero"><b>idle</b></div>' : '') +
+          (tile.idle ? `<div class="row zero"><b>${L('idle', '闲置')}</b></div>` : '') +
           // Raider camps produce nothing; they just stir unrest.
-          (tile.terrain === 'raider' || tile.terrain === 'bandit_raider' ? '<div class="row neg" style="--c:#e0533f"><b>unrest</b></div>' : '') +
-          (tile.terrain === 'bandit_smuggle' ? '<div class="row neg" style="--c:#e0533f"><b>-10%</b><span>stockpile</span></div>' : '');
+          (tile.terrain === 'raider' || tile.terrain === 'bandit_raider' ? `<div class="row neg" style="--c:#e0533f"><b>${L('unrest', '动乱')}</b></div>` : '') +
+          (tile.terrain === 'bandit_smuggle' ? `<div class="row neg" style="--c:#e0533f"><b>-10%</b><span>${L('stockpile', '库存')}</span></div>` : '');
       let el = null;
       if (rows) {
         el = document.createElement('div');

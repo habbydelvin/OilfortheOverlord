@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Oil for the Overlord</title>
+    <title data-zh="献给霸主的石油">Oil for the Overlord</title>
     <!--
       Needed before ui.css arrives: in dev, Vite injects CSS from JavaScript, so the raw page shows for a moment.
       Without a size, the inline SVG icons fill the screen (the big apple on refresh).
@@ -26,7 +26,7 @@
         place-items: center;
         background: #000;
         color: #e8bf68;
-        font-family: 'Avenir Next', 'Nunito', 'Segoe UI', system-ui, sans-serif;
+        font-family: 'Avenir Next', 'Nunito', 'Segoe UI', 'OTO Han Sans', system-ui, sans-serif;
         transition: opacity 0.6s ease;
       }
       #loading.done {
@@ -69,18 +69,18 @@
   <body>
     <div id="loading">
       <div>
-        <div class="title">Oil for the Overlord</div>
+        <div class="title" data-zh="献给霸主的石油">Oil for the Overlord</div>
         <div class="bar"><i id="loadingFill"></i></div>
         <div class="hint" id="loadingHint"></div>
       </div>
     </div>
     <div id="app"></div>
-    <!-- Debug: fire a missile strike at random spots (main.js, debugRandomStrike). -->
-    <button id="btnMissileTest" type="button" title="Debug: missile strike at random spots" aria-label="Debug: missile strike at random spots"></button>
+    <!-- Language: English / 中文 (src/i18n.js). Shows the language it switches to. -->
+    <button id="btnLang" type="button" title="Language: 中文" aria-label="Switch to Chinese" data-zh-title="语言：English" data-zh-aria-label="切换到英文"></button>
     <!-- Music: mute button + volume slider (src/music.js). Outside #ui so it stays usable over dialogue scenes. -->
     <div id="music">
-      <button id="btnMusic" type="button" aria-label="Mute music"></button>
-      <input id="musicVolume" type="range" min="0" max="200" step="1" aria-label="Music volume" />
+      <button id="btnMusic" type="button" aria-label="Mute music" data-zh-aria-label="静音音乐"></button>
+      <input id="musicVolume" type="range" min="0" max="200" step="1" aria-label="Music volume" data-zh-aria-label="音乐音量" />
     </div>
 
     <div id="ui">
@@ -90,23 +90,23 @@
         <div id="targetLabel" class="event-label hidden"></div>
         <div class="bar"><div class="fill" id="quotaFill"></div></div>
         <div class="count" id="quotaCount">0 / 20 barrels</div>
-        <div class="strikes" id="strikes" title="Failed tributes: at 3 the Overlord destroys you"><i></i><i></i><i></i></div>
+        <div class="strikes" id="strikes" title="Failed tributes: at 3 the Overlord destroys you" data-zh-title="失职次数：满 3 次，霸主将毁灭你"><i></i><i></i><i></i></div>
       </header>
 
       <aside id="panel">
         <div class="stat">
           <div class="big" id="oilStock">0</div>
-          <div class="label">oil stockpile</div>
+          <div class="label" data-zh="石油库存">oil stockpile</div>
         </div>
 
-        <div class="section">This season</div>
+        <div class="section" data-zh="本季">This season</div>
         <div class="res food" data-tip="food">
           <div class="k">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 7.5c-1.6-1.3-4.6-1.6-6.4.3C3.4 10.1 4 14.6 6.3 17.9c1.4 2 3 3.4 4.4 2.9.6-.2.9-.4 1.3-.4s.7.2 1.3.4c1.4.5 3-.9 4.4-2.9 2.3-3.3 2.9-7.8.7-10.1-1.8-1.9-4.8-1.6-6.4-.3z" fill="currentColor" />
               <path d="M12 7.5c0-2 .6-3.6 2-4.8" fill="none" stroke="#8a5a32" stroke-width="1.8" stroke-linecap="round" />
               <path d="M13 5.2c1.6-1.9 4.2-2 5.4-1.6-.5 1.9-2.8 3.3-5.4 1.6z" fill="#9be36f" />
-            </svg>Food
+            </svg><span data-zh="食物">Food</span>
           </div>
           <div class="v"><span id="resFood">0</span><small id="resFoodD">(0)</small></div>
           <div class="pop">
@@ -119,7 +119,7 @@
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="12" cy="7" r="4" fill="currentColor" />
               <path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8z" fill="currentColor" />
-            </svg>Manpower
+            </svg><span data-zh="人力">Manpower</span>
           </div>
           <div class="v"><span id="resMp">0</span><small id="resMpD">(0)</small></div>
         </div>
@@ -129,7 +129,7 @@
               <path d="M6 3h12c.6 2.9.9 5.9.9 9s-.3 6.1-.9 9H6c-.6-2.9-.9-5.9-.9-9s.3-6.1.9-9z" fill="currentColor" />
               <path d="M5.4 8h13.2M5.4 16h13.2" stroke="rgba(0,0,0,.45)" stroke-width="1.6" />
               <path d="M12 9.6c-1.1 1.5-1.8 2.5-1.8 3.3a1.8 1.8 0 003.6 0c0-.8-.7-1.8-1.8-3.3z" fill="#1c1c1c" />
-            </svg>Oil
+            </svg><span data-zh="石油">Oil</span>
           </div>
           <div class="v"><span id="resOil">0</span><small id="resOilD">(0)</small></div>
         </div>
@@ -141,31 +141,37 @@
 
         <div class="spacer"></div>
         <button id="btnNext" class="btn gold">
-          Next turn<span id="btnNextSub">collect oil, draw a new hand</span>
+          <span data-zh="下一回合">Next turn</span><span id="btnNextSub">collect oil, draw a new hand</span>
         </button>
         <button id="btnReroll" class="btn blue">
-          Reroll hand<span id="btnRerollSub">-1</span>
+          <span data-zh="重抽手牌">Reroll hand</span><span id="btnRerollSub">-1</span>
         </button>
       </aside>
 
       <div id="leftcol">
-        <a id="libraryLink" href="/library.html">Tile library</a>
-        <button id="btnHelp" type="button">Controls (?)</button>
+        <a id="libraryLink" href="/library.html" data-zh="地块图鉴">Tile library</a>
+        <button id="btnHelp" type="button" data-zh="操作说明 (?)">Controls (?)</button>
         <div id="help" class="hidden">
-          <div class="help-head">Controls<span id="helpClose">✕</span></div>
-          <b>1–5</b> / click card · select piece<br />
-          <b>R</b> / right-click · rotate &nbsp; <b>F</b> · rotate back<br />
-          <b>Click</b> · place &nbsp; <b>Esc</b> · cancel<br />
-          <b>Enter</b> · next turn<br />
-          <b>Drag</b> / <b>WASD</b> · pan &nbsp; <b>Wheel</b> · zoom<br />
-          <b>Q / E</b> · turn camera &nbsp; <b>C</b> · recenter<br />
-          <b>N</b> · debug: overlord nuke (toxic crater)<br />
-          <b>M</b> · debug: preview the missile strike<br />
-          <b>P</b> · debug: open the shop<br />
-          <b>V</b> · debug: year event &nbsp; <b>T</b> · debug: tribute target (<b>Shift+T</b> with a free tile pick)<br />
-          <b>X</b> · debug: toggle territory expansion mode<br />
-          <b>Space</b> · debug: replay payout &nbsp; <b>`</b> · tuning panel
-          <button id="btnTutorial" type="button">Replay tutorial (Year 0)</button>
+          <div class="help-head"><span data-zh="操作说明">Controls</span><span id="helpClose">✕</span></div>
+          <div
+            class="help-body"
+            data-zh="<b>1–5</b> / 点击卡牌 · 选择板块<br /><b>R</b> / 右键 · 旋转 &nbsp; <b>F</b> · 反向旋转<br /><b>点击</b> · 放置 &nbsp; <b>Esc</b> · 取消<br /><b>拖动卡牌</b> 到地图上 · 放置<br /><b>Enter</b> · 下一回合<br /><b>拖动</b> / <b>WASD</b> · 平移 &nbsp; <b>滚轮</b> · 缩放<br /><b>Q / E</b> · 旋转视角 &nbsp; <b>C</b> · 回到中心<br /><b>N</b> · 调试：霸主核打击（毒坑）<br /><b>M</b> · 调试：预览导弹打击<br /><b>P</b> · 调试：打开市场<br /><b>V</b> · 调试：年度事件 &nbsp; <b>T</b> · 调试：贡品目标（<b>Shift+T</b> 附带免费地块）<br /><b>X</b> · 调试：切换领土扩张模式<br /><b>Space</b> · 调试：重播结算 &nbsp; <b>`</b> · 调参面板"
+          >
+            <b>1–5</b> / click card · select piece<br />
+            <b>R</b> / right-click · rotate &nbsp; <b>F</b> · rotate back<br />
+            <b>Click</b> · place &nbsp; <b>Esc</b> · cancel<br />
+            <b>Drag a card</b> onto the board · place<br />
+            <b>Enter</b> · next turn<br />
+            <b>Drag</b> / <b>WASD</b> · pan &nbsp; <b>Wheel</b> · zoom<br />
+            <b>Q / E</b> · turn camera &nbsp; <b>C</b> · recenter<br />
+            <b>N</b> · debug: overlord nuke (toxic crater)<br />
+            <b>M</b> · debug: preview the missile strike<br />
+            <b>P</b> · debug: open the shop<br />
+            <b>V</b> · debug: year event &nbsp; <b>T</b> · debug: tribute target (<b>Shift+T</b> with a free tile pick)<br />
+            <b>X</b> · debug: toggle territory expansion mode<br />
+            <b>Space</b> · debug: replay payout &nbsp; <b>`</b> · tuning panel
+          </div>
+          <button id="btnTutorial" type="button" data-zh="重玩教程（第 0 年）">Replay tutorial (Year 0)</button>
         </div>
         <button id="btnDebug" class="hidden">Game Debug</button>
         <div id="debug" class="hidden"></div>
@@ -174,31 +180,31 @@
       <div id="resTip" class="hidden"></div>
       <div id="shop" class="hidden">
         <div class="shop-head">
-          <div class="title">The Overlord's market</div>
+          <div class="title" data-zh="霸主的市场">The Overlord's market</div>
           <div class="coins" id="shopCoins"></div>
           <p id="shopHint"></p>
         </div>
         <div class="shop-band">
           <div id="shopCards"></div>
-          <button id="btnShopReroll" class="shop-reroll"><span class="icon">⟳</span> Reroll <span id="shopRerollCost"></span></button>
+          <button id="btnShopReroll" class="shop-reroll"><span class="icon">⟳</span> <span data-zh="重抽">Reroll</span> <span id="shopRerollCost"></span></button>
         </div>
-        <div class="shop-foot"><button id="btnShopDone" class="btn gold">Continue</button></div>
+        <div class="shop-foot"><button id="btnShopDone" class="btn gold" data-zh="继续">Continue</button></div>
       </div>
       <div id="cardPick" class="hidden">
         <div class="shop-head">
-          <div class="title">The Overlord's reward</div>
-          <div class="coins">Pick one tile</div>
-          <p>Free: it is unlocked for good and goes into your next hand.</p>
+          <div class="title" data-zh="霸主的赏赐">The Overlord's reward</div>
+          <div class="coins" data-zh="选择一个地块">Pick one tile</div>
+          <p data-zh="免费：永久解锁，并加入你的下一手牌。">Free: it is unlocked for good and goes into your next hand.</p>
         </div>
         <div class="shop-band"><div id="pickCards"></div></div>
         <div class="shop-foot"></div>
       </div>
       <div id="gameover" class="hidden">
         <div class="box">
-          <h1>The city has fallen</h1>
+          <h1 data-zh="城市已陷落">The city has fallen</h1>
           <p id="gameoverReason"></p>
           <p class="stats" id="gameoverStats"></p>
-          <button id="btnRestart" class="btn gold">Start again</button>
+          <button id="btnRestart" class="btn gold" data-zh="重新开始">Start again</button>
         </div>
       </div>
       <div id="mapIcons"></div>

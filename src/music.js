@@ -13,6 +13,8 @@
  * The bottom-left control (index.html #music) mutes it and sets the volume; both are saved in localStorage.
  */
 
+import { L, onLangChange } from './i18n.js';
+
 const URL = '/audio/OverlordIsWatching.mp3';
 export const MUSIC_VOLUME_DEFAULT = 67; // slider position; the level is its square, capped at 2
 export const MUSIC_VOLUME_MAX = 200; // 100 = full level, 200 = twice as loud
@@ -145,8 +147,10 @@ function updateControl() {
   const off = settings.muted || settings.volume === 0;
   control.root.classList.toggle('muted', off);
   control.button.innerHTML = off ? ICON_OFF : ICON_ON;
-  control.button.title = off ? 'Music off (click to turn on)' : 'Music on (click to mute)';
-  control.button.setAttribute('aria-label', off ? 'Unmute music' : 'Mute music');
+  control.button.title = off
+    ? L('Music off (click to turn on)', '音乐已关闭（点击开启）')
+    : L('Music on (click to mute)', '音乐已开启（点击静音）');
+  control.button.setAttribute('aria-label', off ? L('Unmute music', '取消音乐静音') : L('Mute music', '音乐静音'));
   control.slider.value = String(off ? 0 : settings.volume);
 }
 
@@ -160,6 +164,7 @@ function mountControl() {
   });
   control.slider.addEventListener('input', () => setMusicVolume(Number(control.slider.value)));
   control.slider.addEventListener('change', () => control.slider.blur()); // arrow keys go back to the camera
+  onLangChange(updateControl);
   updateControl();
 }
 

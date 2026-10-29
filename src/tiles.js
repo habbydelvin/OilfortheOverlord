@@ -5,6 +5,7 @@ import { buildRaiderCamp } from './raiderMesh.js';
 import { buildLabourCamp } from './labourCampMesh.js';
 import { copySeam } from './seamlessGround.js';
 import { SCALE, P } from './scalingConfig.js';
+import { L } from './i18n.js';
 
 /**
  * Desert dieselpunk tile set. Flat colours only for now, detail comes later.
@@ -333,6 +334,58 @@ export const ACTIONS = {
     rule: 'Clear one bandit or raider camp',
   },
 };
+
+const TRIGGER_ZH = { Passive: '被动', 'On trigger': '触发时', Junk: '废料', 'On play': '打出时' };
+const WASTELAND_ZH = { name: '荒地', rule: '3×3 荒地区域有几率出现匪营' };
+const MILITIA_ZH = '用“派遣民兵”清除';
+
+/** Chinese name and rule for each card; a function rule reads the live SCALE values like the English getter. */
+const ZH = {
+  capital: { name: '首都', rule: '+4 人力 · 每季消耗 3 食物 · 相邻建筑触发两次' },
+  settlement: { name: '定居点', rule: '+2 人力' },
+  farm: { name: '水培农场', rule: '+2 食物' },
+  pump: { name: '水泵站', rule: '相邻农场 +2 食物' },
+  station: { name: '采油站', rule: '+2 石油' },
+  refinery: { name: '炼油厂', rule: '产出每个相邻采油站产量 0.5 倍的石油' },
+  wasteland1: WASTELAND_ZH,
+  wasteland2: WASTELAND_ZH,
+  wasteland3: WASTELAND_ZH,
+  wasteland4: WASTELAND_ZH,
+  oasis: { name: '绿洲', rule: '相邻农场 +3 食物' },
+  tarpit: { name: '焦油坑', rule: '相邻采油站 +2 石油' },
+  labourcamp: { name: '劳工营', rule: '紧邻定居点时 +2 人力' },
+  cliffs: { name: '悬崖', rule: '无法在其上建造' },
+  ruins: { name: '战前遗迹', rule: '在旁边建造即可清除 · 清除后手牌补至 5 张' },
+  crater: { name: '毒坑', rule: '每个相邻农场/定居点 -1 人力，-1 食物' },
+  raider: {
+    name: '掠夺者营地',
+    rule: () => `-${P(SCALE.campSlots)} 人力 · 粮仓耗尽时出现 · 食物有盈余时每季离开一个`,
+  },
+  bandit_raider: { name: '掠夺者巢穴', rule: () => `-${SCALE.banditSlots} 人力 · ${MILITIA_ZH}` },
+  bandit_siphon: { name: '窃油者营地', rule: () => `每季 -${SCALE.banditOil} 石油 · ${MILITIA_ZH}` },
+  bandit_scav: { name: '拾荒者营地', rule: () => `每季 -${SCALE.banditFood} 食物 · ${MILITIA_ZH}` },
+  bandit_smuggle: { name: '走私者窝点', rule: () => `每季从石油库存中偷走 ${SCALE.banditStockpile} 桶 · ${MILITIA_ZH}` },
+  spark: { name: '火花', rule: '触发 3×3 范围内的地块' },
+  demolish: { name: '拆除', rule: '移除一个地块（首都和营地除外）' },
+  demolish2: { name: '拆迁队', rule: '移除 2×2 范围内至多 4 个地块（首都和营地除外）' },
+  militia: { name: '派遣民兵', rule: '清除一个匪营或掠夺者营地' },
+};
+
+// name, trigger and rule become getters that answer in the current language (the English stays above).
+for (const [key, def] of Object.entries({ ...TERRAINS, ...ACTIONS })) {
+  const zh = { ...ZH[key], trigger: TRIGGER_ZH[def.trigger] };
+  for (const field of ['name', 'trigger', 'rule']) {
+    const d = Object.getOwnPropertyDescriptor(def, field);
+    if (!d) continue;
+    const en = d.get ? () => d.get.call(def) : () => d.value;
+    const z = zh[field];
+    Object.defineProperty(def, field, {
+      get: () => L(en(), typeof z === 'function' ? z() : z),
+      enumerable: true,
+      configurable: true,
+    });
+  }
+}
 /** Resource icons (inline SVG, tinted by CSS via the res-* class). */
 export const ICONS = {
   manpower:
@@ -343,12 +396,17 @@ export const ICONS = {
     '<svg class="ico res-oil" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12c.6 2.9.9 5.9.9 9s-.3 6.1-.9 9H6c-.6-2.9-.9-5.9-.9-9s.3-6.1.9-9z" fill="currentColor"/><path d="M5.4 8h13.2M5.4 16h13.2" stroke="rgba(0,0,0,.45)" stroke-width="1.6"/><path d="M12 9.6c-1.1 1.5-1.8 2.5-1.8 3.3a1.8 1.8 0 003.6 0c0-.8-.7-1.8-1.8-3.3z" fill="#1c1c1c"/></svg>',
 };
 
-/** Swap "<amount> food/oil/worker slot(s)" for "<amount> <icon>" in rule text. */
-/** "+2 food" -> +2 and the food icon, wrapped as one amount (.amt: shown larger on the cards). */
+const ICON_WORD = { food: 'food', oil: 'oil', manpower: 'manpower', 食物: 'food', 石油: 'oil', 人力: 'manpower' };
+
+/**
+ * "+2 food" (or "+2 食物") -> +2 and the food icon, wrapped as one amount (.amt: shown larger on the cards).
+ * Also oil / 石油 and worker slot(s) / manpower / 人力.
+ */
 export const iconize = (line) =>
-  line.replace(/([+-]?\d+(?:\.\d+)?×?) (food|oil|worker slots?|manpower)\b/g, (_, n, w) =>
-    `<span class="amt">${n}${ICONS[w.startsWith('worker') ? 'manpower' : w]}</span>`,
-  );
+  line.replace(/([+-]?\d+(?:\.\d+)?×?) (?:(food|oil|worker slots?|manpower)\b|(食物|石油|人力))/g, (_, n, en, zh) => {
+    const w = en ?? zh;
+    return `<span class="amt">${n}${ICONS[w.startsWith('worker') ? 'manpower' : ICON_WORD[w]]}</span>`;
+  });
 
 /** Card text as HTML: a small trigger heading, then one line per effect. */
 export const cardText = (t) =>

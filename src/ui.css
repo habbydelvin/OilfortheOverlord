@@ -1,3 +1,5 @@
+@import './fonts.css';
+
 :root {
   --bg: #000000;
   --ink: #ece6d6;
@@ -8,7 +10,7 @@
   --red-2: #b44c42;
   --gold: #e8bf68;
   --panel-w: 300px;
-  font-family: 'Avenir Next', 'Nunito', 'Segoe UI', system-ui, sans-serif;
+  font-family: 'Avenir Next', 'Nunito', 'Segoe UI', 'OTO Han Sans', system-ui, sans-serif;
 }
 
 * {
@@ -1715,7 +1717,7 @@ body.shopping .ruin-btn {
   z-index: 60;
   pointer-events: auto;
   cursor: pointer;
-  font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+  font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'OTO Han Serif', serif;
   --ink-splash: #c8321e;
   --ink-splash-2: #e08a3a;
 }
@@ -1749,7 +1751,7 @@ body.shopping .ruin-btn {
   border-top: 3px solid var(--ev, var(--gold));
   clip-path: polygon(3% 0, 100% 0, 97% 100%, 0 100%);
   text-align: center;
-  font-family: 'Avenir Next', 'Nunito', system-ui, sans-serif;
+  font-family: 'Avenir Next', 'Nunito', 'OTO Han Sans', system-ui, sans-serif;
   animation: dlgDrop 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .dlg-banner.hidden {
@@ -1767,7 +1769,7 @@ body.shopping .ruin-btn {
 }
 .dlg-title {
   margin: 2px 0 4px;
-  font-family: 'Iowan Old Style', Palatino, Georgia, serif;
+  font-family: 'Iowan Old Style', Palatino, Georgia, 'OTO Han Serif', serif;
   font-size: 26px;
   font-weight: 700;
   color: #fff;
@@ -1935,7 +1937,7 @@ body.shopping .ruin-btn {
 }
 .dlg-tag {
   color: var(--ink-splash-2);
-  font-family: 'Avenir Next', system-ui, sans-serif;
+  font-family: 'Avenir Next', 'OTO Han Sans', system-ui, sans-serif;
   font-size: 15px;
   font-weight: 700;
 }
@@ -1973,7 +1975,7 @@ body.shopping .ruin-btn {
   bottom: 1.4vh;
   display: flex;
   gap: 18px;
-  font-family: 'Avenir Next', system-ui, sans-serif;
+  font-family: 'Avenir Next', 'OTO Han Sans', system-ui, sans-serif;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.7);
 }
@@ -2163,8 +2165,8 @@ body.striking #mapIcons {
   opacity: 1;
 }
 
-/* Debug missile button, just above the music control (red: a debug tool, not part of the game). */
-#btnMissileTest {
+/* Language button (English / 中文), just above the music control. Shows the language it switches to. */
+#btnLang {
   position: fixed;
   left: 18px;
   bottom: 68px;
@@ -2177,16 +2179,14 @@ body.striking #mapIcons {
   border: 0;
   border-radius: 50%;
   background: rgba(10, 12, 14, 0.6);
-  box-shadow: inset 0 0 0 1px rgba(224, 86, 63, 0.5), 0 2px 8px rgba(0, 0, 0, 0.5);
-  color: #e0563f;
+  box-shadow: inset 0 0 0 1px rgba(232, 191, 104, 0.5), 0 2px 8px rgba(0, 0, 0, 0.5);
+  color: #e8bf68;
+  font: 700 13px/1 'Avenir Next', 'Nunito', 'Segoe UI', 'OTO Han Sans', system-ui, sans-serif;
+  letter-spacing: 0.02em;
   cursor: pointer;
 }
-#btnMissileTest svg {
-  width: 20px;
-  height: 20px;
-}
-#btnMissileTest:hover {
-  background: rgba(224, 86, 63, 0.18);
+#btnLang:hover {
+  filter: brightness(1.25);
 }
 
 /* ---------- Year 0 tutorial (src/tutorial.js) ---------- */
