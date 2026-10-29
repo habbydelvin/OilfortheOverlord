@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { recolourSalt } from './saltRecolour.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
@@ -57,9 +58,16 @@ const FINISHED = {
   settlement: { yaw: 0, fit: 'Village02_HiveCity' },
 };
 
-const MODEL_URL = '/models/blockouts/';
-// Bump when a model file is re-exported under the same name, so browsers drop the cached copy.
-const MODEL_VERSION = '20261028-1553';
+/**
+ * The game loads .glb models (geometry and animation only) and shares one WebP per distinct image across them,
+ * all made from the FBX files in art/models by tools/convert-models.mjs (npm run models). ?fbx in the URL loads
+ * the original FBX files instead (dev server only: art/ is not part of the build), for A/B checks.
+ */
+const USE_FBX = typeof location !== 'undefined' && new URLSearchParams(location.search).has('fbx');
+const MODEL_URL = USE_FBX ? '/art/models/' : '/models/glb/';
+const TEX_URL = '/models/tex/';
+// Bump after re-running the conversion (or re-exporting a model under the same name), so browsers drop cached copies.
+const MODEL_VERSION = '20261029-1430';
 const ATLAS_URL = '/models/Atlas.jpg?v=20261026-1640';
 // Footprints measure about 96 × 97 cm. One board cell is 1 unit across.
 const CELL = 1; // full cell: the seam between tiles is TILE.gap, applied live by applyTileGap (tiles.js)
@@ -114,11 +122,13 @@ function applyAtlas(root, atlas) {
  * Untextured see-through materials (refinery smoke) keep their own colour and
  * opacity, and do not write depth, so overlapping puffs blend instead of cutting holes.
  */
-function toStandard(root) {
+function toStandard(root, describe = (m) => m) {
   const cache = new Map();
-  const convert = (previous) => {
-    if (!previous || previous.isMeshStandardMaterial) return previous;
-    if (cache.has(previous)) return cache.get(previous);
+  const convert = (source) => {
+    if (!source || source.isMeshStandardMaterial && !source.userData.spec) return source;
+    if (cache.has(source)) return cache.get(source);
+    // `previous`: an FBXLoader Phong material, or the same fields described by a .glb material (see glbMaterialSource).
+    const previous = describe(source);
     const glows = Boolean(previous.emissiveMap) && previous.emissiveIntensity > 0;
     const seeThrough = previous.transparent && previous.opacity < 1;
     const material = new THREE.MeshStandardMaterial({
@@ -142,8 +152,8 @@ function toStandard(root) {
     for (const map of [material.map, material.normalMap, material.emissiveMap]) {
       if (map) map.anisotropy = 8;
     }
-    previous.dispose();
-    cache.set(previous, material);
+    source.dispose();
+    cache.set(source, material);
     return material;
   };
   root.traverse((obj) => {
@@ -424,27 +434,32 @@ function imageReady(texture, timeout = 30000) {
 
 
 /**
- * The Wasteland piece files and the Tar Pit carry animated dust clusters (Waste<Name>_Dust and its _DustNN_NN
- * parts) that read as floating chunks over the board. Remove them. Returns the names of every removed node
- * (for the tracks).
+ * The Wasteland piece files and the Tar Pit carry animated dust clusters (the _DustNN_NN parts under
+ * Waste<Name>_Dust) that read as floating chunks over the board. Remove them. The Tar Pit's _Dust group also holds
+ * its tar bubbles and fumes, which stay. Returns the names of every removed node (for the tracks).
+ * FBX path only: tools/convert-models.mjs already strips them from the .glb files.
  */
-const DUST_NAME = /_Dust(\d|$)/;
+const DUST_PART = /_Dust\d+_\d+$/;
 function removeDust(raw, name) {
-  const roots = [];
-  raw.traverse((obj) => {
-    if (obj !== raw && DUST_NAME.test(obj.name) && !DUST_NAME.test(obj.parent?.name ?? '')) roots.push(obj);
-  });
+  const parts = [];
+  raw.traverse((obj) => DUST_PART.test(obj.name) && parts.push(obj));
   const removed = new Set();
   let clusters = 0;
-  for (const root of roots) {
-    root.traverse((o) => {
+  for (const part of parts) {
+    part.traverse((o) => {
       removed.add(o.name);
-      if (/_Dust\d+_01$/.test(o.name)) clusters++;
       if (o.isMesh) o.geometry.dispose();
     });
-    root.removeFromParent();
+    if (/_Dust\d+_01$/.test(part.name)) clusters++;
+    part.removeFromParent();
   }
-  if (roots.length) console.info(`[models] ${name}: removed ${clusters} dust clusters`);
+  const empty = [];
+  raw.traverse((o) => /_Dust$/.test(o.name) && !o.isMesh && !o.children.length && empty.push(o));
+  for (const o of empty) {
+    removed.add(o.name);
+    o.removeFromParent();
+  }
+  if (parts.length) console.info(`[models] ${name}: removed ${clusters} dust clusters`);
   return removed;
 }
 
@@ -588,10 +603,11 @@ async function recolourInWorker(groundMap) {
 // =====================================================================================================
 // Loading pipeline
 // -----------------------------------------------------------------------------------------------------
-// Prepare (per model): FBX -> PBR materials, moving animation tracks only, Wasteland dust removed, the
-// footprint stored on the root (the static merge removes the footprint node), images loaded and their
-// embedded file copies freed, textures larger than MAX_TEXTURE shrunk, identical textures shared across
-// all models, salt recoloured, static parts merged per material.
+// Prepare (per model): .glb -> node names and multi-material meshes restored, PBR materials rebuilt from the
+// extras with shared WebP images (one download per image, whichever models use it), the footprint stored on
+// the root (the static merge removes the footprint node), salt recoloured, static parts merged per material.
+// Dust, static tracks, oversized and repeated images are already dealt with offline (tools/convert-models.mjs).
+// ?fbx: the original FBX path (dust removed, embedded images shrunk and shared at load time).
 // Finish: shadow flags, no shadow pass for flat parts inside a tile, animated parts batched into one
 // draw per material, cell fit, below-ground parts drawn after the sand plane.
 // Phases: 'core' gates the game start; 'waste' (the pieces) then 'extra' (the other buildings and tiles)
@@ -718,23 +734,188 @@ async function loadFbx(loader, spec, track) {
   return raw;
 }
 
+// ---------- .glb models (the shipped path) ----------
+
+/** Download with byte progress (for the loading bar). Resolves to a Blob. */
+async function fetchBlob(url, onProgress) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url}: ${res.status}`);
+  const total = Number(res.headers.get('content-length')) || 0;
+  if (!onProgress || !res.body) return res.blob();
+  const reader = res.body.getReader();
+  const chunks = [];
+  let loaded = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    onProgress({ lengthComputable: total > 0, loaded, total });
+  }
+  return new Blob(chunks, { type: res.headers.get('content-type') ?? '' });
+}
+
 /**
- * FBX files -> prepared models (Map key -> root, untransformed). `parallel` downloads them all at once
+ * Shared images: one download and one decoded image per WebP, whichever models use it. Each image's file is kept
+ * on its textures (userData.sourceBlob) until the bundle is prepared: the salt recolour decodes it off the main thread.
+ */
+const imageCache = new Map(); // id -> Promise<{ img, blob }>
+function loadImage(id, track) {
+  if (!imageCache.has(id)) {
+    imageCache.set(
+      id,
+      (async () => {
+        const blob = await fetchBlob(`${TEX_URL}${id}.webp?v=${MODEL_VERSION}`, track ? (e) => trackBytes(`tex:${id}`, e) : null);
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.src = url;
+        await img.decode().catch(() => new Promise((resolve) => (img.complete ? resolve() : (img.onload = img.onerror = resolve))));
+        URL.revokeObjectURL(url);
+        return { img, blob };
+      })(),
+    );
+  }
+  return imageCache.get(id);
+}
+
+/** One texture per image + sampling (+ colour space), shared across every model. */
+const glbTextures = new Map();
+async function glbTexture(slot, srgb, track) {
+  const key = [slot.id, slot.wrapS, slot.wrapT, ...slot.repeat, ...slot.offset, srgb].join('|');
+  if (!glbTextures.has(key)) {
+    glbTextures.set(
+      key,
+      loadImage(slot.id, track).then(({ img, blob }) => {
+        const t = new THREE.Texture(img);
+        t.wrapS = slot.wrapS;
+        t.wrapT = slot.wrapT;
+        t.repeat.fromArray(slot.repeat);
+        t.offset.fromArray(slot.offset);
+        t.userData.sourceHash = slot.id;
+        t.userData.sourceBlob = blob;
+        t.needsUpdate = true;
+        return t;
+      }),
+    );
+  }
+  return glbTextures.get(key);
+}
+
+/**
+ * GLTFLoader turns a mesh with several materials into a Group of one mesh per material. Join them back into one
+ * mesh with geometry groups, as FBXLoader made it (matchSaltToSand reads the ground's material by node name).
+ * Node names come back from the extras (tools/convert-models.mjs). Returns old track target name -> new name.
+ */
+function restoreGlbNodes(raw) {
+  const rename = new Map();
+  const nodes = [];
+  raw.traverse((o) => o.userData.n !== undefined && nodes.push(o));
+  for (const o of nodes) {
+    if (o.type !== 'Group' || o.isMesh) continue;
+    // Its per-material meshes carry no node extras; its child nodes do.
+    const prims = o.children.filter((c) => c.isMesh && c.userData.n === undefined);
+    if (!prims.length) continue;
+    const geos = prims.map((p) => p.geometry);
+    const geometry = mergeGeometries(geos, true);
+    if (!geometry) continue;
+    geos.forEach((g) => g.dispose());
+    // One slot per distinct material (a material can come back in many runs), so regroupByMaterial can join them.
+    const materials = [...new Set(prims.map((p) => p.material))];
+    geometry.groups.forEach((grp, i) => (grp.materialIndex = materials.indexOf(prims[i].material)));
+    const mesh = new THREE.Mesh(geometry, materials);
+    mesh.uuid = o.uuid;
+    mesh.name = o.name;
+    mesh.userData = o.userData;
+    mesh.position.copy(o.position);
+    mesh.quaternion.copy(o.quaternion);
+    mesh.scale.copy(o.scale);
+    for (const c of [...o.children]) if (!prims.includes(c)) mesh.add(c);
+    o.parent.children[o.parent.children.indexOf(o)] = mesh;
+    mesh.parent = o.parent;
+    o.parent = null;
+  }
+  raw.traverse((o) => {
+    if (o.userData.n === undefined) return;
+    if (o.name !== o.userData.n) rename.set(o.name || o.uuid, o.userData.n);
+    o.name = o.userData.n;
+    delete o.userData.n;
+    delete o.userData.name;
+  });
+  return rename;
+}
+
+/** A .glb material's description (glTF extras) with its shared textures, in the fields toStandard reads. */
+async function glbMaterialSources(raw, track) {
+  const mats = new Set();
+  raw.traverse((o) => o.isMesh && [o.material].flat().forEach((m) => mats.add(m)));
+  const sources = new Map();
+  await Promise.all(
+    [...mats].map(async (m) => {
+      const spec = m.userData.spec;
+      if (!spec) return;
+      const [map, normalMap, emissiveMap] = await Promise.all(
+        ['map', 'normalMap', 'emissiveMap'].map((k) => (spec.maps[k] ? glbTexture(spec.maps[k], k !== 'normalMap', track) : null)),
+      );
+      sources.set(m, {
+        name: spec.name,
+        color: new THREE.Color(spec.color),
+        opacity: spec.opacity,
+        transparent: spec.transparent,
+        emissiveIntensity: spec.emissiveIntensity,
+        map,
+        normalMap,
+        emissiveMap,
+      });
+    }),
+  );
+  return sources;
+}
+
+const gltfLoader = new GLTFLoader();
+async function loadGlb(spec, track) {
+  const file = spec.file.replace(/\.fbx$/i, '.glb');
+  const gltf = await gltfLoader.loadAsync(`${MODEL_URL}${file}?v=${MODEL_VERSION}`, track ? (e) => trackBytes(file, e) : undefined);
+  // The FBX root (with its own transform: Cliff and Ruins carry Blender's axis rotation there) is the scene's one child.
+  const raw = gltf.scene.children.length === 1 ? gltf.scene.children[0] : gltf.scene;
+  raw.removeFromParent();
+  const rename = restoreGlbNodes(raw);
+  const sources = await glbMaterialSources(raw, track);
+  toStandard(raw, (m) => sources.get(m) ?? m);
+  raw.animations = gltf.animations.map((clip) => {
+    for (const t of clip.tracks) {
+      const { nodeName } = THREE.PropertyBinding.parseTrackName(t.name);
+      if (rename.has(nodeName)) t.name = rename.get(nodeName) + t.name.slice(nodeName.length);
+    }
+    return clip;
+  });
+  storeFootprint(raw, spec.base, Boolean(spec.piece));
+  raw.name = spec.key;
+  return raw;
+}
+
+/**
+ * Model files -> prepared models (Map key -> root, untransformed). `parallel` downloads them all at once
  * (behind the loading screen); otherwise one file at a time with a pause, so it can run during play.
  */
 async function prepareFromFbx(keys, { track = false, parallel = false } = {}) {
   const loader = new FBXLoader();
+  const load = (s) => (USE_FBX ? loadFbx(loader, s, track) : loadGlb(s, track));
   const specs = keys.map(modelSpec);
   const roots = new Map();
-  if (parallel) (await Promise.all(specs.map((s) => loadFbx(loader, s, track)))).forEach((r, i) => roots.set(specs[i].key, r));
+  if (parallel) (await Promise.all(specs.map(load))).forEach((r, i) => roots.set(specs[i].key, r));
   else {
     for (const s of specs) {
-      roots.set(s.key, await loadFbx(loader, s, track));
+      roots.set(s.key, await load(s));
       await pause(30);
     }
   }
-  const { textures, merged, shrunk } = await prepareTextures([...roots.values()]);
-  console.info(`[models] ${keys.length} models from FBX: ${textures} textures, ${merged} shared, ${shrunk} shrunk to ${MAX_TEXTURE}`);
+  if (USE_FBX) {
+    const { textures, merged, shrunk } = await prepareTextures([...roots.values()]);
+    console.info(`[models] ${keys.length} models from FBX: ${textures} textures, ${merged} shared, ${shrunk} shrunk to ${MAX_TEXTURE}`);
+  } else {
+    console.info(`[models] ${keys.length} models from .glb, ${imageCache.size} shared images so far`);
+    for (const p of imageCache.values()) p.then((v) => (v.blob = null)); // only the salt recolour needed the files
+  }
   for (const s of specs) {
     await breathe();
     const root = roots.get(s.key);
