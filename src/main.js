@@ -12,7 +12,7 @@ import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, BANDIT_KEYS, is
 import { hasBlockout, loadProgress, breathe, decodeImage } from './models.js';
 import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
-import { Hand } from './hand.js';
+import { Hand, pieceCost } from './hand.js';
 import { Mysteries } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
@@ -2023,11 +2023,35 @@ function tryPlace() {
   if (piece.terrain.startsWith('wasteland')) addWastePiece(piece, cells);
   else cells.forEach(([x, z], i) => addTile(x, z, piece.terrain, i * 0.05));
   piecesPlaced++;
+  showPlacementCost(piece, cells);
   hand.consume();
   if (!grid.expansionMode) revealMysteries(cells);
   frontier.rebuild(grid);
   updateHUD();
   if (economyNow().idle > idleBefore) toast('No free workers: this building sits idle until you add housing', 'bad', 2400);
+}
+
+/**
+ * A building just placed: what it takes floats up from it (workers it needs, or food it eats each season),
+ * with the resource icon, in the payout label style. Nothing for tiles that cost nothing.
+ */
+const costV = new THREE.Vector3();
+function showPlacementCost(piece, cells) {
+  const { workers, food } = pieceCost(piece);
+  const rows = [];
+  if (workers) rows.push(`<div class="row neg"><b>-${workers}</b>${ICONS.manpower}</div>`);
+  if (food) rows.push(`<div class="row neg"><b>-${food}</b>${ICONS.food}<span>/ season</span></div>`);
+  if (!rows.length) return;
+  const cx = cells.reduce((s, c) => s + c[0], 0) / cells.length;
+  const cz = cells.reduce((s, c) => s + c[1], 0) / cells.length;
+  costV.set(cx, 0.9, cz).project(camera);
+  const el = document.createElement('div');
+  el.className = 'cost-pop';
+  el.style.left = `${(costV.x * 0.5 + 0.5) * window.innerWidth}px`;
+  el.style.top = `${(-costV.y * 0.5 + 0.5) * window.innerHeight}px`;
+  el.innerHTML = `<div class="floater">${rows.join('')}</div>`;
+  document.getElementById('floaters').appendChild(el);
+  el.addEventListener('animationend', () => el.remove());
 }
 
 /** Spark: tiles in the area pay out their oil and food right now (upkeep isn't charged). */

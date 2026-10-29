@@ -11,12 +11,17 @@ const FOOD_ICON = ICONS.food;
  * housing shows the food it eats each season, everything else is a free 0 manpower.
  */
 function costBadge(p, t) {
-  const n = SHAPES[p.shape].cells.length;
-  const workers = (WORKERS[p.terrain] ?? 0) * n;
-  if (workers) return `<div class="badge" title="manpower needed">-${workers}${MP_ICON}</div>`;
-  const food = Math.min(0, t.stats?.food ?? 0) * n;
-  if (food) return `<div class="badge" title="food eaten each season">${food}${FOOD_ICON}</div>`;
+  const c = pieceCost(p);
+  if (c.workers) return `<div class="badge" title="manpower needed">-${c.workers}${MP_ICON}</div>`;
+  if (c.food) return `<div class="badge" title="food eaten each season">-${c.food}${FOOD_ICON}</div>`;
   return `<div class="badge free" title="no manpower needed">0${MP_ICON}</div>`;
+}
+
+/** What a piece takes (per tile × tiles): workers it needs, or food it eats each season. Same as its card badge. */
+export function pieceCost(p) {
+  const n = SHAPES[p.shape]?.cells.length ?? 1;
+  const t = TERRAINS[p.terrain];
+  return { workers: (WORKERS[p.terrain] ?? 0) * n, food: -Math.min(0, t?.stats?.food ?? 0) * n };
 }
 
 /** Wasteland has to be placed: it can't be rerolled away or left in hand at the end of a turn. */

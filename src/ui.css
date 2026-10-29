@@ -451,6 +451,19 @@ body {
   text-transform: uppercase;
 }
 
+/* Resource icon beside the number: sized to it, keeps its resource colour, outlined like the text. */
+.floater .row .ico {
+  align-self: center;
+  width: calc(var(--floater-size, 30px) * 0.85);
+  height: calc(var(--floater-size, 30px) * 0.85);
+  margin-left: 0;
+  filter: drop-shadow(0 2px 0 #1a1410) drop-shadow(2px 0 0 #1a1410) drop-shadow(-2px 0 0 #1a1410) drop-shadow(0 -2px 0 #1a1410);
+}
+.floater .row.neg .ico {
+  width: calc(var(--floater-size, 30px) * 0.62);
+  height: calc(var(--floater-size, 30px) * 0.62);
+}
+
 .floater .row.neg {
   color: #ff7a66;
 }
@@ -461,6 +474,25 @@ body {
 
 .floater .row.neg b {
   font-size: calc(var(--floater-size, 30px) * 0.73);
+}
+
+/* Placement cost: rises from the new building and fades (main.js showPlacementCost). */
+.cost-pop {
+  position: absolute;
+  width: 0;
+  height: 0;
+  animation: cost-pop 1.4s ease-out forwards;
+}
+.cost-pop .floater {
+  position: absolute;
+  transform: translate(-50%, -100%);
+}
+@keyframes cost-pop {
+  0% { opacity: 0; transform: translateY(10px) scale(0.7); }
+  15% { opacity: 1; transform: translateY(0) scale(1.08); }
+  25% { transform: translateY(0) scale(1); }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-36px); }
 }
 
 /* ---------- debug: payout tuning ---------- */

@@ -1,10 +1,11 @@
 import * as THREE from 'three';
+import { ICONS } from './tiles.js';
 
-// Resources are told apart by colour alone; only population keeps a word.
+// Each number carries its resource icon (the same ones as the cards); population keeps a word too.
 const RES = {
-  food: { word: '', color: '#9be36f' },
-  oil: { word: '', color: '#ffb347' },
-  population: { word: 'population', color: '#8fe0ff' },
+  food: { word: '', color: '#9be36f', icon: ICONS.food },
+  oil: { word: '', color: '#ffb347', icon: ICONS.oil },
+  population: { word: 'population', color: '#8fe0ff', icon: ICONS.manpower },
 };
 
 /** Pause before the finale (population growth), and between several finales. */
@@ -99,7 +100,7 @@ export class Payout {
           .map(
             (r) =>
               `<div class="row${tile[r] < 0 ? ' neg' : ''}" style="--c:${RES[r].color}">` +
-              `<b>${tile[r] > 0 ? '+' : ''}${tile[r]}</b>${RES[r].word ? `<span>${RES[r].word}</span>` : ''}</div>`,
+              `<b>${tile[r] > 0 ? '+' : ''}${tile[r]}</b>${RES[r].icon}${RES[r].word ? `<span>${RES[r].word}</span>` : ''}</div>`,
           )
           .join('') +
           // Idle buildings (no free workers) produce nothing.
