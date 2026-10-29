@@ -2004,3 +2004,29 @@ body.striking #mapIcons {
   margin: 0 10px 0 6px;
   opacity: 1;
 }
+
+/* Debug missile button, just above the music control (red: a debug tool, not part of the game). */
+#btnMissileTest {
+  position: fixed;
+  left: 18px;
+  bottom: 68px;
+  z-index: 70;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(10, 12, 14, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(224, 86, 63, 0.5), 0 2px 8px rgba(0, 0, 0, 0.5);
+  color: #e0563f;
+  cursor: pointer;
+}
+#btnMissileTest svg {
+  width: 20px;
+  height: 20px;
+}
+#btnMissileTest:hover {
+  background: rgba(224, 86, 63, 0.18);
+}

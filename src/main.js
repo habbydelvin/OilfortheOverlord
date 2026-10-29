@@ -505,6 +505,45 @@ function previewMissileStrike() {
   return `Missile strike: ${targets.length} missile${targets.length === 1 ? '' : 's'}`;
 }
 
+/**
+ * Debug button (bottom left, above the music): a strike on random spots anywhere on the island, built on or
+ * empty (the Capital only if Game Debug → Missiles → "Include the Capital" is on). Uses the preview's missile
+ * count and its "Leave craters" setting.
+ */
+function debugRandomStrike() {
+  if (turn.over) return toast('Game over: restart first');
+  if (striking || shopOpen || eventOpen || payout.active) return toast('Finish the current screen first');
+  const cells = [...grid.cells.values()];
+  const xs = cells.map((c) => c.x);
+  const zs = cells.map((c) => c.z);
+  const [x0, x1, z0, z1] = [Math.min(...xs) - 1, Math.max(...xs) + 1, Math.min(...zs) - 1, Math.max(...zs) + 1];
+  const cap = mainCapital();
+  const n = Math.max(1, Math.round(missileCfg.previewCount));
+  const targets = [];
+  const used = new Set();
+  for (let tries = 0; targets.length < n && tries < 500; tries++) {
+    const x = x0 + Math.floor(Math.random() * (x1 - x0 + 1));
+    const z = z0 + Math.floor(Math.random() * (z1 - z0 + 1));
+    const k = plotKey(x, z);
+    if (used.has(k) || (cap && x === cap.x && z === cap.z && missileCfg.previewCapital !== 'yes')) continue;
+    used.add(k);
+    targets.push({ x, z });
+  }
+  const run = runId;
+  playMissileStrike(targets, { convert: missileCfg.previewCraters === 'yes' }).then((lost) => {
+    if (run !== runId) return;
+    eventOpen = false;
+    updateHUD();
+    if (lost.length) toast(`The Overlord's missiles destroyed your ${listLost(lost)}`, 'bad', 2600);
+  });
+}
+$('btnMissileTest').innerHTML =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4c-4.5.2-8.6 2.6-11 6.5L7 14l3 3 3.5-2c3.9-2.4 6.3-6.5 6.5-11z" fill="currentColor"/><circle cx="15" cy="9" r="1.6" fill="#0a0c0e"/><path d="M7 14l-3 1 2-4 3-1M10 17l-1 3 4-2 1-3" fill="currentColor"/><path d="M6.5 17.5L4 20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+$('btnMissileTest').addEventListener('click', () => {
+  $('btnMissileTest').blur(); // so Enter (end turn) does not fire it again
+  debugRandomStrike();
+});
+
 // ---------- Pre-war Ruins ----------
 /** Ruins can be cleared once a building stands on a side next to them (and, in expansion mode, they're in your territory). */
 function canClearRuins(c) {

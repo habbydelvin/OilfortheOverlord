@@ -3,8 +3,9 @@ import { BILLOW_SHADE } from './fogOfWar.js';
 
 /**
  * The Overlord's missile strike (a missed tribute). Missiles streak in from his side of the
- * world, from off screen, and dive onto their targets. Each impact: a flash, a shockwave
- * ring, a fireball, and a toxic mushroom cloud that rolls up over the tile. The crater swap
+ * world, from off screen, and dive onto their targets. Each impact: a flash, a shockwave of
+ * dust and smoke racing out along the ground, a fireball, and a toxic mushroom cloud that rolls
+ * up over the tile. The crater swap
  * happens a moment after impact (onCover), once the cloud hides the tile.
  *
  * All the tuning lives in MISSILE (Game Debug panel → Missiles, saved to localStorage).
@@ -102,7 +103,7 @@ export const MISSILE_PARAMS = [
   { key: 'coverDelay', label: 'Crater swap delay (s)', min: 0, max: 2, step: 0.02, hint: 'after impact, once the cloud hides the tile' },
   { key: 'flashSize', label: 'Flash size', min: 0, max: 12, step: 0.1 },
   { key: 'flashIntensity', label: 'Flash light', min: 0, max: 300, step: 1 },
-  { key: 'shockRadius', label: 'Shockwave radius', min: 0, max: 10, step: 0.1 },
+  { key: 'shockRadius', label: 'Shockwave radius', min: 0, max: 10, step: 0.1, hint: 'the dust and smoke ring racing out along the ground' },
   { key: 'shake', label: 'Camera shake', min: 0, max: 1.2, step: 0.05 },
   { key: 'fireColor', label: 'Fire colour', type: 'color' },
   { key: 'smokeColor', label: 'Smoke colour', type: 'color' },
@@ -483,6 +484,7 @@ class CloudPuffs {
 }
 
 // ---------- the mushroom cloud ----------
+const SHOCK_TIME = 0.75; // seconds for the dust shockwave to reach its full radius
 /** One detonation. Its anchored puffs are placed from its age each frame. */
 class Blast {
   constructor(x, z, cfg) {
@@ -493,6 +495,7 @@ class Blast {
     this.H = cfg.cloudHeight * this.S;
     this.R = 1.05 * this.S * cfg.capRadius; // cap ring radius
     this.B = 1.7 * this.S * cfg.surgeRadius; // base surge radius
+    this.shock = cfg.shockRadius * this.S; // dust shockwave: how far it races out
     this.life = cfg.cloudLife + 0.6;
     this.cap = cfg.capRadius;
     this.stem = cfg.stemWidth;
@@ -533,6 +536,14 @@ class Blast {
       case 'cover':
         P.set(x + A.ox, A.oy + a * 0.12, z + A.oz);
         break;
+      case 'shock': {
+        // Dust shockwave: races out along the ground to the full radius in SHOCK_TIME (eased out, like a
+        // blast front slowing down), then hangs there, drifting up and spreading a little as it fades.
+        const t = Math.min(1, a / SHOCK_TIME);
+        const r = this.shock * (1 - Math.pow(1 - t, 3)) * A.rho + Math.max(0, a - SHOCK_TIME) * A.drift;
+        P.set(x + Math.cos(A.theta) * r, 0.06 + A.dy + a * A.rise, z + Math.sin(A.theta) * r);
+        break;
+      }
       case 'fire': {
         const k = 1 + a * 0.8;
         P.set(x + A.ox * k, 0.15 + this.head(a) * A.f + A.oy, z + A.oz * k);
@@ -581,7 +592,6 @@ function bezierTangent(out, p0, p1, p2, u) {
 export class MissileStrike {
   #missiles = [];
   #blasts = [];
-  #rings = [];
   #timers = [];
   #jobs = [];
   #lightLevel = 0;
@@ -599,7 +609,6 @@ export class MissileStrike {
     this.cloud = new CloudPuffs(this.group, camera, cfg);
     this.flames = new Puffs(this.group, this.glow, { additive: true, max: 500 });
     this.template = buildMissileTemplate();
-    this.ringGeo = new THREE.RingGeometry(0.9, 1, 64).rotateX(-Math.PI / 2);
     // One light, always in the scene (intensity 0 at rest) so adding it never recompiles shaders.
     this.light = new THREE.PointLight(0xffa040, 0, 12, 1.6);
     this.light.position.set(0, -50, 0);
@@ -768,24 +777,11 @@ export class MissileStrike {
       }
     }
 
-    // Blasts, rings, the flash light.
+    // Blasts, the flash light.
     for (let i = this.#blasts.length - 1; i >= 0; i--) {
       const b = this.#blasts[i];
       b.age += dt;
       if (b.age > b.life) this.#blasts.splice(i, 1);
-    }
-    for (let i = this.#rings.length - 1; i >= 0; i--) {
-      const r = this.#rings[i];
-      r.age += dt;
-      const t = r.age / r.life;
-      if (t >= 1) {
-        this.group.remove(r.mesh);
-        r.mesh.material.dispose();
-        this.#rings.splice(i, 1);
-        continue;
-      }
-      r.mesh.scale.setScalar(0.2 + (r.radius - 0.2) * (1 - Math.pow(1 - t, 3)));
-      r.mesh.material.opacity = 0.65 * Math.pow(1 - t, 1.5);
     }
     this.#lightLevel *= Math.exp(-7 * dt);
     this.light.intensity = this.#lightLevel < 0.002 ? 0 : c.flashIntensity * this.#lightLevel;
@@ -810,16 +806,42 @@ export class MissileStrike {
     this.light.position.set(x, 1.4, z);
     this.#lightLevel = 1;
 
-    // Shockwave along the ground.
+    // Shockwave: a ring of dust and smoke racing out along the ground, covering the same radius and
+    // timing as a blast front. A low front of sandy dust kicked up from the ground, and a trailing,
+    // slightly higher band of grey smoke that hangs on after the front stops.
     if (c.shockRadius > 0) {
-      const mesh = new THREE.Mesh(
-        this.ringGeo,
-        new THREE.MeshBasicMaterial({ color: 0xffcf8a, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false }),
-      );
-      mesh.position.set(x, 0.06, z);
-      mesh.renderOrder = 10;
-      this.group.add(mesh);
-      this.#rings.push({ mesh, age: 0, life: 0.75, radius: c.shockRadius * S });
+      const reach = blast.shock;
+      const front = Math.max(12, Math.round(reach * 9 * dens)); // puffs around the ring, scaled with its length
+      for (let i = 0; i < front; i++) {
+        this.cloud.spawn({
+          anchor: at('shock', { theta: (i / front) * Math.PI * 2 + rand(-0.12, 0.12), rho: rand(0.9, 1.04), dy: rand(0, 0.08) * S, rise: rand(0.04, 0.12), drift: rand(0.05, 0.15) }),
+          size0: 0.3 * S,
+          size1: rand(0.9, 1.25) * S,
+          life: rand(1.6, 2.2),
+          color0: '#c9a878', // kicked-up sand, darker than the ground so the ring reads
+          color1: '#7a6a55',
+          colorTime: 0.45,
+          opacity: rand(0.85, 1),
+          fadeIn: 0.04,
+          fadeStart: 0.35,
+        });
+      }
+      const trail = Math.max(8, Math.round(reach * 5 * dens));
+      for (let i = 0; i < trail; i++) {
+        this.cloud.spawn({
+          anchor: at('shock', { theta: (i / trail) * Math.PI * 2 + rand(-0.2, 0.2), rho: rand(0.55, 0.85), dy: rand(0.1, 0.3) * S, rise: rand(0.1, 0.22), drift: rand(0.02, 0.08) }),
+          delay: rand(0.05, 0.15),
+          size0: 0.35 * S,
+          size1: rand(1, 1.4) * S,
+          life: rand(2.2, 3),
+          color0: '#9c8a70',
+          color1: c.smokeColor2,
+          colorTime: 0.4,
+          opacity: rand(0.7, 0.9),
+          fadeIn: 0.08,
+          fadeStart: 0.4,
+        });
+      }
     }
 
     // Cover: dense, low puffs right over the tile (its sides too), so the crater swap is hidden.
@@ -932,12 +954,7 @@ export class MissileStrike {
   /** Remove everything at once (island reset). Pending fire() promises resolve. */
   clear() {
     for (const m of this.#missiles) if (m.mesh) this.group.remove(m.mesh);
-    for (const r of this.#rings) {
-      this.group.remove(r.mesh);
-      r.mesh.material.dispose();
-    }
     this.#missiles.length = 0;
-    this.#rings.length = 0;
     this.#blasts.length = 0;
     this.#timers.length = 0;
     this.smoke.clear();
