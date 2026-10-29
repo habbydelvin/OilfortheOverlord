@@ -65,6 +65,10 @@ const TAR =
 const REFINERY =
   '<svg class="ico map-refinery" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 2.2c-1.5 1.6-2 2.9-1.2 4.2.4-.8 1-1.2 1.6-1.4-.2 1 .2 1.7 1 2 .8-1.4.4-3-1.4-4.8z" fill="#ffb347" stroke="#1c1c1c" stroke-width="0.9" stroke-linejoin="round"/><rect x="8.2" y="7" width="6" height="14" rx="2" fill="#9aa3ab" stroke="#1c1c1c" stroke-width="1.3"/><path d="M8.6 10.6h5.2M8.6 14.4h5.2M8.6 18.2h5.2" stroke="#c0392b" stroke-width="1.5"/><rect x="15.4" y="13" width="5" height="8" rx="1.6" fill="#d0782a" stroke="#1c1c1c" stroke-width="1.3"/><path d="M14.2 16h1.2" stroke="#1c1c1c" stroke-width="1.3"/><path d="M3 21.2h18" stroke="#1c1c1c" stroke-width="1.6" stroke-linecap="round"/></svg>';
 
+/** Bandit and rebel camps: a red devil's head (horns, ears, eyes, grin), dark outline like the others. */
+const DEVIL =
+  '<svg class="ico map-devil" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.6 9.4C4 7.6 3.4 5 4 2.6c1.3 1.8 3 3 5 3.6M18.4 9.4c1.6-1.8 2.2-4.4 1.6-6.8-1.3 1.8-3 3-5 3.6" fill="#f2c94c" stroke="#1c1c1c" stroke-width="1.3" stroke-linejoin="round"/><path d="M12 5.4c-4.2 0-7.2 3-7.2 7.2 0 4.6 3.3 8.8 7.2 8.8s7.2-4.2 7.2-8.8c0-4.2-3-7.2-7.2-7.2z" fill="#d23a2a" stroke="#1c1c1c" stroke-width="1.4"/><path d="M7.6 11.4l3 1.4-.2 1.2-2.4-.6zM16.4 11.4l-3 1.4.2 1.2 2.4-.6z" fill="#ffe27a" stroke="#1c1c1c" stroke-width="0.9" stroke-linejoin="round"/><path d="M8.6 16.2c1 1.6 2.2 2.2 3.4 2.2s2.4-.6 3.4-2.2" fill="none" stroke="#1c1c1c" stroke-width="1.4" stroke-linecap="round"/><path d="M10.2 17.4l.5 1M13.8 17.4l-.5 1" stroke="#fff" stroke-width="0.9" stroke-linecap="round"/></svg>';
+
 /** Booster tiles: their icon and the resource they add to their neighbours (shown as a live "+n" tag). */
 const BOOSTERS = {
   pump: { icon: WATER, res: 'food' },
@@ -88,6 +92,12 @@ function iconFor(terrain) {
       return CROWN;
     case 'ruins':
       return RUINS;
+    case 'raider': // rebel camp
+    case 'bandit_raider':
+    case 'bandit_siphon':
+    case 'bandit_scav':
+    case 'bandit_smuggle':
+      return DEVIL;
     default:
       return null;
   }
