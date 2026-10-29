@@ -597,10 +597,14 @@ export class TileFactory {
   update(dt) {
     for (const entry of this.#mixers) {
       let node = entry.root;
-      while (node.parent) node = node.parent;
+      let frozen = false; // an idle building (no workers, main.js shadeIdle) holds still
+      while (node.parent) {
+        frozen ||= node.userData.idle === true;
+        node = node.parent;
+      }
       if (node.isScene) {
         entry.idle = 0;
-        entry.mixer.update(dt);
+        if (!frozen) entry.mixer.update(dt);
       } else if (++entry.idle > 120) {
         // About two seconds detached. The copy has been thrown away.
         entry.mixer.stopAllAction();

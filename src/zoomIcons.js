@@ -87,9 +87,10 @@ export class ZoomIcons {
     const d = this.rig.distance;
     const t = far > near ? THREE.MathUtils.clamp((d - near) / (far - near), 0, 1) : d >= far ? 1 : 0;
     const alpha = t * c.maxOpacity;
+    // The fade applies per icon (--map-fade), except Pre-war Ruins: always shown, blinking, at any zoom.
     const op = alpha.toFixed(3);
-    if (this.layer._op !== op) this.layer.style.opacity = this.layer._op = op;
-    if (alpha <= 0) return; // hidden: skip projecting every tile
+    if (this.layer._op !== op) this.layer.style.setProperty('--map-fade', (this.layer._op = op));
+    const hidden = alpha <= 0; // then only the ruins are projected
 
     const scale = 1 - c.scaleWithZoom + c.scaleWithZoom * (far / Math.max(d, 0.001));
     const size = `${(c.size * scale).toFixed(1)}px`;
@@ -100,19 +101,22 @@ export class ZoomIcons {
     const live = new Set();
     for (const cell of grid.cells.values()) {
       const html = iconFor(cell.terrain);
-      if (!html) continue;
+      if (!html || (hidden && cell.terrain !== 'ruins')) continue;
       const k = `${cell.x},${cell.z}`;
       live.add(k);
       let rec = this.els.get(k);
       if (!rec || rec.terrain !== cell.terrain) {
         rec?.el.remove();
         const el = document.createElement('div');
-        el.className = 'map-icon';
+        el.className = cell.terrain === 'ruins' ? 'map-icon map-icon-ruins' : 'map-icon';
         el.innerHTML = html;
         this.layer.appendChild(el);
         rec = { el, terrain: cell.terrain };
         this.els.set(k, rec);
       }
+      // An idle building (no workers, greyed out on the board) shows a greyed-out icon too.
+      const idle = cell.mesh?.userData.idle === true;
+      if (rec.el._idle !== idle) rec.el.classList.toggle('idle', (rec.el._idle = idle));
       this.v.set(cell.x, c.height, cell.z).project(this.camera);
       const px = (this.v.x * 0.5 + 0.5) * w;
       const py = (-this.v.y * 0.5 + 0.5) * h;

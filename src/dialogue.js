@@ -34,13 +34,23 @@ export class Dialogue {
       <div class="dlg-choices"></div>
       <div class="dlg-box">
         <div class="dlg-name"></div>
+        <button class="dlg-skip hidden" type="button">Skip</button>
         <div class="dlg-text"></div>
         <div class="dlg-next">▼</div>
       </div>
       <div class="dlg-hints"><span><b>↑↓</b> Select</span><span><b>Enter</b> Confirm</span></div>`;
     this.$ = (s) => root.querySelector(s);
     this.active = false;
+    this.skip = false; // jump through plain lines until a choice
+    this.skippable = true; // off for the yearly target scene
     this.#bindInput();
+  }
+
+  /** Plain lines can be skipped. The yearly target scene turns this off for the whole conversation. */
+  allowSkip(on = true) {
+    this.skippable = on;
+    if (!on) this.skip = false;
+    this.#syncSkip();
   }
 
   /** Show the overlay, with an optional banner ({ kind, title, effect } — effect may contain HTML). */
@@ -63,6 +73,7 @@ export class Dialogue {
       }
     }
     document.body.classList.add('dialogue');
+    this.#syncSkip();
   }
 
   /** The speaker exits: portrait slides away, then the overlay closes. Resolves when gone. */
@@ -80,21 +91,26 @@ export class Dialogue {
 
   close() {
     this.active = false;
+    this.skip = false;
+    this.skippable = true;
     this.#stopTyping();
     this.root.classList.add('hidden');
     document.body.classList.remove('dialogue');
     this.$('.dlg-choices').innerHTML = '';
+    this.#syncSkip();
   }
 
-  /** One line; resolves when the player clicks / presses Enter after it has finished typing. */
+  /** One line; resolves when the player clicks / presses Enter after it has finished typing. A running skip resolves it at once. */
   say(speaker, text) {
     return new Promise((resolve) => {
       this.#show(speaker, text, null, resolve);
+      if (this.skip && this.skippable) this.#flush();
     });
   }
 
-  /** A line followed by reply choices ([{ text, tag? }], tag may contain HTML). Resolves with the index. */
+  /** A line followed by reply choices ([{ text, tag? }], tag may contain HTML). Resolves with the index. Skip never confirms a choice. */
   ask(speaker, text, choices) {
+    this.skip = false;
     return new Promise((resolve) => {
       this.#show(speaker, text, choices, resolve);
     });
@@ -119,6 +135,7 @@ export class Dialogue {
     }
     this.$('.dlg-choices').innerHTML = '';
     this.$('.dlg-next').classList.add('hidden');
+    this.#syncSkip();
     this.#type(text);
   }
 
@@ -187,8 +204,21 @@ export class Dialogue {
     for (const b of this.$('.dlg-choices').children) b.classList.toggle('on', Number(b.dataset.i) === this.selected);
   }
 
+  /** Finish the current plain line and resolve it, without the advance click. Used while skipping. */
+  #flush() {
+    if (this.choices || !this.resolve) return;
+    if (this.typing) this.#finishTyping();
+    this.#advance(null, false);
+  }
+
+  /** Show or hide Skip. Hidden during choices, the target scene, and whenever nobody is talking. */
+  #syncSkip() {
+    const show = this.active && this.skippable && !this.choices;
+    this.$('.dlg-skip').classList.toggle('hidden', !show);
+  }
+
   /** Click / Enter: finish typing first, then advance or confirm the selected choice. */
-  #advance(pick = null) {
+  #advance(pick = null, sound = true) {
     if (!this.active || !this.resolve) return;
     if (this.typing) return this.#finishTyping();
     if (this.choices) {
@@ -197,13 +227,13 @@ export class Dialogue {
         this.selected = pick;
       }
       if (this.choices[this.selected]?.disabled) return;
-      choiceClick();
+      if (sound) choiceClick();
       const done = this.resolve;
       this.resolve = null;
       done(this.selected);
       return;
     }
-    clickSfx();
+    if (sound) clickSfx();
     const done = this.resolve;
     this.resolve = null;
     done();
@@ -218,6 +248,13 @@ export class Dialogue {
       const b = e.target.closest('.dlg-choice');
       if (this.choices && !this.typing && !b) return; // with choices up, only a choice confirms
       this.#advance(b ? Number(b.dataset.i) : null);
+    });
+    this.$('.dlg-skip').addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (!this.active || !this.skippable || this.choices) return;
+      this.skip = true;
+      this.#flush();
     });
     // Capture phase so the game's own key handler never sees keys while dialogue is open.
     window.addEventListener(

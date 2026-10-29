@@ -13,6 +13,7 @@ import { hasBlockout, loadProgress, breathe, decodeImage } from './models.js';
 import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
 import { Hand, pieceCost } from './hand.js';
+import { copySeam } from './seamlessGround.js';
 import { Mysteries } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
@@ -290,6 +291,7 @@ function adoptBlockouts() {
     if (anim) anim.mesh = next;
     cell.mesh = next;
   }
+  shadeIdle(); // a stand-in swapped for its model takes over the grey
   if (hand.piece) placement.setPiece(hand.piece);
 }
 
@@ -740,6 +742,49 @@ function setRes(id, amount, change) {
   d.className = n > 0 ? 'up' : n < 0 ? 'down' : '';
 }
 
+/**
+ * Idle buildings (not enough workers) go fully grey, the building and the ground plate it stands on, and their
+ * animation freezes (TileFactory.update skips tiles marked userData.idle).
+ * The grey is a shader patch: each material gets one grey twin (made on first use, shared by every idle tile,
+ * same textures), so no per-tile copies. A per-draw uniform on the shared material can't do it: three.js only
+ * re-uploads a standard material's uniforms when the material changes between draws.
+ */
+const greyTwin = new Map(); // material -> its grey twin
+const greyOrigin = new Map(); // grey twin -> material
+const GREY_GLSL = '#include <color_fragment>\n  diffuseColor.rgb = vec3(dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114))) * 0.6;';
+function greyOf(m) {
+  if (greyOrigin.has(m)) return m;
+  let g = greyTwin.get(m);
+  if (!g) {
+    g = copySeam(m, m.clone()); // keeps the seamless-ground patch, which a clone loses
+    const before = g.onBeforeCompile;
+    const key = g.customProgramCacheKey?.call(g) ?? '';
+    g.onBeforeCompile = (shader, renderer) => {
+      before?.call(g, shader, renderer);
+      shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', GREY_GLSL);
+    };
+    g.customProgramCacheKey = () => `${key}|idle-grey`;
+    if (g.emissive) g.emissiveIntensity = 0; // lit windows go dark
+    greyTwin.set(m, g);
+    greyOrigin.set(g, m);
+  }
+  return g;
+}
+const colourOf = (m) => greyOrigin.get(m) ?? m;
+function setGrey(mesh, on) {
+  if (Boolean(mesh.userData.idle) === on) return;
+  mesh.userData.idle = on;
+  const swap = on ? greyOf : colourOf;
+  mesh.traverse((o) => {
+    if (o.isMesh && o.material) o.material = Array.isArray(o.material) ? o.material.map(swap) : swap(o.material);
+  });
+}
+function shadeIdle(e = economyNow()) {
+  const idle = new Set();
+  for (const p of e.perCell) if (p.idle) idle.add(`${p.x},${p.z}`);
+  for (const cell of grid.cells.values()) if (cell.mesh) setGrey(cell.mesh, idle.has(`${cell.x},${cell.z}`));
+}
+
 function updateHUD() {
   const n = grid.size;
   const quota = turn.quota;
@@ -789,6 +834,7 @@ function updateHUD() {
   $('resMp').classList.toggle('neg', e.idle > 0);
   $('resMpD').textContent = e.idle ? `(${e.idle} idle)` : '';
   $('resMpD').className = e.idle ? 'down' : '';
+  shadeIdle(e);
   // Oil: big number = the stockpile (the Overlord takes it all after Winter), small = this season's yield.
   $('resOilD').textContent = `(+${e.oil})`;
   $('resOilD').className = e.oil > 0 ? 'up' : '';
@@ -799,8 +845,14 @@ function updateHUD() {
   $('btnReroll').classList.toggle('hidden', hand.isEmpty);
   $('btnReroll').classList.toggle('disabled', !turn.freeRerolls && turn.stockpile < rerollCost());
   $('btnRerollSub').innerHTML = turn.freeRerolls ? `free ×${turn.freeRerolls}` : `-${rerollCost()}${ICONS.oil}`;
-  $('btnNextSub').textContent =
-    turn.season === yearLength() - 1 ? `collect oil, pay ${quota} tribute` : 'collect oil, draw a new hand';
+  // Greyed out while Wasteland that still fits must be placed (endTurn refuses then, with a toast).
+  const blocking = hand.placeableForced.length;
+  $('btnNext').classList.toggle('disabled', blocking > 0);
+  $('btnNextSub').textContent = blocking
+    ? `place your Wasteland first (${blocking} left)`
+    : turn.season === yearLength() - 1
+      ? `collect oil, pay ${quota} tribute`
+      : 'collect oil, draw a new hand';
   if (tipKind) renderResTip(e);
 }
 
@@ -1476,6 +1528,7 @@ function targetTag({ tier, reward }) {
 
 async function playTargetDialogue(offers, { forced, continued, gifted }) {
   const OVERLORD = 'The Overlord';
+  dialogue.allowSkip(false); // the player has to hear the terms and name the target
   const pleased = !turn.lastMissed;
   const base = turn.quotaBase;
   dialogue.open({
@@ -1579,6 +1632,7 @@ const EVENT_BRIDGE = {
  */
 async function playEventDialogue(key, ev, continued = false) {
   const OVERLORD = 'The Overlord';
+  dialogue.allowSkip(true);
   dialogue.open({
     kind: ev.kind,
     kindLabel: `Year event · ${KIND_LABEL[ev.kind]}`,
@@ -1918,6 +1972,35 @@ renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 renderer.domElement.addEventListener('pointerdown', (e) => {
   if (e.button === 2) hand.rotate(1);
 });
+
+// Dragging a card out of the hand: the ghost follows the pointer (touch keeps sending moves to the card,
+// not the canvas, so the pointer is updated from here), and releasing over the board places it as a click would.
+const overBoard = (x, y) => document.elementFromPoint(x, y) === renderer.domElement;
+hand.onDragMove = (x, y) => {
+  pointer.set((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1);
+  pointerInside = overBoard(x, y);
+};
+// While dragging a card, the mouse wheel rotates the piece (like R / F) instead of zooming the camera.
+// Captured on window so it runs before the camera's own wheel handler on the canvas.
+let wheelRotateAt = 0;
+window.addEventListener(
+  'wheel',
+  (e) => {
+    if (!hand.dragging) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const now = performance.now();
+    if (Math.abs(e.deltaY) < 1 || now - wheelRotateAt < 120) return; // one turn per notch, not per trackpad tick
+    wheelRotateAt = now;
+    hand.rotate(e.deltaY > 0 ? 1 : -1);
+  },
+  { capture: true, passive: false },
+);
+hand.onDrop = (x, y) => {
+  if (!overBoard(x, y)) return; // dropped back on the hand or a panel: nothing placed, the card stays picked
+  hand.onDragMove(x, y);
+  tryPlace();
+};
 
 function hoveredCell() {
   if (!pointerInside) return null;

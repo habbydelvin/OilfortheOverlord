@@ -995,6 +995,25 @@ body.paying #btnReroll {
   filter: drop-shadow(0 0 1.5px var(--gold)) drop-shadow(0 0 1.5px var(--gold)) drop-shadow(var(--sx, 0px) calc(var(--sy, 6px) + 8px) 14px rgba(0, 0, 0, 0.55));
 }
 
+/* Touch: a drag on a card picks it up instead of scrolling (which would cancel the drag). */
+#hand .card {
+  touch-action: none;
+}
+#hand .card img {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+/* Being dragged onto the board: the 3D ghost shows it there, so the card in hand dims. */
+.card.selected.dragging {
+  opacity: 0.45;
+}
+body.dragging-card,
+body.dragging-card * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
 .card.deal {
   animation: deal 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
 }
@@ -1236,9 +1255,13 @@ body.paying #btnReroll {
   color: var(--muted);
 }
 
-#btnReroll.disabled {
+#btnReroll.disabled,
+#btnNext.disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+#btnNext.disabled {
+  filter: grayscale(1);
 }
 
 /* ---------- shop (full screen) ---------- */
@@ -1848,6 +1871,30 @@ body.shopping .ruin-btn {
 .dlg-next.hidden {
   display: none;
 }
+/* Skip spoken lines. Sits on the top-right edge of the box, above the line. Hidden during choices and the yearly target scene. */
+.dlg-skip {
+  position: absolute;
+  top: 0;
+  right: 56px;
+  z-index: 2;
+  translate: 0 -110%;
+  padding: 4px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 4px;
+  background: rgba(10, 10, 10, 0.55);
+  color: #f2efe8;
+  font: inherit;
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.dlg-skip.hidden {
+  display: none;
+}
+.dlg-skip:hover {
+  background: rgba(10, 10, 10, 0.8);
+}
 @keyframes dlgBob {
   50% { translate: 0 4px; }
 }
@@ -1964,7 +2011,8 @@ body.dialogue #inspect {
 #dialogue.leaving .dlg-box,
 #dialogue.leaving .dlg-banner,
 #dialogue.leaving .dlg-shade,
-#dialogue.leaving .dlg-hints {
+#dialogue.leaving .dlg-hints,
+#dialogue.leaving .dlg-skip {
   transition: opacity 0.5s ease-in 0.1s;
   opacity: 0;
 }
@@ -1987,10 +2035,11 @@ body.dialogue #inspect {
   z-index: -1; /* under every other piece of UI (it comes later in the page than the panels) */
   overflow: hidden;
   pointer-events: none;
-  opacity: 0;
   --map-ico: 26px;
+  --map-fade: 0;
 }
 .map-icon {
+  opacity: var(--map-fade);
   position: absolute;
   left: 0;
   top: 0;
@@ -2008,6 +2057,24 @@ body.dialogue #inspect {
   height: var(--map-ico);
   margin: 0;
   vertical-align: middle;
+}
+/* Idle building (no workers): its icon goes grey like the building. */
+.map-icon.idle .ico {
+  filter: grayscale(1) brightness(0.6);
+}
+.map-icon.idle {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Pre-war Ruins: always shown, at any zoom, blinking so the player sees they can be cleared. */
+.map-icon.map-icon-ruins {
+  opacity: 1;
+  border-color: #e8bf68;
+  animation: ruins-blink 1.2s ease-in-out infinite;
+}
+@keyframes ruins-blink {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(232, 191, 104, 0.7), 0 2px 6px rgba(0, 0, 0, 0.45); }
+  50% { opacity: 0.35; box-shadow: 0 0 12px 3px rgba(232, 191, 104, 0.55), 0 2px 6px rgba(0, 0, 0, 0.45); }
 }
 body.striking #mapIcons {
   visibility: hidden;

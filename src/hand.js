@@ -28,6 +28,9 @@ export function pieceCost(p) {
 // Everything that isn't Wasteland (tiles and action cards), so a pinned Wasteland slot draws only Wasteland.
 const ALL_BUT_WASTELAND = [...Object.keys(TERRAINS), ...Object.keys(ACTIONS)].filter((k) => !k.startsWith('wasteland'));
 
+/** Pointer travel (px) before pressing a card becomes dragging it. */
+const DRAG_PX = 8;
+
 export const isForced = (piece) => piece.terrain.startsWith('wasteland');
 
 /** The row of piece cards along the bottom of the screen. */
@@ -43,11 +46,49 @@ export class Hand {
     this.size = size;
     this.onChange = onChange;
     el.addEventListener('click', (e) => {
+      if (this.#justDragged) {
+        this.#justDragged = false; // the click that ends a drag must not toggle the card off
+        return;
+      }
       const card = e.target.closest('.card');
-      if (!card) return;
+      if (!card || card.dataset.i === undefined) return;
       const i = Number(card.dataset.i);
       this.select(this.selected === i ? -1 : i);
     });
+    // The card's snapshot <img> would start the browser's own image drag and cancel the pointer events.
+    el.addEventListener('dragstart', (e) => e.preventDefault());
+    // Drag and drop: press a card and move past DRAG_PX to pick it up; releasing places it (onDrop).
+    el.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const card = e.target.closest('.card');
+      if (!card || card.dataset.i === undefined) return;
+      this.#press = { i: Number(card.dataset.i), x: e.clientX, y: e.clientY, id: e.pointerId };
+    });
+    window.addEventListener('pointermove', (e) => {
+      const p = this.#press;
+      if (!p || p.id !== e.pointerId) return;
+      if (!this.dragging && Math.hypot(e.clientX - p.x, e.clientY - p.y) > DRAG_PX) {
+        this.dragging = true;
+        if (this.selected !== p.i) this.select(p.i);
+        document.body.classList.add('dragging-card');
+        this.render();
+      }
+      if (this.dragging) this.onDragMove?.(e.clientX, e.clientY);
+    });
+    const end = (e, drop) => {
+      const p = this.#press;
+      if (!p || p.id !== e.pointerId) return;
+      this.#press = null;
+      if (!this.dragging) return;
+      this.dragging = false;
+      this.#justDragged = true;
+      setTimeout(() => (this.#justDragged = false), 0); // no click follows when released off the hand
+      document.body.classList.remove('dragging-card');
+      this.render();
+      if (drop) this.onDrop?.(e.clientX, e.clientY);
+    };
+    window.addEventListener('pointerup', (e) => end(e, true));
+    window.addEventListener('pointercancel', (e) => end(e, false));
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       this.rotate(1);
@@ -55,6 +96,11 @@ export class Hand {
     bindCardHover(el);
     this.deal();
   }
+
+  /** True while a card is being dragged out of the hand. */
+  dragging = false;
+  #press = null;
+  #justDragged = false;
 
   get piece() {
     return this.cards[this.selected] ?? null;
@@ -177,7 +223,7 @@ export class Hand {
       }
       const t = cardDef(p.terrain);
       const selected = i === this.selected;
-      c.el.className = ['card', t.category === 'junk' ? 'junk' : '', t.category === 'action' ? 'action' : '', selected ? 'selected' : '']
+      c.el.className = ['card', t.category === 'junk' ? 'junk' : '', t.category === 'action' ? 'action' : '', selected ? 'selected' : '', selected && this.dragging ? 'dragging' : '']
         .filter(Boolean)
         .join(' ');
       c.el.dataset.i = i;
