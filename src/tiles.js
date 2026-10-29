@@ -3,6 +3,7 @@ import { clone as cloneModel } from 'three/addons/utils/SkeletonUtils.js';
 import { hasBlockout, loadCoreModels, loadBundle } from './models.js';
 import { buildRaiderCamp } from './raiderMesh.js';
 import { buildLabourCamp } from './labourCampMesh.js';
+import { copySeam } from './seamlessGround.js';
 import { SCALE, P } from './scalingConfig.js';
 
 /**
@@ -343,9 +344,10 @@ export const ICONS = {
 };
 
 /** Swap "<amount> food/oil/worker slot(s)" for "<amount> <icon>" in rule text. */
+/** "+2 food" -> +2 and the food icon, wrapped as one amount (.amt: shown larger on the cards). */
 export const iconize = (line) =>
   line.replace(/([+-]?\d+(?:\.\d+)?×?) (food|oil|worker slots?|manpower)\b/g, (_, n, w) =>
-    `${n}${ICONS[w.startsWith('worker') ? 'manpower' : w]}`,
+    `<span class="amt">${n}${ICONS[w.startsWith('worker') ? 'manpower' : w]}</span>`,
   );
 
 /** Card text as HTML: a small trigger heading, then one line per effect. */
@@ -654,7 +656,7 @@ export class TileFactory {
       // A mesh can carry several materials (e.g. the Village02 ship): ghost each of them.
       let seeThrough = false;
       const ghost = (source) => {
-        const material = source.clone();
+        const material = copySeam(source, source.clone());
         // Already see-through parts (refinery smoke) keep their own, lower opacity and cast no shadow.
         seeThrough ||= material.transparent;
         material.transparent = true;
