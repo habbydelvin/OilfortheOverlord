@@ -125,6 +125,9 @@ export class Placement {
       if (!cell || !isCamp(cell.terrain)) return { ok: false, reason: 'The militia only clears bandit camps' };
       return { ok: true, reason: '' };
     }
+    // Optional extra rule (the tutorial: only the highlighted cells).
+    const guarded = this.guard?.(cells, this.piece);
+    if (guarded) return guarded;
     const building = this.piece && isBuilding(this.piece.terrain);
     if (cells.some(([x, z]) => !inWorld(x, z))) return { ok: false, reason: 'Edge of the world' };
     if (cells.some(([x, z]) => !this.grid.allowed(x, z))) return { ok: false, reason: 'Outside your territory' };

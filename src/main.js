@@ -32,6 +32,7 @@ import { Perf } from './perfOverlay.js';
 import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig, applyGfx } from './graphics.js';
 import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
 import { MissileStrike, MISSILE_PARAMS, MISSILE_DEFAULTS, loadMissileConfig, saveMissileConfig, clearMissileConfig } from './missiles.js';
+import { Tutorial, TUTORIAL_QUOTA, TUTORIAL_STRIKES, TUTORIAL_SITE, TUTORIAL_KEY, tutorialDone, markTutorialDone } from './tutorial.js';
 
 const HAND_SIZE = 5;
 const SEED_TERRAIN = 'capital';
@@ -50,6 +51,7 @@ onMusicVolume((volume) => {
 });
 const perf = new Perf(renderer); // '-' toggles the overlay
 const rig = new CameraRig(camera, renderer.domElement);
+const START_DISTANCE = rig.goalDistance;
 const grid = new Grid();
 const factory = new TileFactory();
 const tiles = new THREE.Group();
@@ -108,10 +110,15 @@ const debug = createDebugPanel(document.getElementById('debug'), document.getEle
   },
   onPlay: () => previewPayout(),
   expansionMode: () => grid.expansionMode,
-  onExpansionMode: (on) => setExpansionMode(on),
-  onSkipYear: (met) => debugSkipYear(met),
+  onExpansionMode: (on) => (tutorialBlocks() ? undefined : setExpansionMode(on)),
+  onSkipYear: (met) => (tutorialBlocks() ? 'Not during the tutorial' : debugSkipYear(met)),
   onPerf: () => perf.setOpen(!perf.enabled),
-  onMissiles: () => previewMissileStrike(),
+  onResetTutorial: () => {
+    localStorage.removeItem(TUTORIAL_KEY); // next reload starts with the tutorial again
+    resetIsland({ tutorial: true });
+    return 'Tutorial reset: Year 0 started';
+  },
+  onMissiles: () => (tutorialBlocks() ? 'Not during the tutorial' : previewMissileStrike()),
   missiles: {
     params: MISSILE_PARAMS,
     defaults: MISSILE_DEFAULTS,
@@ -178,6 +185,43 @@ const turn = { strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, event:
 function freshTargetState() {
   return { quotaBase: FIRST_QUOTA, target: null, lowStreak: 0, freeRerolls: 0, cardPicks: 0, forceFortune: false };
 }
+
+// ---------- Year 0 tutorial (tutorial.js) ----------
+const tutorial = new Tutorial({
+  root: document.getElementById('coach'),
+  scene,
+  camera,
+  hand,
+  api: {
+    deal: (list) => {
+      hand.dealScripted(list);
+      updateHUD();
+    },
+    /** This season if it ended now: oil made, and the stockpile it would leave. */
+    forecast: () => {
+      const e = economyNow();
+      return { oil: e.oil, after: turn.stockpile + e.oil, quota: turn.quota };
+    },
+    setFreeRerolls: (n) => {
+      turn.freeRerolls = n;
+      updateHUD();
+    },
+    focus: (x, z) => rig.focus(x, z),
+    skip: () => skipTutorial(),
+  },
+});
+// While it runs, only the card, cells and buttons the advisor asks for respond.
+hand.guard = (action, piece) => !busy() && tutorial.allows(action, piece);
+hand.onBlocked = () => tutorial.nudge();
+placement.guard = (cells, piece) => tutorial.placeGuard(cells, piece);
+/** Debug tools and shortcuts are off during the tutorial (it has to stay on script). */
+/** True while something owns the screen (dialogue, missiles, shop, payout): nothing can be picked or placed. */
+const busy = () => eventOpen || striking || shopOpen || payout.active || turn.over;
+const tutorialBlocks = () => {
+  if (!tutorial.active) return false;
+  tutorial.nudge();
+  return true;
+};
 
 /** This season's economy with the carried-over food store and population. */
 const economyNow = () => computeEconomy(grid, { mods: turn.event?.mods, population: turn.population, foodStore: turn.food });
@@ -516,6 +560,63 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
   return lost;
 }
 
+/**
+ * A missile launches from the ground at `spot` and hits `target` (Show of Force's ruins, and an
+ * Unexploded Missile). Resolves with the names of the tiles lost, or null if the run was reset meanwhile.
+ */
+async function groundStrike(spot, target, lostText = (l) => `The silo's missile destroyed your ${l}`) {
+  const run = runId;
+  eventOpen = true; // locked from the moment it is called, through the lead-in
+  hand.select(-1);
+  await wait(0.8);
+  if (run !== runId) return null;
+  const lost = await playMissileStrike([{ ...target, from: spot }]);
+  if (run !== runId) return null;
+  eventOpen = false;
+  reportStrike(lost);
+  updateHUD();
+  if (lost.length) toast(lostText(listLost(lost)), 'bad', 2600);
+  return lost;
+}
+
+/** The building (never the Capital) nearest to (x, z), ties broken at random; null if there is none. */
+function nearestBuilding(x, z) {
+  const pool = [...grid.cells.values()].filter((c) => isBuilding(c.terrain) && c.terrain !== 'capital');
+  if (!pool.length) return null;
+  const d = (c) => Math.abs(c.x - x) + Math.abs(c.z - z);
+  const best = Math.min(...pool.map(d));
+  const near = pool.filter((c) => d(c) === best);
+  const c = near[Math.floor(Math.random() * near.length)];
+  return { x: c.x, z: c.z };
+}
+
+/**
+ * A "?" site was an Unexploded Missile: it launches from the site into `target` (default: the nearest
+ * building). The site stays empty ground. Notifies the tutorial once it has landed.
+ */
+function unexplodedMissile(site, target = nearestBuilding(site.x, site.z)) {
+  dust.burst(site.x, site.z, 1.4);
+  shake.amount = Math.min(shake.amount + 0.6, 1.2);
+  if (!target) {
+    toast('Uncovered an Unexploded Missile... it fizzled into the sand', 'good', 2400);
+    return;
+  }
+  eventOpen = true;
+  hand.select(-1);
+  toast('Uncovered an Unexploded Missile!', 'bad', 2400);
+  groundStrike({ x: site.x, z: site.z }, target, (l) => `The unexploded missile destroyed your ${l}`).then((lost) => {
+    if (lost && tutorial.active) tutorial.notify('missile');
+  });
+}
+
+/** Reveals: real tiles drop in; missiles launch. `delay(i)` staggers the drops. Returns the tiles found. */
+function landReveals(found, delay) {
+  const tiles = found.filter((f) => f.terrain !== 'missile');
+  tiles.forEach(({ x, z, terrain }, i) => addTile(x, z, terrain, delay(i)));
+  for (const m of found.filter((f) => f.terrain === 'missile')) unexplodedMissile(m, m.target);
+  return tiles;
+}
+
 /** Report line once the missiles have landed. */
 function reportStrike(lost) {
   if (!lost.length) return;
@@ -554,6 +655,7 @@ function previewMissileStrike() {
  * count and its "Leave craters" setting.
  */
 function debugRandomStrike() {
+  if (tutorialBlocks()) return;
   if (turn.over) return toast('Game over: restart first');
   if (striking || shopOpen || eventOpen || payout.active) return toast('Finish the current screen first');
   const cells = [...grid.cells.values()];
@@ -591,6 +693,7 @@ $('btnMissileTest').addEventListener('click', () => {
 /** Ruins can be cleared once a building stands on a side next to them (and, in expansion mode, they're in your territory). */
 function canClearRuins(c) {
   return (
+    !tutorial.active &&
     c.terrain === 'ruins' &&
     grid.allowed(c.x, c.z) &&
     DIRS.some(([dx, dz]) => isBuilding(grid.get(c.x + dx, c.z + dz)?.terrain))
@@ -794,7 +897,7 @@ function updateHUD() {
   const quota = turn.quota;
   const left = yearLength() - 1 - turn.season;
   $('seasonLabel').textContent =
-    `Round ${turn.round} · ${SEASONS[turn.season]} · tribute ${left ? `in ${left} season${left === 1 ? '' : 's'}` : `due this ${SEASONS[turn.season]}`}`;
+    `${turn.round === 0 ? 'Year 0 (tutorial)' : `Round ${turn.round}`} · ${SEASONS[turn.season]} · tribute ${left ? `in ${left} season${left === 1 ? '' : 's'}` : `due this ${SEASONS[turn.season]}`}`;
   const ev = turn.event;
   $('eventLabel').classList.toggle('hidden', !ev);
   if (ev) {
@@ -1022,6 +1125,7 @@ function endTurn() {
       return;
     }
   }
+  if (!tutorial.allows('endTurn')) return tutorial.nudge();
   // Wasteland must be placed first, but only if it fits somewhere; if there's no room, the turn can end.
   const blocking = hand.placeableForced.length;
   if (blocking) {
@@ -1029,6 +1133,7 @@ function endTurn() {
     return;
   }
   hand.select(-1);
+  tutorial.notify('endTurn');
   const e = economyNow();
   runPayout(e, () => settleTurn(e));
 }
@@ -1036,6 +1141,7 @@ function endTurn() {
 /** Debug (Space): play the payout sequence without ending the turn or changing anything. */
 let previewing = false;
 function previewPayout() {
+  if (tutorialBlocks()) return;
   if (payout.active) {
     if (!previewing) {
       payout.skip(); // a real turn is playing: just finish it
@@ -1317,7 +1423,9 @@ function settleTurn(e) {
   // The year ends after Winter, or early as soon as this season's oil meets the quota.
   // Smuggler dens take a share of the stockpile (after this season's oil arrives).
   const stolen = Math.min(turn.stockpile + e.oil, e.stockpileTheft);
-  let yearEnds = turn.season >= yearLength() - 1 || turn.stockpile + e.oil - stolen >= turn.quota;
+  // The tutorial year always runs to Winter (it never meets the quota early anyway).
+  const tut = tutorial.active;
+  let yearEnds = turn.season >= yearLength() - 1 || (!tut && turn.stockpile + e.oil - stolen >= turn.quota);
   const label = `${SEASONS[turn.season]}, round ${turn.round}`;
   turn.stockpile += e.oil - stolen;
   turn.total += e.oil;
@@ -1344,8 +1452,8 @@ function settleTurn(e) {
     msg += ` · Smugglers stole ${stolen}`;
     kind = 'bad';
   }
-  // A full 3×3 block of Wasteland draws a new bandit camp.
-  for (const camp of spawnBandits()) {
+  // A full 3×3 block of Wasteland draws a new bandit camp. (Not in the scripted tutorial.)
+  for (const camp of tut ? [] : spawnBandits()) {
     queueScene('bandit', camp);
     lines.push(`<span class="bad">Bandits settled the wasteland: ${camp.name} (${camp.effect}).</span>`);
     msg += ` · Bandits: ${camp.name}!`;
@@ -1354,11 +1462,11 @@ function settleTurn(e) {
 
   // Rebels: a season with a food surplus drives one camp off; a season that ends with
   // no food at all (net ≤ 0 and empty stores) brings a new camp, in place for the next season.
-  if (Math.round(e.foodBalance) > 0 && departRaider()) {
+  if (!tut && Math.round(e.foodBalance) > 0 && departRaider()) {
     lines.push('<span class="good">Your people are fed: a raider camp packed up and left.</span>');
     msg += ' · Raiders left';
   }
-  if (rebelsRise(e)) {
+  if (!tut && rebelsRise(e)) {
     const raid = spawnRaider();
     if (raid) {
       queueScene('rebel', spawnRaider.last);
@@ -1381,6 +1489,21 @@ function settleTurn(e) {
   finishSettle();
 
   function finishSettle() {
+  // Year 0: next scripted season, or (after Winter) the Overlord's judgement. No quota growth, shop or strikes flow.
+  if (tut) {
+    $('report').innerHTML = lines.join('<br />');
+    if (!yearEnds) {
+      turn.season++;
+      toast(msg, kind, 3200);
+      dealNewHand();
+      return;
+    }
+    const quota = turn.quota;
+    const delivered = turn.stockpile;
+    turn.stockpile = 0;
+    playPredecessorJudgement({ quota, delivered });
+    return;
+  }
   // Tribute at the end of the year (after Winter, or early once the quota is met).
   let failure = null; // set when the tribute is missed: the Overlord comes to speak instead of the shop
   if (yearEnds) {
@@ -1606,9 +1729,9 @@ async function startYearEvent(then, { continued = false, force = null } = {}) {
   hand.select(-1);
   const choice = await playEventDialogue(key, ev, continued);
   await dialogue.leave();
-  eventOpen = false;
   const later = applyYearEvent(key, ev, choice);
-  for (const fn of later) await fn(); // e.g. Show of Force: the missile cinematic
+  for (const fn of later) await fn(); // e.g. Show of Force: the missile cinematic (board stays locked)
+  eventOpen = false;
   await playPendingScenes(); // turned-away refugees: the Rebel Leader speaks
   then();
 }
@@ -1703,6 +1826,10 @@ function applyYearEvent(key, ev, choiceIdx) {
     prospect: () => {
       const found = mysteries.revealNearest([...grid.cells.values()].map((c) => [c.x, c.z]));
       if (!found) return '';
+      if (found.terrain === 'missile') {
+        later.push(async () => unexplodedMissile(found));
+        return 'The map led you to an Unexploded Missile.';
+      }
       addTile(found.x, found.z, found.terrain, 0.25);
       frontier.rebuild(grid);
       return `The map led you to a ${TERRAINS[found.terrain].name}.`;
@@ -1726,17 +1853,7 @@ function applyYearEvent(key, ev, choiceIdx) {
       addTile(spot[0], spot[1], 'ruins', 0.1);
       dust.burst(spot[0], spot[1], 1.4);
       frontier.rebuild(grid);
-      const run = runId;
-      later.push(async () => {
-        await wait(0.8);
-        if (run !== runId) return;
-        const lost = await playMissileStrike([{ ...target, from: { x: spot[0], z: spot[1] } }]);
-        if (run !== runId) return;
-        eventOpen = false;
-        reportStrike(lost);
-        updateHUD();
-        if (lost.length) toast(`The silo's missile destroyed your ${listLost(lost)}`, 'bad', 2600);
-      });
+      later.push(() => groundStrike({ x: spot[0], z: spot[1] }, target));
       return 'Pre-war Ruins surfaced, and their missile launched.';
     },
   };
@@ -1750,6 +1867,13 @@ function applyYearEvent(key, ev, choiceIdx) {
 }
 
 function dealNewHand() {
+  // The tutorial deals its own scripted hand for the new season.
+  if (tutorial.active) {
+    tutorial.notify('season');
+    updateHUD();
+    pop($('oilStock'));
+    return;
+  }
   // Dust Storm: extra Wasteland dealt on top of the normal hand.
   const waste = turn.event?.mods?.extraWaste ?? 0;
   hand.deal(handSize() + waste, [...turn.pinned, ...Array(waste).fill('wasteland')]);
@@ -2018,8 +2142,9 @@ function hoveredCell() {
 function revealMysteries(cells) {
   const found = mysteries.revealAround(cells);
   if (!found.length) return;
-  found.forEach(({ x, z, terrain }, i) => addTile(x, z, terrain, 0.25 + i * 0.15));
-  toast(`Uncovered ${found.map((f) => `a ${TERRAINS[f.terrain].name}`).join(', ')}!`, 'good', 2400);
+  const tiles = landReveals(found, (i) => 0.25 + i * 0.15);
+  if (tiles.length < found.length) return; // a missile: its own toast
+  toast(`Uncovered ${tiles.map((f) => `a ${TERRAINS[f.terrain].name}`).join(', ')}!`, 'good', 2400);
 }
 
 // ---------- territory expansion (debug mode) ----------
@@ -2047,8 +2172,7 @@ function expand(option) {
   fog.setOptions(null);
   // The clouds part; mystery sites in the new plot drop in as real tiles while they clear.
   const clearing = fog.visible ? fog.revealPlot(option.px, option.pz) : 0;
-  const found = mysteries.reveal(option.px, option.pz);
-  found.forEach(({ x, z, terrain }, i) => addTile(x, z, terrain, 0.25 + clearing * 0.5 + i * 0.15));
+  const found = landReveals(mysteries.reveal(option.px, option.pz), (i) => 0.25 + clearing * 0.5 + i * 0.15);
   frontier.rebuild(grid);
   placement.cell = null; // force ghost revalidation
   rig.focus(...grid.territoryCenter());
@@ -2084,6 +2208,7 @@ function tryPlace() {
   }
   const piece = hand.piece;
   if (!piece) {
+    if (tutorial.active) return tutorial.nudge();
     toast(hand.isEmpty ? 'Hand used up: press Next turn' : 'Pick a piece from your hand');
     return;
   }
@@ -2118,6 +2243,7 @@ function tryPlace() {
   frontier.rebuild(grid);
   updateHUD();
   if (economyNow().idle > idleBefore) toast('No free workers: this building sits idle until you add housing', 'bad', 2400);
+  tutorial.notify('placed');
 }
 
 /**
@@ -2199,6 +2325,8 @@ function spark(cells) {
 /** Demolish: the tile is removed; a building on Pre-war Ruins leaves the ruins behind. `quiet`: no toast. */
 function demolish(x, z, quiet = false) {
   const cell = grid.get(x, z);
+  // Never a Capital or a camp, whatever called this (camps only go to the Militia, a bribe, or feeding the rebels).
+  if (!cell || cell.terrain === 'capital' || isCamp(cell.terrain)) return;
   const name = TERRAINS[cell.terrain].name;
   removeMesh(cell.mesh);
   grid.cells.delete(`${x},${z}`);
@@ -2235,6 +2363,15 @@ window.addEventListener('keydown', (e) => {
     if (k === 'enter') endTurn();
     return; // no placing / rotating / nuking mid-payout
   }
+  if (tutorial.active) {
+    // On script: Enter presses the advisor's Next; the debug shortcuts are off.
+    if (k === 'enter' && tutorial.waitingNext) {
+      e.preventDefault();
+      if (!e.repeat) tutorial.notify('next');
+      return;
+    }
+    if ('nmpvtx'.includes(k) && k.length === 1) return tutorial.nudge();
+  }
   if (k >= '1' && k <= '9' && Number(k) <= hand.cards.length) {
     const i = Number(k) - 1;
     hand.select(hand.selected === i ? -1 : i);
@@ -2257,8 +2394,19 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'enter') endTurn();
 });
 
-$('btnReroll').addEventListener('click', () => {
+$('btnReroll').addEventListener('click', (e) => {
+  e.currentTarget.blur();
   if (hand.isEmpty || payout.active || turn.over || shopOpen || eventOpen) return;
+  if (tutorial.active) {
+    if (!tutorial.allows('reroll')) return tutorial.nudge();
+    // Scripted: the free reroll always comes up with the Oil Station the Winter step needs.
+    turn.freeRerolls = 0;
+    shuffle();
+    hand.dealScripted([{ terrain: 'station' }, { terrain: 'farm' }]);
+    updateHUD();
+    tutorial.notify('reroll');
+    return;
+  }
   if (turn.freeRerolls > 0) {
     // Target reward: free, and doesn't raise the price of the next paid reroll.
     turn.freeRerolls--;
@@ -2298,10 +2446,26 @@ document.addEventListener('pointerdown', (e) => {
   if (helpOpen() && !$('help').contains(e.target) && e.target !== $('btnHelp')) setHelp(false);
 });
 $('btnRestart').addEventListener('click', resetIsland);
+$('btnTutorial').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  setHelp(false);
+  resetIsland({ tutorial: true });
+});
 
 // ---------- lifecycle ----------
-function resetIsland() {
+/**
+ * A new run. opts.tutorial: Year 0 (the scripted tutorial) instead of Year 1. opts.intro = false: skip the
+ * Year 1 opening scene (the caller plays it later). opts.keepFade: leave the black fade up (tutorial → Year 1).
+ * (Also used directly as a click handler, so opts may be an Event: only these exact flags count.)
+ */
+function resetIsland(opts) {
+  const tut = opts?.tutorial === true;
   runId++; // stops a missile strike / failure speech still running
+  introRun++; // and an opening scene
+  tutorial.stop();
+  if (opts?.keepFade !== true) $('fade').classList.remove('on');
+  // The tutorial always uses free placement; a normal run goes back to the saved mode.
+  grid.expansionMode = !tut && localStorage.getItem(MODE_KEY) === 'expansion';
   missiles.clear();
   striking = false;
   rig.release();
@@ -2351,6 +2515,21 @@ function resetIsland() {
   $('gameover').classList.add('hidden');
   $('report').textContent = 'No seasons played yet.';
   addTile(0, 0, SEED_TERRAIN, 0, true); // the game opens with the Capital already standing
+  if (tut) {
+    // Year 0: the old Overseer's last year. Two strikes already, one hand-placed "?" (an unexploded missile), scripted hands.
+    Object.assign(turn, { round: 0, quota: TUTORIAL_QUOTA, quotaBase: TUTORIAL_QUOTA, strikes: TUTORIAL_STRIKES });
+    shownStrikes = TUTORIAL_STRIKES; // already filled: no flare
+    mysteries.clear();
+    const { x, z, terrain, target } = TUTORIAL_SITE;
+    mysteries.placeScripted(x, z, terrain, { target });
+    frontier.rebuild(grid);
+    tutorial.start();
+    hand.dealScripted([{ terrain: 'farm' }, { terrain: 'station' }]);
+    rig.focus(0, 0);
+    updateHUD();
+    playTutorialIntro();
+    return;
+  }
   mysteries.reset();
   frontier.rebuild(grid);
   // Opening hand: always one of each basic building plus two Wasteland, in random order.
@@ -2359,6 +2538,113 @@ function resetIsland() {
   hand.render();
   rig.focus(0, 0);
   updateHUD();
+  if (opts?.intro !== false) playIntro();
+}
+
+/** Skip tutorial: straight to a normal Year 1, with its opening scene. */
+function skipTutorial() {
+  markTutorialDone();
+  resetIsland();
+}
+
+// ---------- Year 0: the tutorial's scenes ----------
+/** The Overlord gives the old Overseer his last warning, then the advisor takes over. */
+async function playTutorialIntro() {
+  const run = runId;
+  const live = () => run === runId;
+  const OVERLORD = 'The Overlord';
+  const say = async (text) => live() && dialogue.say(OVERLORD, text);
+  eventOpen = true;
+  hand.select(-1);
+  dialogue.open({
+    kind: 'pressure',
+    kindLabel: 'Year 0 · Tutorial',
+    title: 'The Last Warning',
+    effect: `Two tributes missed · ${TUTORIAL_QUOTA} barrels due after Winter · one more miss and the city falls`,
+  });
+  await say('Overseer. Two tributes missed. Two.');
+  await say('My legions march against the technobarbarians of the Wastelands, and my tanks are drinking sand. Because of you.');
+  if (!live()) return;
+  const i = await dialogue.ask(OVERLORD, `This is your last year. ${TUTORIAL_QUOTA} barrels when Winter ends, or I find an Overseer who can count.`, [
+    { text: 'You will have them, Overlord.' },
+    { text: 'The wells are drying up...' },
+    { text: 'I need more time.' },
+  ]);
+  const retorts = [
+    'I have heard that before. Twice.',
+    'Then build more of them. Your advisor will show you how, since you seem to have forgotten.',
+    'Time is the one thing you have run out of.',
+  ];
+  await say(retorts[i]);
+  await say('Do not make me come back early.');
+  if (!live()) return;
+  await dialogue.leave();
+  if (!live()) return;
+  eventOpen = false;
+  tutorial.begin();
+}
+
+/**
+ * Year 0 ends short (the unexploded missile saw to that): the third strike. The Overlord relieves his Overseer, every
+ * tile but the Capital burns, and after a fade to black a new Overseer (the player) starts Year 1.
+ */
+async function playPredecessorJudgement({ quota, delivered }) {
+  const run = runId;
+  const live = () => run === runId;
+  const OVERLORD = 'The Overlord';
+  const say = async (text) => live() && dialogue.say(OVERLORD, text);
+  eventOpen = true;
+  hand.select(-1);
+  turn.strikes = MAX_STRIKES;
+  updateHUD();
+  dialogue.allowSkip(true);
+  dialogue.open({
+    kind: 'disaster',
+    kindLabel: `Tribute missed · strike ${MAX_STRIKES} of ${MAX_STRIKES}`,
+    title: "The Overlord's Judgement",
+    effect: `Short by ${quota - delivered} barrels · the Overseer is relieved of duty`,
+  });
+  await say(`${delivered} barrels. I asked for ${quota}.`);
+  await say('An old missile? An accident? Three years, Overseer. Three years of accidents.');
+  if (!live()) return;
+  const replies = [
+    ['The missile was not my fault!', 'Nothing ever is. That is precisely the problem.'],
+    ['Give me one more year.', 'I gave you three. I am not a generous man; I was a patient one.'],
+    ['...', 'Nothing to say? For once, you have pleased me.'],
+  ];
+  const i = await dialogue.ask(OVERLORD, 'Anything to say for yourself?', replies.map(([text]) => ({ text })));
+  await say(replies[i][1]);
+  await say('The Hive City stays. It is mine, after all. Everything else you built... goes with you.');
+  if (!live()) return;
+  await dialogue.leave();
+  if (!live()) return;
+  const targets = [...grid.cells.values()].filter((c) => c.terrain !== 'capital').map(({ x, z }) => ({ x, z }));
+  await playMissileStrike(targets, { restoreCamera: false });
+  if (!live()) return;
+  await wait(0.6);
+  if (!live()) return;
+  await fadeToYearOne();
+}
+
+/** Fade to black, start a normal Year 1 under it, fade back in on the Overlord meeting his new Overseer. */
+async function fadeToYearOne() {
+  markTutorialDone();
+  const fade = $('fade');
+  fade.querySelector('.fade-text').innerHTML = 'Some weeks later<br /><small>A new Overseer arrives at the Hive City</small>';
+  fade.classList.add('on');
+  const run = runId;
+  await wait(3.2);
+  if (run !== runId) return;
+  resetIsland({ intro: false, keepFade: true });
+  // Under the black: the camera snaps back from the strike's wide shot to the normal view.
+  rig.goalDistance = rig.distance = START_DISTANCE;
+  rig.target.copy(rig.goal);
+  const next = runId;
+  await wait(0.6);
+  if (next !== runId) return;
+  fade.classList.remove('on');
+  await wait(0.9);
+  if (next !== runId) return;
   playIntro();
 }
 
@@ -2551,8 +2837,10 @@ function frame(now) {
   perf.end('inspect');
   perf.begin('placement');
   // Hide the ghost while choosing a plot or while the payout plays.
-  placement.update(expansion.active || payout.active ? null : cell, dt, time);
+  if (busy() && hand.selected >= 0 && !payout.active) hand.select(-1);
+  placement.update(expansion.active || busy() ? null : cell, dt, time);
   perf.end('placement');
+  tutorial.update(time);
 
   perf.begin('render (cpu)');
   perf.gpuBegin();
@@ -2661,7 +2949,7 @@ factory.ready.then(() => {
     startMusic();
     if (started || !sound) return sound;
     started = true;
-    resetIsland();
+    resetIsland({ tutorial: !tutorialDone() }); // first visit: Year 0, the tutorial
     last = performance.now();
     requestAnimationFrame(frame);
     $('loading').classList.add('done');
@@ -2712,4 +3000,4 @@ factory.extrasReady.then(async (extras) => {
 });
 
 // Handy for debugging in the console.
-window.tileIsland = { traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };
+window.tileIsland = { tutorial, resetIsland, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };

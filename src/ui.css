@@ -2188,3 +2188,193 @@ body.striking #mapIcons {
 #btnMissileTest:hover {
   background: rgba(224, 86, 63, 0.18);
 }
+
+/* ---------- Year 0 tutorial (src/tutorial.js) ---------- */
+#btnTutorial {
+  display: block;
+  margin-top: 10px;
+  padding: 5px 10px;
+  border: 1px solid rgba(232, 191, 104, 0.5);
+  border-radius: 4px;
+  background: rgba(232, 191, 104, 0.08);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gold);
+  cursor: pointer;
+}
+#btnTutorial:hover {
+  background: rgba(232, 191, 104, 0.2);
+}
+
+/* Above the HUD and hand, below the dialogue (z 60). Clicks pass through to the game except on the bubble. */
+#coach {
+  position: absolute;
+  inset: 0;
+  z-index: 55;
+  pointer-events: none;
+}
+.coach-ring {
+  position: fixed;
+  border-radius: 10px;
+  border: 2px solid var(--gold);
+  box-shadow: 0 0 18px 2px rgba(232, 191, 104, 0.55), inset 0 0 12px rgba(232, 191, 104, 0.3);
+  animation: coach-pulse 1.4s ease-in-out infinite;
+  transition: left 0.18s ease, top 0.18s ease, width 0.18s ease, height 0.18s ease;
+}
+/* Info steps: everything around the target darkens (the ring's shadow covers the screen). */
+.coach-ring.dim {
+  box-shadow: 0 0 0 200vmax rgba(0, 0, 0, 0.5), 0 0 18px 2px rgba(232, 191, 104, 0.55);
+}
+/* Dim with no target: a plain shade over the whole screen. */
+.coach-ring.empty {
+  inset: 0;
+  left: 0 !important;
+  top: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: rgba(0, 0, 0, 0.45);
+  animation: none;
+}
+.coach-ring.hidden,
+.coach-bubble.hidden {
+  display: none;
+}
+@keyframes coach-pulse {
+  50% {
+    border-color: #fff1c8;
+  }
+}
+
+.coach-bubble {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 330px;
+  padding: 12px 16px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(232, 191, 104, 0.55);
+  background: rgba(20, 25, 27, 0.96);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink);
+  pointer-events: auto;
+  user-select: none;
+}
+.coach-bubble.enter {
+  animation: coach-in 0.25s ease-out;
+}
+.coach-bubble.nudge {
+  animation: coach-nudge 0.35s ease;
+}
+@keyframes coach-in {
+  from {
+    opacity: 0;
+    scale: 0.94;
+  }
+}
+@keyframes coach-nudge {
+  20%,
+  60% {
+    translate: -7px 0;
+  }
+  40%,
+  80% {
+    translate: 7px 0;
+  }
+}
+.coach-who {
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+.coach-text b {
+  color: #ffe2a0;
+}
+.coach-hint {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(224, 86, 63, 0.16);
+  font-size: 13px;
+}
+.coach-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.coach-step {
+  flex: 1;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+.coach-skip,
+.coach-next {
+  padding: 5px 10px;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.coach-skip {
+  border: 0;
+  background: none;
+  color: var(--muted);
+}
+.coach-skip:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.coach-next {
+  border: 1px solid var(--gold);
+  background: rgba(232, 191, 104, 0.18);
+  color: var(--gold);
+}
+.coach-next:hover {
+  background: rgba(232, 191, 104, 0.32);
+}
+.coach-next.hidden {
+  visibility: hidden;
+}
+
+/* Fade to black between the tutorial and Year 1 (above everything, the loading screen aside). */
+#fade {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: grid;
+  place-items: center;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1.4s ease;
+}
+#fade.on {
+  opacity: 1;
+  pointer-events: auto;
+}
+#fade .fade-text {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--gold);
+  opacity: 0;
+  transition: opacity 1s ease 0.8s;
+}
+#fade.on .fade-text {
+  opacity: 1;
+}

@@ -8,6 +8,7 @@ export const MYSTERY_POOL = [
   ['refinery', 2],
   ['pump', 2],
   ['ruins', 4], // Pre-war Ruins: build next to them to clear and refill your hand
+  ['missile', 1], // Unexploded Missile: not a tile; it launches from the site at your nearest building
 ];
 
 /**
@@ -106,6 +107,26 @@ export class Mysteries {
     }
   }
 
+  /** Remove every site (the tutorial board starts empty). */
+  clear() {
+    this.group.clear();
+    this.sites.clear();
+  }
+
+  /**
+   * One hand-placed site with a fixed outcome (the tutorial). `extra` rides along on the reveal result,
+   * e.g. { silo: { x, z } }: the revealed ruins launch a missile at that cell.
+   */
+  placeScripted(x, z, terrain, extra = {}) {
+    this.#add(x, z);
+    Object.assign(this.sites.get(key(x, z)), { forced: terrain, extra });
+  }
+
+  /** What a site turns into: its fixed outcome if it has one, otherwise a roll. */
+  #outcome(s) {
+    return { x: s.x, z: s.z, terrain: s.forced ?? pickReveal(), ...(s.extra ?? {}) };
+  }
+
   #add(x, z) {
     const sprite = new THREE.Sprite(this.spriteMat);
     sprite.scale.set(0.7, 0.7, 1);
@@ -126,7 +147,7 @@ export class Mysteries {
       if (plotOf(s.x) !== px || plotOf(s.z) !== pz) continue;
       this.group.remove(s.sprite);
       this.sites.delete(k);
-      out.push({ x: s.x, z: s.z, terrain: pickReveal() });
+      out.push(this.#outcome(s));
     }
     return out;
   }
@@ -138,7 +159,7 @@ export class Mysteries {
       if (!cells.some(([x, z]) => Math.abs(x - s.x) + Math.abs(z - s.z) === 1)) continue;
       this.group.remove(s.sprite);
       this.sites.delete(k);
-      out.push({ x: s.x, z: s.z, terrain: pickReveal() });
+      out.push(this.#outcome(s));
     }
     return out;
   }
@@ -160,7 +181,7 @@ export class Mysteries {
     const [k, s] = best;
     this.group.remove(s.sprite);
     this.sites.delete(k);
-    return { x: s.x, z: s.z, terrain: pickReveal() };
+    return this.#outcome(s);
   }
 
   update(time) {

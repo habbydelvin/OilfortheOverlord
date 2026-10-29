@@ -165,6 +165,7 @@
           <b>V</b> · debug: year event &nbsp; <b>T</b> · debug: tribute target (<b>Shift+T</b> with a free tile pick)<br />
           <b>X</b> · debug: toggle territory expansion mode<br />
           <b>Space</b> · debug: replay payout &nbsp; <b>`</b> · tuning panel
+          <button id="btnTutorial" type="button">Replay tutorial (Year 0)</button>
         </div>
         <button id="btnDebug" class="hidden">Game Debug</button>
         <div id="debug" class="hidden"></div>
@@ -206,7 +207,11 @@
       <div id="dialogue" class="hidden"></div>
       <div id="toast"></div>
       <div id="hand"></div>
+      <!-- Year 0 tutorial: spotlight + advisor bubble (src/tutorial.js). -->
+      <div id="coach"></div>
     </div>
+    <!-- Fade to black between the tutorial and Year 1. -->
+    <div id="fade"><div class="fade-text"></div></div>
 
     <script type="module" src="/src/main.js"></script>
   </body>

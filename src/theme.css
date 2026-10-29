@@ -496,3 +496,136 @@
 .btn:hover::after {
   opacity: 0.9;
 }
+
+/* ---------- Year 0 tutorial: the advisor's bubble is a small steel window, like Controls ---------- */
+.coach-bubble {
+  width: 340px;
+  padding: 26px 22px 16px;
+  border: 0;
+  border-radius: 0;
+  background: var(--dp-rivets), var(--dp-metal);
+  box-shadow: var(--dp-rim), var(--dp-drop);
+  outline: 1px solid var(--dp-engrave);
+  outline-offset: -11px;
+  font-family: var(--dp-serif);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--dp-cream);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  isolation: isolate;
+}
+/* Same glint as the other steel windows. */
+.coach-bubble::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 22%, rgba(255, 214, 160, 0.3) 38%, rgba(255, 236, 205, 0.8) 50%, rgba(255, 214, 160, 0.3) 62%, transparent 78%)
+    var(--dp-shine, 50%) 0 / 260% 100% no-repeat;
+  mask: url('/ui/metal-spec.webp') 0 0 / 256px 256px repeat luminance;
+  mix-blend-mode: screen;
+  opacity: 0.45;
+}
+/* Speaker: a brass name plate on the top edge, like the dialogue's. */
+.coach-who {
+  position: absolute;
+  left: 16px;
+  top: -12px;
+  margin: 0;
+  padding: 3px 14px 2px;
+  background: linear-gradient(180deg, #e2bf74 0%, #c09550 50%, #8a652b 100%);
+  box-shadow: inset 0 0 0 1px rgba(40, 28, 10, 0.8), inset 0 1px 0 1px rgba(255, 240, 200, 0.35), 0 3px 6px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #241808;
+  text-shadow: 0 1px 0 rgba(255, 236, 190, 0.4);
+}
+.coach-text b {
+  color: var(--dp-brass-hi);
+}
+/* Rotate hint: a recessed slot, like the tile notes. */
+.coach-hint {
+  border-radius: 0;
+  background: rgba(8, 8, 8, 0.6);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.8), inset 0 0 0 1px rgba(255, 140, 110, 0.45);
+  color: #ffd2c4;
+}
+.coach-foot {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid transparent;
+  border-image: linear-gradient(90deg, transparent, rgba(232, 180, 90, 0.5) 20%, rgba(232, 180, 90, 0.5) 80%, transparent) 1;
+}
+.coach-step {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--dp-muted);
+}
+.coach-skip {
+  padding: 4px 2px;
+  font-family: var(--dp-serif);
+  font-size: 13px;
+  color: var(--dp-muted);
+}
+.coach-skip:hover {
+  color: var(--dp-cream);
+}
+/* Next: a small polished brass plate with rivets, like the gold buttons. */
+.coach-next {
+  padding: 5px 18px 4px;
+  border: 0;
+  border-radius: 6px;
+  background:
+    var(--dp-rivet) left 3px center / 8px 8px no-repeat,
+    var(--dp-rivet) right 3px center / 8px 8px no-repeat,
+    radial-gradient(ellipse 70% 60% at 50% 0%, rgba(255, 240, 200, 0.35), transparent 70%),
+    linear-gradient(180deg, #e2bf74 0%, #c09550 50%, #8a652b 100%);
+  box-shadow: 0 0 0 2px #2a2f32, 0 0 0 3px #5e6468, inset 0 0 0 1px rgba(40, 28, 10, 0.8), inset 0 1px 0 1px rgba(255, 240, 200, 0.35), 0 3px 6px rgba(0, 0, 0, 0.5);
+  font-family: var(--dp-serif);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #241808;
+  text-shadow: 0 1px 0 rgba(255, 236, 190, 0.4);
+}
+.coach-next:hover {
+  background:
+    var(--dp-rivet) left 3px center / 8px 8px no-repeat,
+    var(--dp-rivet) right 3px center / 8px 8px no-repeat,
+    radial-gradient(ellipse 70% 60% at 50% 0%, rgba(255, 245, 215, 0.6), transparent 70%),
+    linear-gradient(180deg, #ecca80 0%, #cfa25a 50%, #9a7232 100%);
+}
+.coach-next b {
+  font-size: 10px;
+}
+/* Spotlight: a brass frame instead of a rounded glow. */
+.coach-ring {
+  border-radius: 0;
+  border: 2px solid var(--dp-brass-hi);
+  box-shadow: 0 0 0 1px #0a0a0a, 0 0 14px 2px rgba(236, 201, 127, 0.5), inset 0 0 0 1px #0a0a0a;
+}
+.coach-ring.dim {
+  box-shadow: 0 0 0 1px #0a0a0a, 0 0 14px 2px rgba(236, 201, 127, 0.5), 0 0 0 200vmax rgba(0, 0, 0, 0.5);
+}
+/* Fade caption: gold serif, like the headings. */
+#fade .fade-text {
+  font-family: var(--dp-serif);
+  color: var(--dp-head);
+}
+#fade .fade-text small {
+  display: block;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--dp-muted);
+}
+/* Replay tutorial (in Controls): a small steel plate like the shop's reroll. */
+#btnTutorial {
+  border: 1px solid #6a7074;
+  border-radius: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.3)), var(--dp-tex);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.8), inset 0 1px 0 1px rgba(255, 255, 255, 0.12), 0 2px 0 rgba(0, 0, 0, 0.45);
+  font-family: var(--dp-serif);
+  color: var(--dp-head);
+}

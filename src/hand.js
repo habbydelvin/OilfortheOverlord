@@ -68,8 +68,12 @@ export class Hand {
       const p = this.#press;
       if (!p || p.id !== e.pointerId) return;
       if (!this.dragging && Math.hypot(e.clientX - p.x, e.clientY - p.y) > DRAG_PX) {
-        this.dragging = true;
         if (this.selected !== p.i) this.select(p.i);
+        if (this.selected !== p.i) {
+          this.#press = null; // the card can't be picked right now (tutorial)
+          return;
+        }
+        this.dragging = true;
         document.body.classList.add('dragging-card');
         this.render();
       }
@@ -106,8 +110,15 @@ export class Hand {
     return this.cards[this.selected] ?? null;
   }
 
+  /** Optional gate (the tutorial): guard('select' | 'rotate', piece) returns false to refuse. */
+  guard = null;
+
   select(i) {
     const next = i >= 0 && i < this.cards.length ? i : -1;
+    if (next >= 0 && next !== this.selected && this.guard && !this.guard('select', this.cards[next])) {
+      this.onBlocked?.();
+      return;
+    }
     if (next !== this.selected) tick(next >= 0);
     this.selected = next;
     this.render();
@@ -142,6 +153,20 @@ export class Hand {
     this.fresh = new Set(this.cards.map((_, i) => i).filter((i) => !reused.has(this.cards[i])));
     this.selected = -1;
     this.leaveAs = 'discard'; // the old hand slides away
+    this.render();
+    this.onChange?.(null);
+    dealSfx();
+  }
+
+  /**
+   * Deal an exact hand (the tutorial): [{ terrain, shape = 'mono', rot = 0 }]. No randomness at all,
+   * so every player sees the same cards, shapes and rotations.
+   */
+  dealScripted(list) {
+    this.cards = list.map(({ terrain, shape = 'mono', rot = 0 }) => ({ ...pieceOf(terrain), shape, rot }));
+    this.fresh = new Set(this.cards.map((_, i) => i));
+    this.selected = -1;
+    this.leaveAs = 'discard';
     this.render();
     this.onChange?.(null);
     dealSfx();
@@ -201,6 +226,7 @@ export class Hand {
   rotate(dir) {
     const p = this.piece;
     if (!p) return;
+    if (this.guard && !this.guard('rotate', p)) return;
     p.rot = (p.rot + dir + 4) % 4;
     this.render();
     this.onChange?.(p);
