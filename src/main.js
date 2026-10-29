@@ -698,12 +698,28 @@ function debugRandomStrike() {
 // The button shows the language it switches to. Switching redraws what's on screen in the new language.
 const showLangButton = () => ($('btnLang').textContent = isZh() ? 'EN' : '中文');
 showLangButton();
+/**
+ * Next turn / Reroll hand: their label is the button's own first text node (every <span> in a .btn is styled as the
+ * small sub-label), so only that text is swapped. English puts back the page's original text exactly.
+ */
+function labelMainButtons() {
+  for (const [id, zh] of [
+    ['btnNext', '下一回合'],
+    ['btnReroll', '重抽手牌'],
+  ]) {
+    const node = $(id).firstChild;
+    node.enText ??= node.nodeValue;
+    node.nodeValue = isZh() ? node.enText.replace(node.enText.trim(), zh) : node.enText;
+  }
+}
+labelMainButtons();
 $('btnLang').addEventListener('click', () => {
   $('btnLang').blur(); // so Enter (end turn) does not fire it again
   toggleLang();
 });
 onLangChange(() => {
   showLangButton();
+  labelMainButtons();
   updateHUD();
   hand.render();
   for (const btn of ruinBtns.values()) labelRuinBtn(btn);
