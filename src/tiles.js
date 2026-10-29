@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { hasBlockout, loadBlockouts, loadWastePieces } from './models.js';
+import { clone as cloneModel } from 'three/addons/utils/SkeletonUtils.js';
+import { hasBlockout, loadCoreModels, loadBundle } from './models.js';
 import { buildRaiderCamp } from './raiderMesh.js';
 import { buildLabourCamp } from './labourCampMesh.js';
 import { SCALE, P } from './scalingConfig.js';
@@ -471,20 +472,36 @@ export class TileFactory {
       // BoxGeometry face order: +x, -x, +y (top), -y, +z, -z
       this.capMats[k] = [edge, edge, top, edge, edge, edge];
     }
-    this.ready = loadBlockouts()
+    // Loading phases: the core models gate the game start; the Wasteland pieces, then the other buildings and
+    // tiles, load in the background. Until a model arrives its tiles show stand-ins, upgraded in place when it
+    // lands (adoptBlockouts / adoptWastePieces in main.js).
+    this.ready = loadCoreModels()
       .then((models) => {
         this.models = models;
       })
       .catch((error) => {
         console.error('Blockout models failed to load; coloured blocks stay in place.', error);
+        this.models = new Map();
       });
     this.piecesReady = this.ready
-      .then(() => loadWastePieces())
-      .then((pieces) => (this.pieces = pieces))
+      .then(() => loadBundle('waste'))
+      .then((roots) => (this.pieces = new Map([...roots].map(([key, root]) => [key.slice('waste-'.length), root]))))
       .catch((error) => {
         console.error('Wasteland piece models failed to load; Wasteland stays as coloured blocks.', error);
         return null;
       });
+    this.extrasDone = false;
+    this.extrasReady = this.piecesReady
+      .then(() => loadBundle('extra'))
+      .then((roots) => {
+        for (const [key, root] of roots) this.models.set(key, root);
+        return roots;
+      })
+      .catch((error) => {
+        console.error('Building models failed to load; those tiles stay as stand-ins.', error);
+        return null;
+      })
+      .finally(() => (this.extrasDone = true));
   }
 
   /** Flat stand-in used for land, junk, and buildings before the FBX arrives. */
@@ -524,7 +541,7 @@ export class TileFactory {
     // The fitted model keeps its own offset. A holder takes the cell position
     // so placing or animating the tile does not undo that fit.
     const holder = new THREE.Group();
-    const model = source.clone(true);
+    const model = cloneModel(source);
     holder.add(model);
     holder.userData.blockout = true;
     if (model.animations.length) this.#animate(model);
@@ -568,7 +585,7 @@ export class TileFactory {
     holder.clear();
     const source = this.pieces?.get('mono');
     if (source) {
-      const model = source.clone(true);
+      const model = cloneModel(source);
       holder.add(model);
       if (model.animations.length) this.#animate(model);
     } else holder.add(this.#block(terrain));
@@ -585,7 +602,7 @@ export class TileFactory {
     const source = this.pieces?.get(shape);
     if (!source) return null;
     const group = new THREE.Group();
-    const model = source.clone(true);
+    const model = cloneModel(source);
     group.add(model);
     group.rotation.y = (-rot * Math.PI) / 2;
     if (model.animations.length) this.#animate(model);

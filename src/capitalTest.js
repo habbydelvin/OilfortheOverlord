@@ -74,7 +74,7 @@ document.getElementById('spin').addEventListener('change', (e) => {
   controls.autoRotate = e.target.checked;
 });
 
-// Optional side-by-side with the current Capital01 blockout.
+// Optional side-by-side with the Capital model the game uses.
 let blockout = null;
 let compareCell = null;
 document.getElementById('compare').addEventListener('change', async (e) => {

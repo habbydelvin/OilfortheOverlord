@@ -75,8 +75,7 @@ function fitToCell(root, { yaw = -Math.PI / 2, fit = null, ground = null } = {})
   root.scale.set(1, 1, 1);
   root.position.set(0, 0, 0);
   root.updateMatrixWorld(true);
-  const target = (fit && root.getObjectByName(fit)) || root;
-  const box = new THREE.Box3().setFromObject(target);
+  const box = footprintBox(root) ?? new THREE.Box3().setFromObject((fit && root.getObjectByName(fit)) || root);
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
   const span = Math.max(size.x, size.z, 1e-4);
@@ -368,45 +367,6 @@ function drawAfterGround(root) {
   return n;
 }
 
-export async function loadBlockouts() {
-  const loader = new FBXLoader();
-  // Wait for the atlas image. The FBX loader does not attach it itself.
-  const atlas = await new THREE.TextureLoader().loadAsync(ATLAS_URL);
-  atlas.colorSpace = THREE.SRGBColorSpace;
-  atlas.flipY = true;
-  atlas.wrapS = atlas.wrapT = THREE.ClampToEdgeWrapping;
-  atlas.anisotropy = 8;
-
-  const jobs = Object.entries(BLOCKOUTS).map(async ([terrain, file]) => {
-    const raw = await loader.loadAsync(`${MODEL_URL}${file}?v=${MODEL_VERSION}`, (e) => trackBytes(file, e));
-    const finished = FINISHED[terrain];
-    if (finished) {
-      toStandard(raw);
-      // Object3D.clone copies `animations`, so every tile copy can play them.
-      raw.animations = raw.animations.map(movingTracksOnly).filter((clip) => clip.tracks.length);
-      fitToCell(raw, { ground: 0, ...finished });
-      // ?nomerge in the URL keeps the original meshes (for A/B checks).
-      if (!new URLSearchParams(location.search).has('nomerge')) {
-        try {
-          const { before, after } = mergeStaticMeshes(raw);
-          console.info(`[models] ${terrain}: ${before} draws -> ${after}`);
-        } catch (e) {
-          console.warn(`[models] ${terrain}: merge skipped`, e);
-        }
-      }
-      const sunk = drawAfterGround(raw);
-      if (sunk) console.info(`[models] ${terrain}: ${sunk} below-ground parts drawn after the sand plane`);
-    } else {
-      applyAtlas(raw, atlas);
-      raw.animations = [];
-      fitToCell(raw);
-    }
-    raw.name = terrain;
-    return [terrain, raw];
-  });
-
-  return Promise.all(jobs).then((pairs) => new Map(pairs));
-}
 
 // ---------- Wasteland pieces ----------
 /**
@@ -435,7 +395,7 @@ function fitPiece(raw, base) {
   raw.rotation.set(0, 0, 0);
   raw.scale.set(1, 1, 1);
   raw.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(base);
+  const box = footprintBox(raw) ?? new THREE.Box3().setFromObject(base);
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
   const w = Math.max(1, Math.round(size.x / BLENDER_CELL));
@@ -461,62 +421,6 @@ function imageReady(texture, timeout = 30000) {
   });
 }
 
-/**
- * The piece files each embed their own copy of the shared art (rock, sand, salt, worm skin...). Textures with
- * identical pixels and settings are merged, so each one is decoded onto the GPU once instead of up to 11 times.
- * Pixels are compared through a 32 × 32 thumbnail plus the full size.
- */
-async function shareTextures(roots) {
-  const slots = [];
-  for (const root of roots) {
-    root.traverse((obj) => {
-      if (!obj.isMesh) return;
-      for (const m of [obj.material].flat()) {
-        for (const k of ['map', 'normalMap', 'emissiveMap']) if (m[k]) slots.push([m, k]);
-      }
-    });
-  }
-  const unique = [...new Set(slots.map(([m, k]) => m[k]))];
-  await Promise.all(unique.map((t) => imageReady(t)));
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 32;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  const firstBySig = new Map();
-  const keep = new Map(); // texture -> texture to use instead
-  for (const t of unique) {
-    const img = t.image;
-    if (!img?.width) {
-      keep.set(t, t);
-      continue;
-    }
-    ctx.clearRect(0, 0, 32, 32);
-    ctx.drawImage(img, 0, 0, 32, 32);
-    const px = ctx.getImageData(0, 0, 32, 32).data;
-    let hash = 2166136261;
-    for (let i = 0; i < px.length; i++) hash = Math.imul(hash ^ px[i], 16777619);
-    const sig = [img.width, img.height, t.colorSpace, t.wrapS, t.wrapT, t.repeat.x, t.repeat.y, t.offset.x, t.offset.y, hash >>> 0].join('|');
-    const first = firstBySig.get(sig);
-    if (first) keep.set(t, first);
-    else {
-      firstBySig.set(sig, t);
-      keep.set(t, t);
-    }
-  }
-  for (const [m, k] of slots) {
-    const use = keep.get(m[k]);
-    if (use && use !== m[k]) {
-      m[k] = use;
-      m.needsUpdate = true;
-    }
-  }
-  let merged = 0;
-  for (const [t, use] of keep) {
-    if (t === use) continue;
-    t.dispose();
-    merged++;
-  }
-  return { textures: unique.length, merged };
-}
 
 /**
  * The piece files carry animated dust clusters (Waste<Name>_Dust and its _DustNN_NN parts) that read as
@@ -542,35 +446,6 @@ function removeDust(raw, name) {
   return removed;
 }
 
-/**
- * Loads every Wasteland piece model, one file at a time with a pause in between, so it can run in the
- * background (each file blocks the page for about a quarter of a second while it parses).
- * Resolves to a Map: shape key -> fitted model.
- */
-export async function loadWastePieces() {
-  const loader = new FBXLoader();
-  const pieces = new Map();
-  for (const [shape, name] of Object.entries(WASTE_PIECES)) {
-    const raw = await loader.loadAsync(`${MODEL_URL}Waste${name}City01.fbx?v=${MODEL_VERSION}`);
-    const removed = removeDust(raw, name);
-    toStandard(raw);
-    raw.animations = raw.animations
-      .map(movingTracksOnly)
-      .map((clip) => {
-        const tracks = clip.tracks.filter((t) => !removed.has(THREE.PropertyBinding.parseTrackName(t.name).nodeName));
-        return tracks.length === clip.tracks.length ? clip : new THREE.AnimationClip(clip.name, clip.duration, tracks);
-      })
-      .filter((clip) => clip.tracks.length);
-    fitPiece(raw, raw.getObjectByName(`Waste${name}_HiveCity`) ?? raw);
-    raw.name = `waste-${shape}`;
-    pieces.set(shape, raw);
-    await new Promise((resolve) => setTimeout(resolve, 30));
-  }
-  const { textures, merged } = await shareTextures([...pieces.values()]);
-  console.info(`Wasteland pieces: ${pieces.size} models, ${textures - merged} textures (${merged} duplicates shared).`);
-  for (const [shape, raw] of pieces) matchSaltToSand(raw, WASTE_PIECES[shape]);
-  return pieces;
-}
 
 /** Average colour of a texture's image, in linear RGB (the space material colours multiply in). */
 function averageLinear(texture) {
@@ -662,4 +537,397 @@ function matchSaltToSand(raw, name) {
     obj.material = Array.isArray(obj.material) ? obj.material.map(recolour) : recolour(obj.material);
   });
   if (share > 0.02) console.info(`Wasteland ${name}: salt recoloured to sand (${Math.round(share * 100)}% of the ground).`);
+}
+
+// =====================================================================================================
+// Loading pipeline
+// -----------------------------------------------------------------------------------------------------
+// Prepare (per model): FBX -> PBR materials, moving animation tracks only, Wasteland dust removed, the
+// footprint stored on the root (the static merge removes the footprint node), images loaded and their
+// embedded file copies freed, textures larger than MAX_TEXTURE shrunk, identical textures shared across
+// all models, salt recoloured, static parts merged per material.
+// Finish: shadow flags, no shadow pass for flat parts inside a tile, animated parts batched into one
+// draw per material, cell fit, below-ground parts drawn after the sand plane.
+// Phases: 'core' gates the game start; 'waste' (the pieces) then 'extra' (the other buildings and tiles)
+// load in the background, one file at a time. Tiles placed before their model lands show stand-ins that
+// main.js upgrades in place (adoptBlockouts / adoptWastePieces).
+// =====================================================================================================
+
+/** Models needed before the game can start: the Capital and the opening hand's buildings. */
+export const CORE_MODELS = ['capital', 'settlement', 'farm', 'station'];
+export const BUNDLES = {
+  core: CORE_MODELS,
+  waste: Object.keys(WASTE_PIECES).map((shape) => `waste-${shape}`),
+  extra: Object.keys(BLOCKOUTS).filter((k) => FINISHED[k] && !CORE_MODELS.includes(k)),
+};
+export const MAX_TEXTURE = 2048; // larger textures are never shown at full size at game zoom
+
+/** What a model key needs: its FBX file, and how it is fitted (building cell or Wasteland piece). */
+function modelSpec(key) {
+  if (key.startsWith('waste-')) {
+    const shape = key.slice(6);
+    const name = WASTE_PIECES[shape];
+    return { key, shape, piece: name, file: `Waste${name}City01.fbx`, base: `Waste${name}_HiveCity` };
+  }
+  return { key, file: BLOCKOUTS[key], finished: FINISHED[key], base: FINISHED[key]?.fit };
+}
+
+/** Stored footprint (root space) as a Box3, or null. */
+function footprintBox(root) {
+  const f = root.userData.footprint;
+  return f ? new THREE.Box3(new THREE.Vector3(...f.min), new THREE.Vector3(...f.max)) : null;
+}
+
+/**
+ * Measured in the same root state the fit leaves it in (fitToCell keeps the root's own X rotation and resets the
+ * rest; fitPiece resets everything). Some files (Cliff, Ruins) carry Blender's axis rotation and the object's
+ * position on the root itself, so measuring before that reset would put the footprint off to the side.
+ */
+function storeFootprint(root, baseName, piece) {
+  root.position.set(0, 0, 0);
+  root.scale.set(1, 1, 1);
+  if (piece) root.rotation.set(0, 0, 0);
+  else root.rotation.y = 0;
+  root.updateMatrixWorld(true);
+  const base = (baseName && root.getObjectByName(baseName)) || root;
+  const box = new THREE.Box3().setFromObject(base);
+  root.userData.footprint = { min: box.min.toArray(), max: box.max.toArray() };
+}
+
+function textureSlots(roots) {
+  const slots = [];
+  for (const root of roots) {
+    root.traverse((obj) => {
+      if (!obj.isMesh) return;
+      for (const m of [obj.material].flat()) for (const k of ['map', 'normalMap', 'emissiveMap']) if (m[k]) slots.push([m, k]);
+    });
+  }
+  return slots;
+}
+
+/**
+ * FBXLoader hands each embedded image to the browser as a blob URL and never frees it, so every image file
+ * stays in memory twice. With all the models that ran browsers out of blob space (ERR_BLOB_OUT_OF_MEMORY)
+ * and textures went missing. Once an image has decoded, its blob is no longer needed.
+ */
+async function releaseImageBlobs(root) {
+  const textures = [...new Set(textureSlots([root]).map(([m, k]) => m[k]))];
+  await Promise.all(textures.map((t) => imageReady(t)));
+  for (const t of textures) {
+    const src = t.image?.src;
+    if (typeof src === 'string' && src.startsWith('blob:')) URL.revokeObjectURL(src);
+  }
+}
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function loadFbx(loader, spec, track) {
+  const raw = await loader.loadAsync(`${MODEL_URL}${spec.file}?v=${MODEL_VERSION}`, track ? (e) => trackBytes(spec.file, e) : undefined);
+  const removed = spec.piece ? removeDust(raw, spec.piece) : new Set();
+  toStandard(raw);
+  // Object3D.clone copies `animations`, so every tile copy can play them.
+  raw.animations = raw.animations
+    .map(movingTracksOnly)
+    .map((clip) => {
+      const tracks = clip.tracks.filter((t) => !removed.has(THREE.PropertyBinding.parseTrackName(t.name).nodeName));
+      return tracks.length === clip.tracks.length ? clip : new THREE.AnimationClip(clip.name, clip.duration, tracks);
+    })
+    .filter((clip) => clip.tracks.length);
+  storeFootprint(raw, spec.base, Boolean(spec.piece));
+  await releaseImageBlobs(raw);
+  raw.name = spec.key;
+  return raw;
+}
+
+/**
+ * FBX files -> prepared models (Map key -> root, untransformed). `parallel` downloads them all at once
+ * (behind the loading screen); otherwise one file at a time with a pause, so it can run during play.
+ */
+async function prepareFromFbx(keys, { track = false, parallel = false } = {}) {
+  const loader = new FBXLoader();
+  const specs = keys.map(modelSpec);
+  const roots = new Map();
+  if (parallel) (await Promise.all(specs.map((s) => loadFbx(loader, s, track)))).forEach((r, i) => roots.set(specs[i].key, r));
+  else {
+    for (const s of specs) {
+      roots.set(s.key, await loadFbx(loader, s, track));
+      await pause(30);
+    }
+  }
+  const { textures, merged, shrunk } = await prepareTextures([...roots.values()]);
+  console.info(`[models] ${keys.length} models from FBX: ${textures} textures, ${merged} shared, ${shrunk} shrunk to ${MAX_TEXTURE}`);
+  for (const s of specs) {
+    const root = roots.get(s.key);
+    if (s.piece) matchSaltToSand(root, s.piece); // before the merge: it finds the ground by name
+    // ?nomerge in the URL keeps the original meshes (for A/B checks).
+    if (!new URLSearchParams(location.search).has('nomerge')) {
+      try {
+        const { before, after } = mergeStaticMeshes(root);
+        console.info(`[models] ${s.key}: ${before} draws -> ${after}`);
+      } catch (e) {
+        console.warn(`[models] ${s.key}: merge skipped`, e);
+      }
+    }
+  }
+  return roots;
+}
+
+/**
+ * Every distinct texture across all loaded models, so a texture repeated in several files is uploaded once.
+ * A small thumbnail only shortlists candidates; two textures merge only if their full-size pixels are exactly
+ * equal (true repeats are the same file embedded twice). Thumbnails alone are not enough: two different,
+ * mostly flat normal maps can look identical once shrunk, and a thumbnail can skip palette columns.
+ */
+const textureRegistry = new Map(); // shortlist key -> [texture, ...]
+let scratchCtx = null;
+
+function scratch(w, h) {
+  scratchCtx ??= document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+  scratchCtx.canvas.width = w;
+  scratchCtx.canvas.height = h;
+  scratchCtx.imageSmoothingQuality = 'high';
+  return scratchCtx;
+}
+
+function shortlistKey(t) {
+  const img = t.image;
+  const ctx = scratch(16, 16);
+  ctx.drawImage(img, 0, 0, 16, 16);
+  const px = ctx.getImageData(0, 0, 16, 16).data;
+  let hash = 2166136261;
+  for (let i = 0; i < px.length; i++) hash = Math.imul(hash ^ px[i], 16777619);
+  return [img.width, img.height, t.colorSpace, t.flipY, t.wrapS, t.wrapT, t.repeat.x, t.repeat.y, t.offset.x, t.offset.y, hash >>> 0].join('|');
+}
+
+function fullPixels(img) {
+  const ctx = scratch(img.width, img.height);
+  ctx.drawImage(img, 0, 0);
+  return ctx.getImageData(0, 0, img.width, img.height).data;
+}
+
+function samePixels(a, b) {
+  const pa = fullPixels(a.image);
+  const pb = fullPixels(b.image);
+  if (pa.length !== pb.length) return false;
+  for (let i = 0; i < pa.length; i++) if (pa[i] !== pb[i]) return false;
+  return true;
+}
+
+/** The texture already registered with exactly these pixels, or null (and this one is registered). */
+function findTwin(t) {
+  const key = shortlistKey(t);
+  const list = textureRegistry.get(key) ?? [];
+  for (const other of list) if (other !== t && samePixels(t, other)) return other;
+  list.push(t);
+  textureRegistry.set(key, list);
+  return null;
+}
+
+/** Larger than MAX_TEXTURE: redraw at MAX_TEXTURE (the GPU would only ever sample a smaller mip level). */
+function shrink(t) {
+  const img = t.image;
+  const k = MAX_TEXTURE / Math.max(img.width, img.height);
+  if (k >= 1) return false;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(img.width * k);
+  canvas.height = Math.round(img.height * k);
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  t.image = canvas;
+  t.needsUpdate = true;
+  return true;
+}
+
+/** Shrink oversized textures and share identical ones across every model loaded so far. */
+async function prepareTextures(roots) {
+  const slots = textureSlots(roots);
+  const unique = [...new Set(slots.map(([m, k]) => m[k]))];
+  await Promise.all(unique.map((t) => imageReady(t)));
+  let shrunk = 0;
+  const use = new Map();
+  for (const t of unique) {
+    if (!t.image?.width) {
+      use.set(t, t);
+      continue;
+    }
+    if (shrink(t)) shrunk++;
+    use.set(t, findTwin(t) ?? t);
+  }
+  for (const [m, k] of slots) {
+    const u = use.get(m[k]);
+    if (u && u !== m[k]) {
+      m[k] = u;
+      m.needsUpdate = true;
+    }
+  }
+  let merged = 0;
+  for (const [t, u] of use) {
+    if (t === u) continue;
+    t.dispose();
+    merged++;
+  }
+  return { textures: unique.length, merged, shrunk };
+}
+
+// ---------- finish (every model) ----------
+function animatedNames(root) {
+  const names = new Set();
+  for (const clip of root.animations ?? []) for (const t of clip.tracks) names.add(THREE.PropertyBinding.parseTrackName(t.name).nodeName);
+  return names;
+}
+
+/**
+ * Flat parts lying on the ground inside a tile (roads, water, tar pools) have nothing under them to shade, so
+ * they skip the shadow pass. Parts reaching the tile's edge keep it (their shadow can fall on the sand beside
+ * the tile), and so does every part of a model with anything below ground (a ground plate shades the hole).
+ */
+function skipFlatShadows(root) {
+  root.updateMatrixWorld(true);
+  const animated = animatedNames(root);
+  const boxes = [];
+  let bottom = Infinity;
+  root.traverse((o) => {
+    if (!o.isMesh || !o.visible) return;
+    const b = new THREE.Box3().setFromObject(o);
+    boxes.push([o, b]);
+    bottom = Math.min(bottom, b.min.y);
+  });
+  const fp = footprintBox(root);
+  if (!fp) return 0;
+  const span = Math.max(fp.max.x - fp.min.x, fp.max.z - fp.min.z);
+  if (bottom < -span * 0.008) return 0;
+  const inner = fp.clone().expandByVector(new THREE.Vector3(-span * 0.02, 0, -span * 0.02));
+  let n = 0;
+  for (const [o, b] of boxes) {
+    if (!o.castShadow || animated.has(o.name)) continue;
+    const flat = b.max.y - b.min.y < span * 0.012 && b.min.y <= bottom + span * 0.004;
+    const inside = b.min.x >= inner.min.x && b.max.x <= inner.max.x && b.min.z >= inner.min.z && b.max.z <= inner.max.z;
+    if (flat && inside) {
+      o.castShadow = false;
+      n++;
+    }
+  }
+  return n;
+}
+
+const BATCH_ATTRS = ['position', 'normal', 'uv'];
+
+/**
+ * Animated parts sharing one material (smoke puffs, flames, tar bubbles...) become a single skinned mesh: each
+ * part stays in the scene as an invisible "bone" that the animation keeps moving, and the merged mesh follows
+ * the bones exactly. One draw per material instead of one per part. Returns the number of draws saved.
+ */
+function batchAnimatedParts(root) {
+  const animated = animatedNames(root);
+  const groups = new Map();
+  root.traverse((o) => {
+    if (!o.isMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.children.length || !animated.has(o.name)) return;
+    const g = o.geometry;
+    if (!g.attributes.position || !g.attributes.normal) return;
+    const key = `${o.material.uuid}|${o.castShadow}|${o.receiveShadow}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(o);
+  });
+  let saved = 0;
+  for (const parts of groups.values()) {
+    if (parts.length < 2) continue;
+    const attrs = BATCH_ATTRS.filter((a) => parts.every((p) => p.geometry.attributes[a]));
+    const indexed = parts.every((p) => p.geometry.index);
+    const geos = parts.map((p, i) => {
+      const src = indexed ? p.geometry : p.geometry.index ? p.geometry.toNonIndexed() : p.geometry;
+      const g = new THREE.BufferGeometry();
+      for (const a of attrs) g.setAttribute(a, src.attributes[a].clone());
+      if (indexed) g.setIndex(src.index.clone());
+      const n = src.attributes.position.count;
+      const skinIndex = new Uint16Array(n * 4);
+      const skinWeight = new Float32Array(n * 4);
+      for (let v = 0; v < n; v++) {
+        skinIndex[v * 4] = i;
+        skinWeight[v * 4] = 1;
+      }
+      g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndex, 4));
+      g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeight, 4));
+      return g;
+    });
+    const geometry = mergeGeometries(geos, false);
+    geos.forEach((g) => g.dispose());
+    if (!geometry) continue;
+    const first = parts[0];
+    const mesh = new THREE.SkinnedMesh(geometry, first.material);
+    mesh.name = `batched:${first.material.name || 'material'}`;
+    mesh.castShadow = first.castShadow;
+    mesh.receiveShadow = first.receiveShadow;
+    mesh.frustumCulled = false; // its bounds move with the bones
+    root.add(mesh);
+    // Bind matrix and bone inverses are identity, so each vertex lands at part.matrixWorld × its own local
+    // position: exactly where the part drew itself before.
+    mesh.bind(new THREE.Skeleton(parts, parts.map(() => new THREE.Matrix4())), new THREE.Matrix4());
+    for (const p of parts) p.visible = false;
+    saved += parts.length - 1;
+  }
+  return saved;
+}
+
+function finishModel(root, spec) {
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of [o.material].flat()) for (const k of ['map', 'normalMap', 'emissiveMap']) if (m[k]) m[k].anisotropy = 8;
+  });
+  const flat = skipFlatShadows(root);
+  const batched = batchAnimatedParts(root);
+  if (flat || batched) console.info(`[models] ${spec.key}: ${flat} flat parts skip shadows, ${batched} animated draws batched`);
+  if (spec.piece) {
+    fitPiece(root, root);
+    root.name = `waste-${spec.shape}`;
+  } else {
+    fitToCell(root, { ground: 0, ...spec.finished });
+    const sunk = drawAfterGround(root);
+    if (sunk) console.info(`[models] ${spec.key}: ${sunk} below-ground parts drawn after the sand plane`);
+    root.name = spec.key;
+  }
+  return root;
+}
+
+/** One bundle of models, prepared and finished, ready to clone (Map key -> root). */
+export async function loadBundle(bundle, { track = false, parallel = false } = {}) {
+  const keys = BUNDLES[bundle];
+  const roots = await prepareFromFbx(keys, { track, parallel });
+  for (const key of keys) finishModel(roots.get(key), modelSpec(key));
+  return roots;
+}
+
+/** Any remaining Maya blockouts (atlas-textured; none are in use at the moment). */
+async function loadAtlasBlockouts() {
+  const keys = Object.keys(BLOCKOUTS).filter((k) => !FINISHED[k]);
+  if (!keys.length) return new Map();
+  const atlas = await new THREE.TextureLoader().loadAsync(ATLAS_URL);
+  atlas.colorSpace = THREE.SRGBColorSpace;
+  atlas.flipY = true;
+  atlas.wrapS = atlas.wrapT = THREE.ClampToEdgeWrapping;
+  atlas.anisotropy = 8;
+  const loader = new FBXLoader();
+  const raws = await Promise.all(keys.map((k) => loader.loadAsync(`${MODEL_URL}${BLOCKOUTS[k]}?v=${MODEL_VERSION}`, (e) => trackBytes(BLOCKOUTS[k], e))));
+  return new Map(
+    raws.map((raw, i) => {
+      applyAtlas(raw, atlas);
+      raw.animations = [];
+      fitToCell(raw);
+      raw.name = keys[i];
+      return [keys[i], raw];
+    }),
+  );
+}
+
+/** Everything the game needs before it starts: the core buildings (and any Maya blockouts). */
+export async function loadCoreModels() {
+  const [core, blockouts] = await Promise.all([loadBundle('core', { track: true, parallel: true }), loadAtlasBlockouts()]);
+  return new Map([...core, ...blockouts]);
+}
+
+/** Every building model at once, for pages that want them all (capital-test). */
+export async function loadBlockouts() {
+  const all = await loadCoreModels();
+  for (const [k, v] of await loadBundle('extra')) all.set(k, v);
+  return all;
 }

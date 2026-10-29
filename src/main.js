@@ -2421,5 +2421,12 @@ factory.piecesReady.then((pieces) => {
   adoptWastePieces();
 });
 
+// The remaining buildings and tiles load last; any already placed swap their stand-ins for the real models.
+factory.extrasReady.then((extras) => {
+  if (!extras) return;
+  warmUpModels(extras);
+  adoptBlockouts();
+});
+
 // Handy for debugging in the console.
-window.tileIsland = { debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };
+window.tileIsland = { addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };
