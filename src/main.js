@@ -14,6 +14,7 @@ import { Frontier } from './frontier.js';
 import { Placement } from './placement.js';
 import { Hand, pieceCost } from './hand.js';
 import { copySeam } from './seamlessGround.js';
+import { NeonTiles } from './neonGlow.js';
 import { Mysteries } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
@@ -77,6 +78,7 @@ const scaleCfg = loadScaleConfig(); // Game Debug → Scaling (events and camps)
 const iconCfg = loadIconConfig(); // Game Debug → Map icons
 const zoomIcons = new ZoomIcons(document.getElementById('mapIcons'), camera, rig, iconCfg);
 const traffic = new Traffic(scene); // ships flying between the tiles
+const neonTiles = new NeonTiles(scene); // boosted buildings' tiles glow
 const payoutCfg = loadPayoutConfig();
 const payout = new Payout(camera, document.getElementById('floaters'), payoutCfg);
 const audioCfg = { music: getMusicVolume(), sfx: getSfxVolume() };
@@ -783,6 +785,8 @@ function shadeIdle(e = economyNow()) {
   const idle = new Set();
   for (const p of e.perCell) if (p.idle) idle.add(`${p.x},${p.z}`);
   for (const cell of grid.cells.values()) if (cell.mesh) setGrey(cell.mesh, idle.has(`${cell.x},${cell.z}`));
+  neonTiles.refresh(grid); // boosted buildings' tiles glow (not idle ones)
+  zoomIcons.setBoosts(e.boosts); // the boosters' "+n" map icons
 }
 
 function updateHUD() {
@@ -2308,6 +2312,7 @@ function resetIsland() {
   tiles.clear();
   grid.clear();
   traffic.clear();
+  neonTiles.clear();
   anims.length = 0;
   dust.clear();
   shake.amount = 0;
@@ -2520,6 +2525,7 @@ function frame(now) {
   perf.end('tile anims');
   perf.begin('ships');
   traffic.update(dt, grid);
+  neonTiles.update(dt, time);
   perf.end('ships');
   perf.begin('frontier+mysteries');
   frontier.update(dt, time);

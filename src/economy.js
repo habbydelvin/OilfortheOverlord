@@ -57,6 +57,19 @@ export function computeEconomy(grid, state = {}) {
   const bonus = { labourCamps: 0, ruins: 0, pumpFarms: 0, oasisFarms: 0, tarpitStations: 0, capitalFood: 0, capitalCrude: 0 };
   // What each tile contributes, for the end-of-turn payout animation.
   const perCell = [];
+  // What each booster (Water Pump, Oasis, Tar Pit, Refinery) adds this season, for its map icon: cell key ->
+  // amount (food for Pump / Oasis, crude for Tar Pit, oil for Refinery). A bonus doesn't stack, so a building
+  // next to two of the same booster credits only the first one found.
+  const boosts = new Map();
+  const credit = (x, z, booster, amount) => {
+    for (const [dx, dz] of DIRS) {
+      const n = grid.get(x + dx, z + dz);
+      if (n?.terrain !== booster) continue;
+      const k = `${n.x},${n.z}`;
+      boosts.set(k, (boosts.get(k) ?? 0) + amount);
+      return;
+    }
+  };
 
   // Pass 1: worker capacity (housing, ruins, population, minus craters).
   for (const cell of grid.cells.values()) {
@@ -129,10 +142,13 @@ export function computeEconomy(grid, state = {}) {
       const pump = near.includes('pump');
       const oasis = near.includes('oasis');
       const water = (pump ? 2 : 0) + (oasis ? 3 : 0);
-      if (mods.drought) droughtFood += water * (near.includes('capital') ? 2 : 1);
+      const twice = near.includes('capital') ? 2 : 1;
+      if (mods.drought) droughtFood += water * twice;
       else {
         if (pump) bonus.pumpFarms++;
         if (oasis) bonus.oasisFarms++;
+        if (pump) credit(cell.x, cell.z, 'pump', 2 * twice);
+        if (oasis) credit(cell.x, cell.z, 'oasis', 3 * twice);
       }
       per.rawFood = 2 + (mods.drought ? 0 : water);
       // A Capital next door triggers the farm twice: double output (doesn't stack with more Capitals).
@@ -145,6 +161,7 @@ export function computeEconomy(grid, state = {}) {
     } else if (t === 'station') {
       const tarpit = near.includes('tarpit');
       if (tarpit) bonus.tarpitStations++;
+      if (tarpit) credit(cell.x, cell.z, 'tarpit', 2 * (near.includes('capital') ? 2 : 1));
       per.rawCrude = 2 + (tarpit ? 2 : 0);
       if (near.includes('capital')) {
         bonus.capitalCrude += per.rawCrude;
@@ -209,6 +226,8 @@ export function computeEconomy(grid, state = {}) {
   const storeAfter = Math.min(foodCap, rawStore);
   const foodWasted = rawStore - storeAfter;
 
+  // Each refinery's map icon: the oil it makes itself (its share of its stations' crude), after hunger like all oil.
+  for (const per of refineries) if (per.rawCrude) boosts.set(`${per.x},${per.z}`, per.rawCrude * fed);
   // Taxed settlements pay oil straight into the season's yield.
   const taxOil = (mods.settlementOil ?? 0) * (counts.settlement ?? 0);
   const oilMade = Math.round(crude * fed) + taxOil;
@@ -234,6 +253,7 @@ export function computeEconomy(grid, state = {}) {
 
   return {
     perCell,
+    boosts,
     cap,
     used,
     needed,

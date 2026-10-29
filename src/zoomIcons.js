@@ -4,6 +4,8 @@ import { ICONS } from './tiles.js';
 /**
  * Map icons: when the camera zooms out, a resource icon floats over each tile
  * (food / oil / manpower, a crown on the Capital, a ruin over Pre-war Ruins).
+ * Boosters (Water Pump, Oasis, Tar Pit, Refinery) get their own icon with a live "+n" tag: what they add to their
+ * neighbours this season (for the Refinery, the extra oil its multiplier makes).
  * They fade out as you zoom back in. Tunable in Game Debug → Map icons.
  */
 export const ICON_DEFAULTS = {
@@ -50,13 +52,34 @@ const RUINS =
   '<path d="M36 28h3v4h-3zM44 28h3v4h-3zM52 28h3v4h-3zM36 38h3v4h-3zM44 38h3v4h-3zM52 38h3v4h-3zM53 18h3v4h-3zM9 40h3v4H9zM17 40h3v4h-3z"/>' +
   '<path d="M1 50h62"/></svg>';
 
+// Boosters: tiles that add to their neighbours' output instead of producing anything themselves.
+const WATER =
+  '<svg class="ico map-water" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5c-3.2 4.6-6.6 8.4-6.6 12a6.6 6.6 0 0013.2 0c0-3.6-3.4-7.4-6.6-12z" fill="#4fb3e8" stroke="#1c1c1c" stroke-width="1.4" stroke-linejoin="round"/><path d="M8.9 15.2a3.2 3.2 0 002.8 3.1" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity="0.8"/></svg>';
+
+const PALM =
+  '<svg class="ico map-palm" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.6c3.2-1.7 14.8-1.7 18 0" fill="none" stroke="#4fb3e8" stroke-width="2.4" stroke-linecap="round"/><path d="M12.6 19.2c.4-3.6-.2-7-1.6-10.2" fill="none" stroke="#8a5a32" stroke-width="2" stroke-linecap="round"/><path d="M11 9C9 6 5.5 5.8 3.4 7.6 6 7.8 8.4 8.6 11 9zm0 0c1.4-3.2 4.8-4.4 7.5-3.2-2.4.6-4.9 1.6-7.5 3.2zm0 0c-3-.6-5.9 1-6.7 3.7 2-1.4 4.2-2.5 6.7-3.7zm0 0c3-.4 5.7 1.4 6.3 4.1-1.8-1.7-4-2.9-6.3-4.1z" fill="#6cc04a" stroke="#1c1c1c" stroke-width="1" stroke-linejoin="round"/></svg>';
+
+const TAR =
+  '<svg class="ico map-tar" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.8 15.4c0-2.6 3.4-3.7 5.7-3.2 1.3-2.4 5.5-2.8 7.3-.6 2.6-.4 5.4 1 5.4 3.6 0 2.9-4.3 4.5-9.2 4.5s-9.2-1.4-9.2-4.3z" fill="#2a1f2e" stroke="#c9a86a" stroke-width="1.3" stroke-linejoin="round"/><circle cx="9.6" cy="7.4" r="2" fill="#2a1f2e" stroke="#c9a86a" stroke-width="1.2"/><circle cx="14.8" cy="4.6" r="1.2" fill="#2a1f2e" stroke="#c9a86a" stroke-width="1"/><path d="M7 15.2c1.2-.8 2.6-1 3.8-.6" fill="none" stroke="#fff" stroke-width="1.1" stroke-linecap="round" opacity="0.45"/></svg>';
+
+const REFINERY =
+  '<svg class="ico map-refinery" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 2.2c-1.5 1.6-2 2.9-1.2 4.2.4-.8 1-1.2 1.6-1.4-.2 1 .2 1.7 1 2 .8-1.4.4-3-1.4-4.8z" fill="#ffb347" stroke="#1c1c1c" stroke-width="0.9" stroke-linejoin="round"/><rect x="8.2" y="7" width="6" height="14" rx="2" fill="#9aa3ab" stroke="#1c1c1c" stroke-width="1.3"/><path d="M8.6 10.6h5.2M8.6 14.4h5.2M8.6 18.2h5.2" stroke="#c0392b" stroke-width="1.5"/><rect x="15.4" y="13" width="5" height="8" rx="1.6" fill="#d0782a" stroke="#1c1c1c" stroke-width="1.3"/><path d="M14.2 16h1.2" stroke="#1c1c1c" stroke-width="1.3"/><path d="M3 21.2h18" stroke="#1c1c1c" stroke-width="1.6" stroke-linecap="round"/></svg>';
+
+/** Booster tiles: their icon and the resource they add to their neighbours (shown as a live "+n" tag). */
+const BOOSTERS = {
+  pump: { icon: WATER, res: 'food' },
+  oasis: { icon: PALM, res: 'food' },
+  tarpit: { icon: TAR, res: 'oil' },
+  refinery: { icon: REFINERY, res: 'oil' }, // the extra oil its multiplier makes
+};
+
 /** Icon HTML for a terrain, or null if it gets none. */
 function iconFor(terrain) {
+  if (BOOSTERS[terrain]) return BOOSTERS[terrain].icon;
   switch (terrain) {
     case 'farm':
       return ICONS.food;
     case 'station':
-    case 'refinery':
       return ICONS.oil;
     case 'settlement':
     case 'labourcamp':
@@ -76,8 +99,14 @@ export class ZoomIcons {
     this.camera = camera;
     this.rig = rig;
     this.cfg = cfg;
-    this.els = new Map(); // cell key -> { el, terrain }
+    this.els = new Map(); // cell key -> { el, terrain, tag }
     this.v = new THREE.Vector3();
+    this.boosts = new Map(); // booster cell key -> what it adds this season (computeEconomy's `boosts`)
+  }
+
+  /** The boosters' current bonuses, from the latest economy (call whenever it's recalculated). */
+  setBoosts(boosts) {
+    this.boosts = boosts ?? new Map();
   }
 
   update(grid) {
@@ -110,9 +139,27 @@ export class ZoomIcons {
         const el = document.createElement('div');
         el.className = cell.terrain === 'ruins' ? 'map-icon map-icon-ruins' : 'map-icon';
         el.innerHTML = html;
+        // Boosters carry a "+n" tag with the resource they add (filled in below).
+        const booster = BOOSTERS[cell.terrain];
+        let tag = null;
+        if (booster) {
+          el.classList.add('map-icon-boost');
+          tag = document.createElement('span');
+          tag.className = 'map-boost';
+          tag.innerHTML = `<b></b>${ICONS[booster.res]}`;
+          el.appendChild(tag);
+        }
         this.layer.appendChild(el);
-        rec = { el, terrain: cell.terrain };
+        rec = { el, terrain: cell.terrain, tag };
         this.els.set(k, rec);
+      }
+      if (rec.tag) {
+        const amount = Math.round(this.boosts.get(k) ?? 0);
+        if (rec.amount !== amount) {
+          rec.amount = amount;
+          rec.tag.firstChild.textContent = `+${amount}`;
+          rec.el.classList.toggle('unused', amount === 0); // boosting nothing right now: greyed like an idle building
+        }
       }
       // An idle building (no workers, greyed out on the board) shows a greyed-out icon too.
       const idle = cell.mesh?.userData.idle === true;
