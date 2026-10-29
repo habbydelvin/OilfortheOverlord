@@ -85,7 +85,7 @@
 
     <div id="ui">
       <header id="top">
-        <div class="level" id="seasonLabel">Round 1 · Spring</div>
+        <div class="level" id="seasonLabel">Year 1 · Spring</div>
         <div id="eventLabel" class="event-label hidden"></div>
         <div id="targetLabel" class="event-label hidden"></div>
         <div class="bar"><div class="fill" id="quotaFill"></div></div>
@@ -141,7 +141,7 @@
 
         <div class="spacer"></div>
         <button id="btnNext" class="btn gold">
-          Next turn<span id="btnNextSub">collect oil, draw a new hand</span>
+          Next turn<span id="btnNextSub"></span>
         </button>
         <button id="btnReroll" class="btn blue">
           Reroll hand<span id="btnRerollSub">-1</span>
@@ -155,7 +155,7 @@
           <div class="help-head"><span data-zh="操作说明">Controls</span><span id="helpClose">✕</span></div>
           <div
             class="help-body"
-            data-zh="<b>1–5</b> / 点击卡牌 · 选择板块<br /><b>R</b> / 右键 · 旋转 &nbsp; <b>F</b> · 反向旋转<br /><b>点击</b> · 放置 &nbsp; <b>Esc</b> · 取消<br /><b>拖动卡牌</b> 到地图上 · 放置<br /><b>Enter</b> · 下一回合<br /><b>拖动</b> / <b>WASD</b> · 平移 &nbsp; <b>滚轮</b> · 缩放<br /><b>Q / E</b> · 旋转视角 &nbsp; <b>C</b> · 回到中心<br /><b>N</b> · 调试：霸主核打击（毒坑）<br /><b>M</b> · 调试：预览导弹打击<br /><b>P</b> · 调试：打开市场<br /><b>V</b> · 调试：年度事件 &nbsp; <b>T</b> · 调试：贡品目标（<b>Shift+T</b> 附带免费地块）<br /><b>X</b> · 调试：切换领土扩张模式<br /><b>Space</b> · 调试：重播结算 &nbsp; <b>`</b> · 调参面板"
+            data-zh="<b>1–5</b> / 点击卡牌 · 选择板块<br /><b>R</b> / 右键 · 旋转 &nbsp; <b>F</b> · 反向旋转<br /><b>点击</b> · 放置 &nbsp; <b>Esc</b> · 取消<br /><b>拖动卡牌</b> 到地图上 · 放置<br /><b>Enter</b> · 下一回合<br /><b>拖动</b> / <b>WASD</b> · 平移 &nbsp; <b>滚轮</b> · 缩放<br /><b>Q / E</b> · 旋转视角 &nbsp; <b>C</b> · 回到中心"
           >
             <b>1–5</b> / click card · select piece<br />
             <b>R</b> / right-click · rotate &nbsp; <b>F</b> · rotate back<br />
@@ -163,13 +163,7 @@
             <b>Drag a card</b> onto the board · place<br />
             <b>Enter</b> · next turn<br />
             <b>Drag</b> / <b>WASD</b> · pan &nbsp; <b>Wheel</b> · zoom<br />
-            <b>Q / E</b> · turn camera &nbsp; <b>C</b> · recenter<br />
-            <b>N</b> · debug: overlord nuke (toxic crater)<br />
-            <b>M</b> · debug: preview the missile strike<br />
-            <b>P</b> · debug: open the shop<br />
-            <b>V</b> · debug: year event &nbsp; <b>T</b> · debug: tribute target (<b>Shift+T</b> with a free tile pick)<br />
-            <b>X</b> · debug: toggle territory expansion mode<br />
-            <b>Space</b> · debug: replay payout &nbsp; <b>`</b> · tuning panel
+            <b>Q / E</b> · turn camera &nbsp; <b>C</b> · recenter
           </div>
           <button id="btnTutorial" type="button" data-zh="重玩教程（第 0 年）">Replay tutorial (Year 0)</button>
         </div>

@@ -10,7 +10,7 @@
  */
 
 const SFX_BASE = 0.32; // gain at volume 100, the old fixed level
-export const SFX_VOLUME_DEFAULT = 299;
+export const SFX_VOLUME_DEFAULT = 300;
 export const SFX_VOLUME_MAX = 300;
 const SFX_KEY = 'oto.sfx';
 const MAX = 8;
@@ -57,7 +57,7 @@ function ensure() {
   return true;
 }
 
-/** 0–300. 100 is the old quiet level, 299 is the default. */
+/** 0–300. 100 is the old quiet level, 300 is the default. */
 export function setSfxVolume(volume) {
   sfxVolume = Math.max(0, Math.min(SFX_VOLUME_MAX, Math.round(volume)));
   localStorage.setItem(SFX_KEY, JSON.stringify(sfxVolume));

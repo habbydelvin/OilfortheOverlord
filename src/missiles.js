@@ -615,6 +615,66 @@ export class MissileStrike {
     scene.add(this.light);
   }
 
+  // ---------- a missile standing on the ground before it launches ----------
+  #upright = [];
+
+  /**
+   * An upright missile at cell (x, z): it rises out of the sand, then waits. Returns a handle:
+   * rumble(on) shakes it with sparks and smoke at the base, topple() tips it over (a dud),
+   * remove() takes it away (at launch: the flying missile takes over from the same spot).
+   */
+  showUpright(x, z, size = 1.6) {
+    const s = this.cfg.missileScale * size;
+    const mesh = this.template.clone();
+    mesh.scale.setScalar(s);
+    const rest = 0.36 * s; // the fins' tips on the ground
+    mesh.position.set(x, rest - 0.9 * s, z);
+    this.group.add(mesh);
+    const u = { mesh, x, z, s, rest, age: 0, rumble: false, topple: -1, acc: 0 };
+    this.#upright.push(u);
+    return {
+      rumble: (on = true) => (u.rumble = on),
+      topple: () => {
+        u.rumble = false;
+        u.topple = 0;
+      },
+      remove: () => {
+        this.group.remove(mesh);
+        this.#upright = this.#upright.filter((v) => v !== u);
+      },
+    };
+  }
+
+  #updateUpright(dt) {
+    for (const u of this.#upright) {
+      u.age += dt;
+      const rise = Math.min(1, u.age / 0.5);
+      const ease = 1 - (1 - rise) ** 3;
+      u.mesh.position.set(u.x, u.rest - 0.9 * u.s * (1 - ease), u.z);
+      u.mesh.rotation.set(0, u.age * 0.15, 0);
+      if (u.rumble) {
+        const j = 0.035 * u.s;
+        u.mesh.position.x += rand(-j, j);
+        u.mesh.position.z += rand(-j, j);
+        u.mesh.rotation.x = rand(-0.05, 0.05);
+        u.mesh.rotation.z = rand(-0.05, 0.05);
+        u.acc += 40 * dt;
+        for (; u.acc >= 1; u.acc--) {
+          const pos = new THREE.Vector3(u.x + rand(-0.15, 0.15), 0.05, u.z + rand(-0.15, 0.15));
+          this.smoke.spawn({ pos, vel: new THREE.Vector3(rand(-0.6, 0.6), rand(0.2, 0.6), rand(-0.6, 0.6)), drag: 2, lift: 0.3, size0: 0.15, size1: rand(0.5, 0.8), life: rand(0.7, 1.1), color0: '#e8d6b0', color1: '#8a7a64', opacity: rand(0.5, 0.75), fadeIn: 0.05, fadeStart: 0.2 });
+          if (Math.random() < 0.5)
+            this.flames.spawn({ pos: pos.clone().setY(0.08), vel: new THREE.Vector3(rand(-1.5, 1.5), rand(0.8, 2), rand(-1.5, 1.5)), size0: 0.12, size1: 0.02, life: rand(0.2, 0.4), color0: '#fff0b0', color1: '#ff5010', opacity: 1, fadeIn: 0.01 });
+        }
+      }
+      if (u.topple >= 0) {
+        u.topple = Math.min(1, u.topple + dt / 0.7);
+        const p = u.topple ** 2;
+        u.mesh.rotation.z = (Math.PI / 2) * p;
+        u.mesh.position.y = u.rest * (1 - p) + 0.08 * u.s * p;
+      }
+    }
+  }
+
   /** True while missiles are flying or clouds are still up. */
   get busy() {
     return this.#missiles.length > 0 || this.#blasts.length > 0 || this.#timers.length > 0;
@@ -723,18 +783,22 @@ export class MissileStrike {
       }
     }
 
+    this.#updateUpright(dt);
+
     // Missiles in flight.
     for (let i = this.#missiles.length - 1; i >= 0; i--) {
       const m = this.#missiles[i];
       m.age += dt;
       if (m.age < 0) continue;
       if (!m.mesh) this.#spawnMissile(m);
-      const u = Math.min(1, Math.pow(m.age / c.flightTime, c.accel));
+      // A ground launch can fly slower (target.flight / target.accel) so the camera can follow it.
+      const u = Math.min(1, Math.pow(m.age / (m.target.flight ?? c.flightTime), m.target.accel ?? c.accel));
       const prev = this.#tmp.copy(m.mesh.position);
       bezier(m.mesh.position, m.p0, m.p1, m.p2, u);
       bezierTangent(this.#dir, m.p0, m.p1, m.p2, Math.min(u, 0.999));
       m.mesh.quaternion.setFromUnitVectors(UP, this.#dir);
       m.glow.scale.setScalar((0.4 + Math.random() * 0.15) * c.exhaustSize);
+      m.job.hooks.onMove?.(m.mesh.position, m.target, u);
       // Trail: puffs spaced along the segment covered this frame, so fast missiles leave no gaps.
       m.trailAcc += c.trailRate * dt;
       const n = Math.floor(m.trailAcc);
@@ -955,6 +1019,8 @@ export class MissileStrike {
   clear() {
     for (const m of this.#missiles) if (m.mesh) this.group.remove(m.mesh);
     this.#missiles.length = 0;
+    for (const u of this.#upright) this.group.remove(u.mesh);
+    this.#upright.length = 0;
     this.#blasts.length = 0;
     this.#timers.length = 0;
     this.smoke.clear();

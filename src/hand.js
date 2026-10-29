@@ -99,7 +99,7 @@ export class Hand {
       this.rotate(1);
     });
     bindCardHover(el);
-    this.deal();
+    // No deal here: hand.excluded (the unlock rules) isn't set yet; the game deals the opening hand.
   }
 
   /** True while a card is being dragged out of the hand. */
@@ -206,10 +206,11 @@ export class Hand {
   }
 
   /** Use up the selected card. No replacement until next turn. */
-  /** Top the hand up to `count` with pure-luck draws (ignores shop locks). */
+  /** Top the hand up to `count` with random draws (locked special cards still can't come up). */
   refill(count) {
     const start = this.cards.length;
-    while (this.cards.length < count) this.cards.push(randomPiece(this.grid, []));
+    const exclude = this.excluded?.() ?? [];
+    while (this.cards.length < count) this.cards.push(randomPiece(this.grid, exclude));
     for (let i = start; i < this.cards.length; i++) this.fresh.add(i);
     this.render();
     return this.cards.length - start;

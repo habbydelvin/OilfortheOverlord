@@ -16,7 +16,7 @@
 import { L, onLangChange } from './i18n.js';
 
 const URL = '/audio/OverlordIsWatching.mp3';
-export const MUSIC_VOLUME_DEFAULT = 67; // slider position; the level is its square, capped at 2
+export const MUSIC_VOLUME_DEFAULT = 79; // slider position; the level is its square, capped at 2
 export const MUSIC_VOLUME_MAX = 200; // 100 = full level, 200 = twice as loud
 const DEFAULT_VOLUME = MUSIC_VOLUME_DEFAULT;
 const SETTINGS_KEY = 'oto.music';

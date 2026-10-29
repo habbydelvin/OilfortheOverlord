@@ -91,7 +91,7 @@ const AUDIO_DEFAULTS = { music: MUSIC_VOLUME_DEFAULT, sfx: SFX_VOLUME_DEFAULT };
 const AUDIO_PARAMS = [
   { group: 'Audio' },
   { key: 'music', label: 'Music', min: 0, max: MUSIC_VOLUME_MAX, step: 1, hint: '100 is full level, 200 is twice as loud. Same control as the corner slider.' },
-  { key: 'sfx', label: 'SFX', min: 0, max: SFX_VOLUME_MAX, step: 1, hint: '100 is the old quiet level. 299 is the default.' },
+  { key: 'sfx', label: 'SFX', min: 0, max: SFX_VOLUME_MAX, step: 1, hint: '100 is the old quiet level. 300 is the default.' },
 ];
 bindCardHover(document.getElementById('shopCards'));
 bindCardHover(document.getElementById('pickCards'));
@@ -526,7 +526,7 @@ function strikeCamera(targets) {
  * mushroom cloud (unless `convert` is off: a dry-run preview). The caller owns `eventOpen` afterwards.
  * Returns the names of the tiles destroyed.
  */
-async function playMissileStrike(targets, { convert = true, restoreCamera = true } = {}) {
+async function playMissileStrike(targets, { convert = true, restoreCamera = true, follow = false, prelude = null } = {}) {
   const run = runId;
   const lost = [];
   if (!targets.length) return lost;
@@ -537,10 +537,31 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
   document.body.classList.add('striking');
   const saved = { goal: rig.goal.clone(), distance: rig.goalDistance };
   rig.locked = true;
-  strikeCamera(targets);
-  await wait(missileCfg.camLead);
-  if (run !== runId) return lost;
+  if (follow) {
+    // Ground launch: close up on the launch cell, then the camera rides along with the missile.
+    const from = targets[0].from;
+    followDist = FOLLOW_CLOSE;
+    followCamera(new THREE.Vector3(from.x, 0, from.z), FOLLOW_CLOSE, 5);
+    await wait(0.6);
+    if (run !== runId) return lost;
+    await prelude?.();
+    if (run !== runId) return lost;
+  } else {
+    strikeCamera(targets);
+    await wait(missileCfg.camLead);
+    if (run !== runId) return lost;
+  }
   await missiles.fire(targets, {
+    onMove: follow
+      ? (pos, t, u) => {
+          if (run !== runId) return;
+          // Pull back as it climbs, and by the end far enough that the target is in the shot.
+          // (Never zooms back in: the impact is seen from as far out as the flight got.)
+          const reach = Math.hypot(t.x - pos.x, t.z - pos.z);
+          followDist = Math.max(followDist, FOLLOW_CLOSE + pos.y * 1.1 + reach * 0.6 * u);
+          followCamera(pos, followDist, 7);
+        }
+      : undefined,
     onImpact: ({ x, z }) => {
       if (run !== runId) return;
       boom();
@@ -569,6 +590,27 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
   return lost;
 }
 
+/** Closest zoom for the ground-launch close-up. */
+const FOLLOW_CLOSE = 9;
+let followDist = FOLLOW_CLOSE;
+const camDir = new THREE.Vector3();
+/**
+ * Point the camera at a world position (may be in the air) with the HUD hidden: the look-at point is the
+ * ground point that puts `pos` in the middle of the screen (sliding along the view direction by its height).
+ */
+function followCamera(pos, distance, rate) {
+  const dist = THREE.MathUtils.clamp(distance, rig.minDistance, rig.maxDistance);
+  rig.posRate = rate;
+  rig.zoomRate = rate * 0.8;
+  rig.goalDistance = dist;
+  camera.getWorldDirection(camDir);
+  camDir.y = 0;
+  camDir.normalize();
+  const along = pos.y / Math.tan(rig.pitch); // a point at height y sits over the ground this far ahead
+  const view = camera.view?.enabled ? camera.view : { offsetX: 0, offsetY: 0 };
+  rig.goal.set(pos.x, 0, pos.z).addScaledVector(camDir, along).add(rig.screenShift(view.offsetX, view.offsetY, dist));
+}
+
 /**
  * A missile launches from the ground at `spot` and hits `target` (Show of Force's ruins, and an
  * Unexploded Missile). Resolves with the names of the tiles lost, or null if the run was reset meanwhile.
@@ -577,9 +619,20 @@ async function groundStrike(spot, target, lostText = (l) => L(`The silo's missil
   const run = runId;
   eventOpen = true; // locked from the moment it is called, through the lead-in
   hand.select(-1);
-  await wait(0.8);
+  await wait(0.3);
   if (run !== runId) return null;
-  const lost = await playMissileStrike([{ ...target, from: spot }]);
+  // The missile stands upright on the spot; the camera closes in, it shakes, then launches and is followed.
+  const standing = missiles.showUpright(spot.x, spot.z);
+  const prelude = async () => {
+    standing.rumble();
+    shake.amount = Math.min(shake.amount + 0.3, 1.2);
+    await wait(1.2);
+    standing.remove();
+    boom();
+    dust.burst(spot.x, spot.z, 1.6);
+  };
+  const lost = await playMissileStrike([{ ...target, from: spot, flight: 2.6, accel: 1.1 }], { follow: true, prelude });
+  standing.remove();
   if (run !== runId) return null;
   eventOpen = false;
   reportStrike(lost);
@@ -607,7 +660,15 @@ function unexplodedMissile(site, target = nearestBuilding(site.x, site.z)) {
   dust.burst(site.x, site.z, 1.4);
   shake.amount = Math.min(shake.amount + 0.6, 1.2);
   if (!target) {
+    // A dud: it stands up, wobbles, and falls over.
+    const run = runId;
+    const dud = missiles.showUpright(site.x, site.z);
     toast(L('Uncovered an Unexploded Missile... it fizzled into the sand', '发现一枚未爆导弹……它在沙地里哑火了'), 'good', 2400);
+    setTimeout(() => run === runId && dud.topple(), 900);
+    setTimeout(() => {
+      dud.remove();
+      if (run === runId) dust.burst(site.x, site.z, 1);
+    }, 2600);
     return;
   }
   eventOpen = true;
@@ -738,7 +799,7 @@ function canClearRuins(c) {
   );
 }
 
-/** Clearing ruins empties the cell and tops the hand up to HAND_SIZE with pure-luck draws. */
+/** Clearing ruins empties the cell and tops the hand up to HAND_SIZE with random draws (unlocked cards only). */
 function clearRuins(x, z) {
   const c = grid.get(x, z);
   if (!c || !canClearRuins(c) || turn.over || payout.active || shopOpen || eventOpen) return;
@@ -945,7 +1006,7 @@ function updateHUD() {
   const quota = turn.quota;
   const left = yearLength() - 1 - turn.season;
   $('seasonLabel').textContent = L(
-    `${turn.round === 0 ? 'Year 0 (tutorial)' : `Round ${turn.round}`} · ${SEASONS[turn.season]} · tribute ${left ? `in ${left} season${left === 1 ? '' : 's'}` : `due this ${SEASONS[turn.season]}`}`,
+    `${turn.round === 0 ? 'Year 0 (tutorial)' : `Year ${turn.round}`} · ${SEASONS[turn.season]} · Tribute ${left ? `in ${left} season${left === 1 ? '' : 's'}` : `due this ${SEASONS[turn.season]}`}`,
     `${turn.round === 0 ? '第 0 年（教程）' : `第 ${turn.round} 年`} · ${SEASONS[turn.season]} · ${left ? `${left} 季后缴纳贡品` : '本季缴纳贡品'}`,
   );
   const ev = turn.event;
@@ -1011,11 +1072,10 @@ function updateHUD() {
   // Greyed out while Wasteland that still fits must be placed (endTurn refuses then, with a toast).
   const blocking = hand.placeableForced.length;
   $('btnNext').classList.toggle('disabled', blocking > 0);
-  $('btnNextSub').textContent = blocking
-    ? L(`place your Wasteland first (${blocking} left)`, `请先放置荒地（还剩 ${blocking} 块）`)
-    : turn.season === yearLength() - 1
+  $('btnNextSub').textContent =
+    turn.season === yearLength() - 1
       ? L(`collect oil, pay ${quota} tribute`, `采油，缴纳 ${quota} 桶贡品`)
-      : L('collect oil, draw a new hand', '采油，抽取新手牌');
+      : '';
   if (tipKind) renderResTip(e);
 }
 
@@ -1527,7 +1587,7 @@ function gameOver(reason) {
 function showGameOver() {
   $('gameoverReason').textContent = typeof gameOverReason === 'function' ? gameOverReason() : (gameOverReason ?? '');
   $('gameoverStats').textContent = L(
-    `Survived to ${SEASONS[turn.season]}, round ${turn.round} · ${turn.total} barrels delivered in total`,
+    `Survived to ${SEASONS[turn.season]}, year ${turn.round} · ${turn.total} barrels delivered in total`,
     `坚持到第 ${turn.round} 年${SEASONS[turn.season]} · 共上交 ${turn.total} 桶`,
   );
 }
@@ -1542,7 +1602,7 @@ function settleTurn(e) {
   // Text below is built in the current language when shown (functions), so the toast follows a language switch.
   const season = turn.season;
   const round = turn.round;
-  const label = () => L(`${SEASONS[season]}, round ${round}`, `第 ${round} 年${SEASONS[season]}`);
+  const label = () => L(`${SEASONS[season]}, year ${round}`, `第 ${round} 年${SEASONS[season]}`);
   turn.stockpile += e.oil - stolen;
   turn.total += e.oil;
   turn.food = e.storeAfter;
@@ -2549,29 +2609,32 @@ function showPlacementCost(piece, cells) {
   el.addEventListener('animationend', () => el.remove());
 }
 
-/** Spark: tiles in the area pay out their oil and food right now (upkeep isn't charged). */
+/**
+ * Spark: every staffed "On trigger" tile in the area (farms, stations, refineries) triggers right now, even
+ * if it makes 0 (a Refinery with no station beside it). Idle ones don't. Upkeep isn't charged. A tile
+ * next to a Capital triggers twice, as in the season payout.
+ */
+const triggers = (p) => cardDef(p.terrain)?.trigger === 'On trigger' && !p.idle;
 function spark(cells) {
   const area = new Set(cells.map(([x, z]) => `${x},${z}`));
   const e = economyNow();
-  const hit = e.perCell
-    .filter((p) => area.has(`${p.x},${p.z}`) && (p.oil > 0 || p.food > 0))
-    .map((p) => ({ x: p.x, z: p.z, mesh: grid.get(p.x, p.z).mesh, oil: Math.max(0, p.oil), food: Math.max(0, p.food) }));
-  // A sparked Capital triggers too: it hops, then every producing building next to it fires once more
+  const fire = (p, extra = {}) => {
+    const oil = Math.max(0, p.oil);
+    const food = Math.max(0, p.food);
+    return { x: p.x, z: p.z, terrain: p.terrain, mesh: payoutMesh(grid.get(p.x, p.z)), oil, food, zero: !oil && !food, triggers: p.triggers, ...extra };
+  };
+  const hit = e.perCell.filter((p) => area.has(`${p.x},${p.z}`) && triggers(p)).map((p) => fire(p)).flatMap(splitTriggers);
+  // A sparked Capital triggers too: it hops, then every staffed producer next to it fires once more
   // (one trigger's worth: its season output divided by how many times it triggers).
   for (const cap of e.perCell.filter((p) => p.terrain === 'capital' && area.has(`${p.x},${p.z}`))) {
     hit.push({ x: cap.x, z: cap.z, mesh: grid.get(cap.x, cap.z).mesh, oil: 0, food: 0, terrain: 'capital' });
     for (const [dx, dz] of DIRS) {
       const n = e.perCell.find((p) => p.x === cap.x + dx && p.z === cap.z + dz);
-      if (!n || n.idle || (n.oil <= 0 && n.food <= 0)) continue;
+      if (!n || !triggers(n)) continue;
       const per = n.triggers ?? 1;
-      hit.push({
-        x: n.x,
-        z: n.z,
-        mesh: grid.get(n.x, n.z).mesh,
-        oil: Math.round(Math.max(0, n.oil) / per),
-        food: Math.round(Math.max(0, n.food) / per),
-        finale: true, // after the area pays out, like a chain reaction from the Capital
-      });
+      const oil = Math.round(Math.max(0, n.oil) / per);
+      const food = Math.round(Math.max(0, n.food) / per);
+      hit.push({ ...fire(n), oil, food, zero: !oil && !food, triggers: 1, finale: true }); // chain reaction after the area
     }
   }
   if (!hit.length) {
@@ -2619,22 +2682,29 @@ function demolish(x, z, quiet = false) {
 
 rig.onClick = tryPlace;
 
+/**
+ * Dev-testing hotkeys (Space, `, -, N, M, P, V, T, X). Off for players; set true to use them again.
+ * The Game Debug panel (its button, top left) still has the same tools.
+ */
+const DEV_HOTKEYS = false;
+
 window.addEventListener('keydown', (e) => {
   if (document.getElementById('loading')) return; // no shortcuts until the island exists
   const k = e.key.toLowerCase();
   const tgt = e.target;
+  const dev = DEV_HOTKEYS;
   // Space: replay the payout sequence (debug). Works even with a debug slider focused.
-  if (k === ' ' && !tgt.matches?.('select, textarea, input:not([type=range])')) {
+  if (dev && k === ' ' && !tgt.matches?.('select, textarea, input:not([type=range])')) {
     e.preventDefault();
     if (!e.repeat) previewPayout();
     return;
   }
   if (tgt.matches?.('input, select, textarea')) return; // typing in the debug panel
-  if (k === '`') {
+  if (dev && k === '`') {
     debug.toggle();
     return;
   }
-  if (k === '-') {
+  if (dev && k === '-') {
     perf.setOpen(!perf.enabled); // performance overlay
     return;
   }
@@ -2662,16 +2732,16 @@ window.addEventListener('keydown', (e) => {
     else hand.select(-1);
   }
   else if (k === 'c') rig.focus(...(grid.expansionMode ? grid.territoryCenter() : grid.centroid()));
-  else if (k === 'n') nukeRandomTile();
-  else if (k === 'm' && !e.repeat) {
+  else if (dev && k === 'n') nukeRandomTile();
+  else if (dev && k === 'm' && !e.repeat) {
     const blocked = turn.over || striking || shopOpen || eventOpen || payout.active;
     const msg = previewMissileStrike();
     if (blocked) toast(msg);
   }
-  else if (k === 'p' && !e.repeat) debugShop();
-  else if (k === 'v' && !e.repeat) debugEvent();
-  else if (k === 't' && !e.repeat) debugTarget(e.shiftKey);
-  else if (k === 'x' && !e.repeat) setExpansionMode(!grid.expansionMode);
+  else if (dev && k === 'p' && !e.repeat) debugShop();
+  else if (dev && k === 'v' && !e.repeat) debugEvent();
+  else if (dev && k === 't' && !e.repeat) debugTarget(e.shiftKey);
+  else if (dev && k === 'x' && !e.repeat) setExpansionMode(!grid.expansionMode);
   else if (k === 'enter') endTurn();
 });
 

@@ -2378,3 +2378,8 @@ body.striking #mapIcons {
 #fade.on .fade-text {
   opacity: 1;
 }
+
+/* No subtitle (most seasons): the button label sits in the middle. */
+.btn span:empty {
+  display: none;
+}
