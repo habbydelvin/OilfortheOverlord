@@ -3,6 +3,7 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { recolourSalt } from './saltRecolour.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { findSharedSand, makeSeamless, copySeam } from './seamlessGround.js';
 
 /**
  * Blockout tiles. Maya exports these in centimetres with the mesh pivot
@@ -364,7 +365,7 @@ function drawAfterGround(root) {
     const lift = (m) => {
       if (m.transparent) return m;
       if (!swap.has(m)) {
-        const c = m.clone();
+        const c = copySeam(m, m.clone());
         c.transparent = true;
         c.depthWrite = true;
         swap.set(m, c);
@@ -461,6 +462,29 @@ function removeDust(raw, name) {
   }
   if (parts.length) console.info(`[models] ${name}: removed ${clusters} dust clusters`);
   return removed;
+}
+
+/**
+ * Most tiles have a thin dark frame (<Name>_SandTrim) around the edge of their ground. Side by side on the board
+ * it outlines every cell, so it's removed: the tiles' ground meets its neighbours directly.
+ */
+const TRIM_NAME = /_SandTrim$/;
+function removeTrim(raw) {
+  const isTrim = (m) => TRIM_NAME.test(m?.name ?? '');
+  const meshes = [];
+  raw.traverse((o) => o.isMesh && (TRIM_NAME.test(o.name) || [o.material].flat().some(isTrim)) && meshes.push(o));
+  for (const o of meshes) {
+    const mats = [o.material].flat();
+    if (TRIM_NAME.test(o.name) || mats.every(isTrim)) {
+      o.removeFromParent();
+      o.geometry.dispose();
+      continue;
+    }
+    // A mesh mixing the trim with other materials: drop just the trim's triangles.
+    const g = o.geometry;
+    g.groups = g.groups.filter((grp) => !isTrim(mats[grp.materialIndex]));
+  }
+  return meshes.length;
 }
 
 
@@ -718,6 +742,7 @@ export async function decodeImage(img) {
 async function loadFbx(loader, spec, track) {
   const raw = await loader.loadAsync(`${MODEL_URL}${spec.file}?v=${MODEL_VERSION}`, track ? (e) => trackBytes(spec.file, e) : undefined);
   const removed = spec.piece || spec.finished?.dust ? removeDust(raw, spec.piece ?? spec.key) : new Set();
+  removeTrim(raw);
   toStandard(raw);
   // Object3D.clone copies `animations`, so every tile copy can play them.
   raw.animations = raw.animations
@@ -1175,6 +1200,13 @@ function finishModel(root, spec) {
   const flat = skipFlatShadows(root);
   const batched = batchAnimatedParts(root);
   if (flat || batched) console.info(`[models] ${spec.key}: ${flat} flat parts skip shadows, ${batched} animated draws batched`);
+  // Still in the state storeFootprint measured it in, so the footprint lines up with the parts.
+  const fp = footprintBox(root);
+  if (fp) {
+    const size = fp.getSize(new THREE.Vector3());
+    const grid = spec.piece ? [Math.max(1, Math.round(size.x / BLENDER_CELL)), Math.max(1, Math.round(size.z / BLENDER_CELL))] : [1, 1];
+    makeSeamless(root, fp, grid);
+  }
   if (spec.piece) {
     fitPiece(root, root);
     root.name = `waste-${spec.shape}`;
@@ -1191,6 +1223,7 @@ function finishModel(root, spec) {
 export async function loadBundle(bundle, { track = false, parallel = false } = {}) {
   const keys = BUNDLES[bundle];
   const roots = await prepareFromFbx(keys, { track, parallel });
+  findSharedSand(roots.values());
   for (const key of keys) {
     await breathe();
     finishModel(roots.get(key), modelSpec(key));

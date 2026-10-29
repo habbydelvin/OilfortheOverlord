@@ -155,43 +155,10 @@
   color: var(--dp-brass-hi);
 }
 
-/* ---------- top: a weathered steel plate in a gunmetal frame ---------- */
+/* ---------- top: season, tribute gauge, score plaque, strikes (straight over the map, no plate) ---------- */
 #top {
-  isolation: isolate; /* keeps the plate behind the text but above the board */
   color: var(--dp-cream);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
-}
-/* The plate (::after) and its glint (::before, see the sheen section). */
-#top::before,
-#top::after {
-  content: '';
-  position: absolute;
-  inset: -5px -19px -5px;
-  z-index: -1;
-  pointer-events: none;
-  border-radius: 11px;
-}
-/* Weathered steel with an engraved line and a bolt in each corner, in a rounded gunmetal rim (outer shadows). */
-#top::after {
-  z-index: -2;
-  background:
-    var(--dp-bolt) left 5px top 5px / 12px 12px no-repeat,
-    var(--dp-bolt) right 5px top 5px / 12px 12px no-repeat,
-    var(--dp-bolt) left 5px bottom 5px / 12px 12px no-repeat,
-    var(--dp-bolt) right 5px bottom 5px / 12px 12px no-repeat,
-    var(--dp-metal);
-  box-shadow:
-    inset 0 0 0 1px #0a0a0a,
-    inset 0 0 0 2px rgba(201, 160, 90, 0.55),
-    inset 0 2px 10px rgba(0, 0, 0, 0.6),
-    0 0 0 1px #0a0a0a,
-    0 0 0 3px #50575b,
-    0 -1px 0 4px #a3aaae,
-    0 0 0 6px #3c4246,
-    0 1px 0 7px #0c0d0e,
-    0 9px 16px 4px rgba(0, 0, 0, 0.55);
-  outline: 1px solid var(--dp-engrave);
-  outline-offset: -6px;
 }
 #top .level {
   letter-spacing: 0.08em;
@@ -496,7 +463,6 @@
 #cardPick .shop-band {
   position: relative; /* anchor for the glint; no offsets, so nothing moves */
 }
-#top::before,
 #panel::before,
 #help::before,
 #gameover .box::before,
@@ -521,10 +487,6 @@
   mask: url('/ui/metal-spec.webp') 0 0 / 256px 256px repeat luminance;
   mix-blend-mode: screen;
   opacity: 0.45;
-}
-#top::before {
-  inset: -5px -19px -5px;
-  border-radius: 11px;
 }
 /* Buttons: over the plate (inset 4px), brighter under the pointer, as the hand cards. */
 .btn::after {
