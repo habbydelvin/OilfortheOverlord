@@ -24,6 +24,7 @@ import { TIERS, TIER_ORDER, REWARDS, LOW_STREAK_LIMIT, rollReward, scaledQuota }
 import { loadPayoutConfig } from './payoutConfig.js';
 import { createDebugPanel } from './debugPanel.js';
 import { SCALE, SCALE_PARAMS, SCALE_DEFAULTS, loadScaleConfig, saveScaleConfig, clearScaleConfig, eventPct, P } from './scalingConfig.js';
+import { Traffic } from './traffic.js';
 import { ZoomIcons, ICON_PARAMS, ICON_DEFAULTS, loadIconConfig, saveIconConfig, clearIconConfig } from './zoomIcons.js';
 import { Perf } from './perfOverlay.js';
 import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig, applyGfx } from './graphics.js';
@@ -74,6 +75,7 @@ const dialogue = new Dialogue(document.getElementById('dialogue'));
 const scaleCfg = loadScaleConfig(); // Game Debug → Scaling (events and camps)
 const iconCfg = loadIconConfig(); // Game Debug → Map icons
 const zoomIcons = new ZoomIcons(document.getElementById('mapIcons'), camera, rig, iconCfg);
+const traffic = new Traffic(scene); // ships flying between the tiles
 const payoutCfg = loadPayoutConfig();
 const payout = new Payout(camera, document.getElementById('floaters'), payoutCfg);
 const audioCfg = { music: getMusicVolume(), sfx: getSfxVolume() };
@@ -2222,6 +2224,7 @@ function resetIsland() {
   document.body.classList.remove('paying');
   tiles.clear();
   grid.clear();
+  traffic.clear();
   anims.length = 0;
   dust.clear();
   shake.amount = 0;
@@ -2432,6 +2435,9 @@ function frame(now) {
   perf.begin('tile anims');
   factory.update(dt);
   perf.end('tile anims');
+  perf.begin('ships');
+  traffic.update(dt, grid);
+  perf.end('ships');
   perf.begin('frontier+mysteries');
   frontier.update(dt, time);
   mysteries.update(time);
@@ -2617,4 +2623,4 @@ factory.extrasReady.then(async (extras) => {
 });
 
 // Handy for debugging in the console.
-window.tileIsland = { addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };
+window.tileIsland = { traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };

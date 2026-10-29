@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SAND, sandTexture, useDesertSand } from './seamlessGround.js';
 
 const BG = 0x000000;
 
@@ -82,18 +83,22 @@ export function createScene(container) {
 }
 
 /**
- * Sand ground under the board. Sits just below the plot overlays (frontier
- * slots at -0.04, plot fills at -0.03), so they still draw on top of it.
+ * Sand ground under the board. The plot overlays (frontier slots, plot fills) are see-through and draw after it
+ * (it has renderOrder -1 and writes no depth), so they show on top even where they sit lower.
  * Wide enough to reach past the fog at full zoom-out (fog ends at distance + 45, max distance 48).
+ * Its sand (texture, tint, scale) is SAND in seamlessGround.js, shared with the tiles' ground. It sits just under
+ * the tiles' ground (y = 0): any deeper and the step shows as a shadow line along the edge of the board.
  */
+export const GROUND_Y = -0.008;
+/**
+ * That's close enough to the tiles' ground (and the slight dips in it, like the tar pool at -0.005) for the depth
+ * test to mix them up when zoomed out. Pushed back in depth, the sand plane always loses to a tile's ground.
+ */
+export const GROUND_DEPTH = { polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 8 };
 const GROUND = {
-  url: '/textures/sand08.jpg?v=20261027-1602', // bump when the texture file changes, so browsers drop the cached copy
-  y: -0.05,
+  y: GROUND_Y,
   size: 240,
-  tile: 4, // world units per texture repeat (just over one 3×3 plot)
-  // The board lights (hemisphere 1.3 + sun 2.2, ACES) push the painted sand to bright orange.
-  // This tint brings it back to about the texture's own muted brown.
-  tint: 0xe4e4e6,
+  tile: SAND.tile, // the plane moves in whole texture repeats
   fadeRadius: 0.75, // sand fades out by camera distance × this, measured from the look-at point
 };
 
@@ -118,22 +123,17 @@ function createFadeTexture() {
 }
 
 function createGround(renderer) {
-  const map = new THREE.TextureLoader().load(GROUND.url);
-  map.colorSpace = THREE.SRGBColorSpace;
-  map.wrapS = map.wrapT = THREE.RepeatWrapping;
-  map.repeat.setScalar(GROUND.size / GROUND.tile);
-  map.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  sandTexture().anisotropy = renderer.capabilities.getMaxAnisotropy();
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(GROUND.size, GROUND.size).rotateX(-Math.PI / 2),
-    new THREE.MeshStandardMaterial({
-      map,
-      color: GROUND.tint,
-      alphaMap: createFadeTexture(),
-      transparent: true,
-      depthWrite: false,
-      roughness: 1,
-      metalness: 0,
-    }),
+    useDesertSand(
+      new THREE.MeshStandardMaterial({
+        alphaMap: createFadeTexture(),
+        transparent: true,
+        depthWrite: false,
+        ...GROUND_DEPTH,
+      }),
+    ),
   );
   ground.name = 'ground';
   ground.position.y = GROUND.y;

@@ -1,39 +1,83 @@
 import * as THREE from 'three';
 
 /**
- * Seamless ground between neighbouring tiles.
+ * Seamless ground: the desert around the board and the ground of every tile are one continuous sand.
  *
- * Plain sand (<Name>_Sand: one shared, tileable texture, 3 repeats per cell) is sampled in world space instead of
- * the tile's own UVs, so it runs on unbroken from one tile to the next, whatever the tile or piece rotation.
- * Painted grounds (<Name>Ground: oasis, tar pit, crater, ruins, cliffs, the Wasteland pieces; the Settlement pad)
- * fade into that same world-space sand along their outer edge, so every tile meets its neighbour on identical sand.
- * Edges between two cells of one Wasteland piece don't fade: the piece's own picture carries on across them.
+ * The desert sand (SAND) is sampled in world space, on the board's sand plane and on the tiles' plain sand parts
+ * (<Name>_Sand) alike, so it runs on unbroken from the desert onto a tile and from one tile to the next, whatever
+ * the tile or piece rotation. Painted grounds (<Name>Ground: oasis, tar pit, crater, ruins, cliffs, the Wasteland
+ * pieces; the Settlement pad) fade into that same sand along their outer edge, so every tile meets its neighbours
+ * on identical sand. Edges between two cells of one Wasteland piece don't fade: the piece's picture carries on.
  */
+export const SAND = {
+  url: '/textures/sand08.jpg?v=20261027-1602', // bump when the texture file changes, so browsers drop the cached copy
+  tile: 4, // world units per texture repeat (just over one 3×3 plot)
+  // The board lights (hemisphere 1.3 + sun 2.2, ACES) push the painted sand to bright orange.
+  // This tint brings it back to about the texture's own muted brown.
+  tint: 0xe4e4e6,
+  roughness: 1,
+};
+
 export const SEAM = {
-  repeat: 3, // sand texture repeats per cell (the plain sand tiles' own UVs span -1.5..1.5)
   blend: 0.22, // width of the fade at a painted ground's edge, in cells
+  // Hue difference from the picture's own sand (0 = same hue) where a painted pixel starts / stops counting as a
+  // coloured feature that keeps its paint. Below the first value it's plain sand and becomes desert sand.
+  key: [0.12, 0.3],
 };
 
 const SAND_NAME = /_Sand$/;
 const GROUND_NAME = /Ground$|^Village\d+_Pad\d+$/;
+// Painted decals inside a tile, on a sand-coloured background (the camps' fire pit scorch).
+const DECAL_NAME = /_AshScorch$/;
 
-/** The shared sand texture and normal map (all plain sand parts use the same file, shared by prepareTextures). */
-const sand = { map: null, normalMap: null, normalScale: new THREE.Vector2(1, 1) };
-
-/** Record the shared sand from the first plain sand part found. Call before patching any model. */
-export function findSharedSand(roots) {
-  if (sand.map) return;
-  for (const root of roots) {
-    root.traverse((o) => {
-      if (sand.map || !o.isMesh) return;
-      const m = [o.material].flat().find((x) => SAND_NAME.test(x?.name ?? '') && x.map);
-      if (!m) return;
-      sand.map = m.map;
-      sand.normalMap = m.normalMap ?? null;
-      if (m.normalScale) sand.normalScale.copy(m.normalScale);
-    });
-    if (sand.map) return;
+let sandMap = null;
+/** The desert sand texture, loaded once and shared by the board plane and every tile. */
+export function sandTexture() {
+  if (!sandMap) {
+    sandMap = new THREE.TextureLoader().load(SAND.url);
+    sandMap.colorSpace = THREE.SRGBColorSpace;
+    sandMap.wrapS = sandMap.wrapT = THREE.RepeatWrapping;
+    sandMap.anisotropy = 8;
   }
+  return sandMap;
+}
+
+/** Turn a material into the desert sand: same texture, tint and finish, at world-space UVs. */
+export function useDesertSand(material) {
+  material.map = sandTexture();
+  material.normalMap = null;
+  material.color.set(SAND.tint);
+  material.roughness = SAND.roughness;
+  material.metalness = 0;
+  patch(material, { mode: 'sand' });
+  return material;
+}
+
+/**
+ * A painted ground's own sand colour, in linear RGB (the space the shader works in): the per-channel median of a
+ * 64 × 64 copy. Sand covers most of every painted ground, so features (water, tar) don't pull it off.
+ */
+const paintSands = new WeakMap(); // texture -> THREE.Vector3
+function paintSand(texture) {
+  if (paintSands.has(texture)) return paintSands.get(texture);
+  const fallback = new THREE.Vector3(0.5, 0.4, 0.25);
+  const img = texture?.image;
+  if (!img?.width) return fallback;
+  const n = 64;
+  const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+  ctx.canvas.width = ctx.canvas.height = n;
+  ctx.drawImage(img, 0, 0, n, n);
+  const px = ctx.getImageData(0, 0, n, n).data;
+  const median = [0, 1, 2].map((c) => {
+    const values = [];
+    for (let i = c; i < px.length; i += 4) values.push(px[i]);
+    values.sort((a, b) => a - b);
+    return values[values.length >> 1] / 255;
+  });
+  const toLinear = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  const sand = new THREE.Vector3(...median.map((v) => Math.max(toLinear(v), 1e-3)));
+  paintSands.set(texture, sand);
+  return sand;
 }
 
 const patches = new WeakMap(); // material -> { mode, mask, grid }
@@ -45,16 +89,17 @@ export function copySeam(from, to) {
   return to;
 }
 
+// SEAM_GROUND: a painted ground (or decal) keyed to the desert sand. SEAM_EDGE: it also fades out at the tile edge.
 const VERT_PARS = /* glsl */ `
 varying vec2 vSeamWorld;
-#ifdef SEAM_GROUND
+#ifdef SEAM_EDGE
   attribute vec2 seamCell;
   varying vec2 vSeamCell;
 #endif
 `;
 const VERT_MAIN = /* glsl */ `
 vSeamWorld = ( modelMatrix * vec4( transformed, 1.0 ) ).xz;
-#ifdef SEAM_GROUND
+#ifdef SEAM_EDGE
   vSeamCell = seamCell;
 #endif
 `;
@@ -63,10 +108,14 @@ const FRAG_PARS = /* glsl */ `
 varying vec2 vSeamWorld;
 uniform float uSeamRepeat;
 #ifdef SEAM_GROUND
-  varying vec2 vSeamCell;
   uniform sampler2D uSeamSand;
-  uniform sampler2D uSeamSandN;
-  uniform vec2 uSeamSandNScale;
+  uniform vec3 uSeamTint;
+  uniform float uSeamRoughness;
+  uniform vec3 uSeamPaintSand;
+  uniform vec2 uSeamKey;
+#endif
+#ifdef SEAM_EDGE
+  varying vec2 vSeamCell;
   uniform vec2 uSeamGrid;
   uniform int uSeamMask;
   uniform float uSeamBlend;
@@ -96,7 +145,7 @@ uniform float uSeamRepeat;
 
 const SEAM_UV = /* glsl */ `vec2 seamUv = vec2( vSeamWorld.x, - vSeamWorld.y ) * uSeamRepeat;`;
 
-// Plain sand: the tile's own map and normal map, at world-space UVs.
+// Desert sand: the map at world-space UVs.
 const SAND_MAP = /* glsl */ `
 ${SEAM_UV}
 #ifdef USE_MAP
@@ -104,39 +153,60 @@ ${SEAM_UV}
 #endif
 `;
 
-// Painted ground: its own picture inside, the shared sand at the edge.
+/*
+ * Painted ground. Its plain sand becomes the desert sand, keeping the painted light and shade (ripples, tracks,
+ * cracks, stains) as a ratio to the picture's own sand colour (uSeamPaintSand). Coloured features (water, grass,
+ * toxic sludge) differ in hue, not just brightness, and keep their painted colour. At the outer edge everything
+ * fades to the plain desert sand. The painted grounds' own colour is white, so the desert tint matches the plane.
+ */
 const GROUND_MAP = /* glsl */ `
 ${SEAM_UV}
-float seamK = seamEdge();
+#ifdef SEAM_EDGE
+  float seamK = seamEdge();
+#else
+  float seamK = 1.0;
+#endif
+float seamOwn = seamK;
 #ifdef USE_MAP
   vec4 seamPaint = texture2D( map, vMapUv );
-  diffuseColor *= mix( texture2D( uSeamSand, seamUv ), seamPaint, seamK );
+  vec3 seamDesert = texture2D( uSeamSand, seamUv ).rgb * uSeamTint;
+  vec3 seamRatio = clamp( seamPaint.rgb / uSeamPaintSand, 0.0, 3.0 );
+  float seamLum = max( ( seamRatio.r + seamRatio.g + seamRatio.b ) / 3.0, 1e-3 );
+  float seamFeature = smoothstep( uSeamKey.x, uSeamKey.y, length( seamRatio / seamLum - 1.0 ) );
+  vec3 seamKeyed = mix( seamDesert * seamRatio, seamPaint.rgb, seamFeature );
+  diffuseColor.rgb *= mix( seamDesert, seamKeyed, seamK );
+  diffuseColor.a *= seamPaint.a;
+  seamOwn = seamK * seamFeature; // how much of the painted ground's own finish is left
 #endif
 `;
 
+// The desert sand has its own roughness: plain sand takes it, the painted features keep theirs.
+const GROUND_ROUGHNESS = /* glsl */ `
+roughnessFactor = mix( uSeamRoughness, roughnessFactor, seamOwn );
+`;
 const GROUND_NORMAL = /* glsl */ `
 #ifdef USE_NORMALMAP_TANGENTSPACE
   vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;
   mapN.xy *= normalScale;
-  vec3 seamSandN = texture2D( uSeamSandN, seamUv ).xyz * 2.0 - 1.0;
-  seamSandN.xy *= uSeamSandNScale;
-  mat3 seamTbn = getTangentFrame( - vViewPosition, normal, seamUv );
-  normal = normalize( mix( seamTbn * seamSandN, tbn * mapN, seamK ) );
+  normal = normalize( mix( normal, tbn * mapN, seamK ) );
 #endif
 `;
 
+/** mode: 'sand' (plain desert sand), 'ground' (painted ground, fades out at the tile edge), 'decal' (painted, no fade). */
 function patch(material, { mode, mask = 1, grid = [1, 1] }) {
   patches.set(material, { mode, mask, grid });
-  const ground = mode === 'ground';
-  material.defines = { ...material.defines, ...(ground ? { SEAM_GROUND: '' } : {}) };
+  const ground = mode !== 'sand';
+  material.defines = { ...material.defines, ...(ground ? { SEAM_GROUND: '' } : {}), ...(mode === 'ground' ? { SEAM_EDGE: '' } : {}) };
   material.customProgramCacheKey = () => `seam-${mode}`;
   material.onBeforeCompile = (shader) => {
-    shader.uniforms.uSeamRepeat = { value: SEAM.repeat };
+    shader.uniforms.uSeamRepeat = { value: 1 / SAND.tile };
     if (ground) {
       Object.assign(shader.uniforms, {
-        uSeamSand: { value: sand.map },
-        uSeamSandN: { value: sand.normalMap ?? material.normalMap },
-        uSeamSandNScale: { value: sand.normalScale },
+        uSeamSand: { value: sandTexture() },
+        uSeamTint: { value: new THREE.Color(SAND.tint) },
+        uSeamRoughness: { value: SAND.roughness },
+        uSeamPaintSand: { value: paintSand(material.map) },
+        uSeamKey: { value: new THREE.Vector2(...SEAM.key) },
         uSeamGrid: { value: new THREE.Vector2(...grid) },
         uSeamMask: { value: mask },
         uSeamBlend: { value: SEAM.blend },
@@ -149,15 +219,10 @@ function patch(material, { mode, mask = 1, grid = [1, 1] }) {
     if (ground) {
       frag = frag
         .replace('#include <map_fragment>', GROUND_MAP)
+        .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\n${GROUND_ROUGHNESS}`)
         .replace('#include <normal_fragment_maps>', `${GROUND_NORMAL}\n#ifndef USE_NORMALMAP_TANGENTSPACE\n#include <normal_fragment_maps>\n#endif`);
     } else {
-      // The tangent frame and the normal map also follow the world-space UVs.
-      const begin = THREE.ShaderChunk.normal_fragment_begin.replace('vNormalMapUv', 'seamUv');
-      const maps = THREE.ShaderChunk.normal_fragment_maps.replace('texture2D( normalMap, vNormalMapUv )', 'texture2D( normalMap, seamUv )');
-      frag = frag
-        .replace('#include <map_fragment>', SAND_MAP)
-        .replace('#include <normal_fragment_begin>', begin)
-        .replace('#include <normal_fragment_maps>', maps);
+      frag = frag.replace('#include <map_fragment>', SAND_MAP);
     }
     shader.fragmentShader = frag;
   };
@@ -170,7 +235,6 @@ function patch(material, { mode, mask = 1, grid = [1, 1] }) {
  * Returns the number of materials patched.
  */
 export function makeSeamless(root, footprint, grid = [1, 1]) {
-  if (!sand.map) return 0;
   root.updateMatrixWorld(true);
   const [w, h] = grid;
   const size = footprint.getSize(new THREE.Vector3());
@@ -181,7 +245,12 @@ export function makeSeamless(root, footprint, grid = [1, 1]) {
     if (!o.isMesh || Array.isArray(o.material) || !o.material.map || done.has(o.material)) return;
     const name = o.material.name ?? '';
     if (SAND_NAME.test(name)) {
-      patch(o.material, { mode: 'sand' });
+      useDesertSand(o.material);
+      dropBorderWalls(o, toCell);
+      done.add(o.material);
+    } else if (DECAL_NAME.test(name)) {
+      paintSand(o.material.map);
+      patch(o.material, { mode: 'decal' });
       done.add(o.material);
     } else if (GROUND_NAME.test(name)) grounds.push(o);
   });
@@ -191,6 +260,7 @@ export function makeSeamless(root, footprint, grid = [1, 1]) {
   let mask = 0;
   const tris = [];
   for (const o of grounds) {
+    dropBorderWalls(o, toCell);
     const pos = o.geometry.attributes.position;
     const cells = new Float32Array(pos.count * 2);
     const xz = [];
@@ -213,10 +283,39 @@ export function makeSeamless(root, footprint, grid = [1, 1]) {
   if (w * h === 1) mask = 1;
   for (const o of grounds) {
     if (done.has(o.material)) continue;
+    paintSand(o.material.map); // measured now, while loading, rather than on the first frame it's drawn
     patch(o.material, { mode: 'ground', mask, grid });
     done.add(o.material);
   }
   return done.size;
+}
+
+/**
+ * The ground parts are thin slabs. Where a tile borders open desert, the slab's side wall shows from the board
+ * camera as a dark line along the tile's edge. Remove the walls standing on a cell border (every corner on the
+ * same cell line); the desert sits just below, so nothing opens up behind them.
+ */
+function dropBorderWalls(o, toCell) {
+  const g = o.geometry;
+  const pos = g.attributes.position;
+  const v = new THREE.Vector3();
+  const cells = [];
+  for (let i = 0; i < pos.count; i++) cells.push(toCell(v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld)));
+  const eps = 0.01;
+  const onLine = (a, b, c, axis) => {
+    const k = cells[a][axis];
+    return Math.abs(k - Math.round(k)) < eps && Math.abs(cells[b][axis] - k) < eps && Math.abs(cells[c][axis] - k) < eps;
+  };
+  const index = g.index ? Array.from(g.index.array) : Array.from({ length: pos.count }, (_, i) => i);
+  const kept = [];
+  for (let i = 0; i + 2 < index.length; i += 3) {
+    const [a, b, c] = [index[i], index[i + 1], index[i + 2]];
+    if (onLine(a, b, c, 0) || onLine(a, b, c, 1)) continue;
+    kept.push(a, b, c);
+  }
+  if (kept.length === index.length) return;
+  g.setIndex(kept);
+  g.clearGroups();
 }
 
 function inTriangle(px, pz, [ax, az, bx, bz, cx, cz]) {

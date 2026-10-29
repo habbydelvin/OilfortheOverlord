@@ -9,7 +9,7 @@
  */
 import * as THREE from 'three';
 import { clone as cloneModel } from 'three/addons/utils/SkeletonUtils.js';
-import { loadBlockouts, loadBundle } from '/src/models.js';
+import { loadBlockouts, loadBundle, SHIPS, SHIP_SCALE } from '/src/models.js';
 
 const WIDTH = 740; // 1.48 : 1, the picture slot; sharp on the largest cards at 2× pixel density
 const HEIGHT = 500;
@@ -145,8 +145,20 @@ function frame(box, elevation = ELEVATION) {
   return center;
 }
 
-function snapshot(source, view = {}) {
+/** The model's ship (flown by traffic.js in the game), parked on its home pad as it rests between trips. */
+function parkShip(model, key) {
+  const spec = SHIPS.get(key);
+  if (!spec) return;
+  const ship = new THREE.Mesh(spec.geometry, spec.material);
+  ship.matrixAutoUpdate = false;
+  ship.matrix.copy(spec.rel).multiply(new THREE.Matrix4().makeScale(SHIP_SCALE, SHIP_SCALE, SHIP_SCALE));
+  ship.castShadow = spec.castShadow;
+  model.add(ship);
+}
+
+function snapshot(source, view = {}, key = '') {
   const model = cloneModel(source);
+  parkShip(model, key);
   // Freeze the animation a moment into its loop.
   if (model.animations.length) {
     const mixer = new THREE.AnimationMixer(model);
@@ -183,7 +195,7 @@ for (const [key, modelKey] of Object.entries(SNAPSHOT_MODELS)) {
     console.warn(`No model for ${key} (${modelKey})`);
     continue;
   }
-  results[key] = snapshot(source, VIEWS[key]);
+  results[key] = snapshot(source, VIEWS[key], modelKey);
   const fig = document.createElement('figure');
   fig.innerHTML = `<img src="${results[key]}" alt="${key}"><figcaption>${key}.webp</figcaption>`;
   grid.appendChild(fig);

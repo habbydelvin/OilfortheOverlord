@@ -3,7 +3,8 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { recolourSalt } from './saltRecolour.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { findSharedSand, makeSeamless, copySeam } from './seamlessGround.js';
+import { makeSeamless, copySeam } from './seamlessGround.js';
+import { GROUND_Y } from './scene.js';
 
 /**
  * Blockout tiles. Maya exports these in centimetres with the mesh pivot
@@ -346,12 +347,12 @@ function trackBytes(file, e) {
 
 /** Loads every blockout once. Rejects only if the atlas or a file is missing. */
 /**
- * The board's sand plane (scene.js, GROUND.y = -0.05) is see-through so it can fade out at the edges, which puts
+ * The board's sand plane (scene.js, GROUND_Y) is see-through so it can fade out at the edges, which puts
  * it in three.js's transparent pass, drawn after every solid object. Anything sunk below it (the Toxic Crater's
  * pit and liquid) would be painted over with sand. Those parts move to the transparent pass too, still fully
  * opaque and writing depth, and draw right after the plane (renderOrder -0.5: the plane is -1, the rest 0+).
  */
-const BOARD_GROUND_Y = -0.05;
+const BOARD_GROUND_Y = GROUND_Y;
 function drawAfterGround(root) {
   root.updateMatrixWorld(true);
   const box = new THREE.Box3();
@@ -904,6 +905,7 @@ async function loadGlb(spec, track) {
   const raw = gltf.scene.children.length === 1 ? gltf.scene.children[0] : gltf.scene;
   raw.removeFromParent();
   const rename = restoreGlbNodes(raw);
+  removeTrim(raw); // the dark frame around each tile's ground (tools/convert-models.mjs keeps it in the files)
   const sources = await glbMaterialSources(raw, track);
   toStandard(raw, (m) => sources.get(m) ?? m);
   raw.animations = gltf.animations.map((clip) => {
@@ -1192,6 +1194,44 @@ function batchAnimatedParts(root) {
   return saved;
 }
 
+/** Every ship is drawn a little bigger than modelled, so it reads at game zoom. */
+export const SHIP_SCALE = 1.35;
+
+/**
+ * Free-flying ships (traffic.js): the Settlement's, Hydro-farm's and Refinery's ship leave their baked loop and
+ * fly between tiles instead. Per model key: the ship's geometry and materials, and its parked pose on the home
+ * pad relative to the model root (rel, from the first key of its animation). The Capital's sky traffic keeps its
+ * own loop and is only scaled up.
+ */
+export const SHIPS = new Map();
+
+function extractShip(root, key) {
+  const animated = animatedNames(root);
+  if (key === 'capital') {
+    root.traverse((o) => o.isMesh && /TrafficShip/.test(o.name) && o.scale.multiplyScalar(SHIP_SCALE)); // no scale keys
+    return;
+  }
+  const node = [...animated].map((n) => root.getObjectByName(n)).find((o) => o?.isMesh && /_Ship$/.test(o.name));
+  if (!node) return;
+  for (const clip of root.animations) {
+    for (const t of clip.tracks) {
+      const { nodeName, propertyName } = THREE.PropertyBinding.parseTrackName(t.name);
+      if (nodeName !== node.name) continue;
+      const v = Array.from(t.values.slice(0, t.getValueSize()));
+      if (propertyName === 'position') node.position.fromArray(v);
+      else if (propertyName === 'quaternion') node.quaternion.fromArray(v);
+      else if (propertyName === 'scale') node.scale.fromArray(v);
+    }
+  }
+  root.updateMatrixWorld(true);
+  const rel = new THREE.Matrix4().copy(root.matrixWorld).invert().multiply(node.matrixWorld);
+  SHIPS.set(key, { geometry: node.geometry, material: node.material, castShadow: node.castShadow, receiveShadow: node.receiveShadow, rel });
+  root.animations = root.animations
+    .map((clip) => new THREE.AnimationClip(clip.name, clip.duration, clip.tracks.filter((t) => THREE.PropertyBinding.parseTrackName(t.name).nodeName !== node.name)))
+    .filter((clip) => clip.tracks.length);
+  node.removeFromParent();
+}
+
 function finishModel(root, spec) {
   root.traverse((o) => {
     if (!o.isMesh) return;
@@ -1212,10 +1252,12 @@ function finishModel(root, spec) {
     root.name = `waste-${spec.shape}`;
   } else {
     fitToCell(root, { ground: 0, ...spec.finished });
-    const sunk = drawAfterGround(root);
-    if (sunk) console.info(`[models] ${spec.key}: ${sunk} below-ground parts drawn after the sand plane`);
     root.name = spec.key;
   }
+  // Pits sunk below the board's sand plane (the crater, the Wasteland worm holes) must still show.
+  const sunk = drawAfterGround(root);
+  if (sunk) console.info(`[models] ${spec.key}: ${sunk} below-ground parts drawn after the sand plane`);
+  if (!spec.piece) extractShip(root, spec.key);
   return root;
 }
 
@@ -1223,7 +1265,6 @@ function finishModel(root, spec) {
 export async function loadBundle(bundle, { track = false, parallel = false } = {}) {
   const keys = BUNDLES[bundle];
   const roots = await prepareFromFbx(keys, { track, parallel });
-  findSharedSand(roots.values());
   for (const key of keys) {
     await breathe();
     finishModel(roots.get(key), modelSpec(key));

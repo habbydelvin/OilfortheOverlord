@@ -7,6 +7,8 @@
 import * as THREE from 'three';
 import { clone as cloneModel } from 'three/addons/utils/SkeletonUtils.js';
 import { loadBlockouts, loadBundle } from '/src/models.js';
+import { useDesertSand } from '/src/seamlessGround.js';
+import { GROUND_Y, GROUND_DEPTH } from '/src/scene.js';
 
 const q = new URLSearchParams(location.search);
 const W = Number(q.get('w') ?? 1600);
@@ -32,6 +34,17 @@ sun.shadow.bias = -0.0005;
 sun.shadow.normalBias = 0.02;
 Object.assign(sun.shadow.camera, { near: 0.5, far: 60, left: -12, right: 12, top: 12, bottom: -12 });
 scene.add(sun, sun.target);
+
+// The board's desert plane (scene.js), so tile-to-desert edges can be checked too. ?nodesert hides it.
+if (!q.has('nodesert')) {
+  // Drawn like the game's (scene.js): see-through pass, first, no depth writes, pushed back in depth.
+  const material = useDesertSand(new THREE.MeshStandardMaterial({ transparent: true, depthWrite: false, ...GROUND_DEPTH }));
+  const desert = new THREE.Mesh(new THREE.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), material);
+  desert.position.y = GROUND_Y;
+  desert.renderOrder = -1;
+  desert.receiveShadow = true;
+  scene.add(desert);
+}
 
 const status = document.getElementById('status');
 const dump = document.getElementById('dump');
@@ -96,7 +109,8 @@ for (const key of keys) {
     if (!o.isMesh) return;
     const b = new THREE.Box3().setFromObject(o);
     const edge = Math.max(-b.min.x, b.max.x, -b.min.z, b.max.z);
-    if (edge < 0.48) return;
+    // ?low: every part lying on the ground (top below 0.02), instead of the ones reaching the cell border.
+    if (q.has('low') ? b.max.y > 0.02 : edge < 0.48) return;
     const uv = o.geometry.attributes.uv;
     let uvr = '';
     if (uv) {
