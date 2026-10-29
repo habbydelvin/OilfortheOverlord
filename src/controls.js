@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { WORLD_HALF } from './grid.js';
 
 const damp = (k, dt) => 1 - Math.exp(-k * dt);
 const DRAG_THRESHOLD = 5; // px before a press becomes a pan instead of a click
@@ -19,7 +20,7 @@ export class CameraRig {
   yaw = 0;
   goalYaw = 0;
   pitch = THREE.MathUtils.degToRad(58);
-  bounds = 60;
+  bounds = WORLD_HALF; // the look-at point stays inside the world
   keys = new Set();
   drag = null;
   onClick = null;

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PLOT, key, plotOf, plotCenter } from './grid.js';
+import { PLOT, WORLD_HALF, key, plotOf, plotCenter } from './grid.js';
 
 /** What a mystery site can turn out to be, with relative odds. Tune freely. */
 export const MYSTERY_POOL = [
@@ -10,12 +10,22 @@ export const MYSTERY_POOL = [
   ['ruins', 4], // Pre-war Ruins: build next to them to clear and refill your hand
 ];
 
-/** Sites are scattered over plots up to this many plots from the start (Chebyshev distance). */
-const MAX_RING = 4;
-/** Total number of sites per game. */
-const SITE_COUNT = 10;
+/**
+ * Sites per distance band, filled from the inside out. A band covers plots whose Chebyshev distance
+ * (in plots) from the start lies in [from, to]; each game rolls a random count in [min, max] for it.
+ * Ring 19 is the last whose cells (up to ±58) fit inside the world (WORLD_HALF = 60, grid.js).
+ */
+const LAST_RING = Math.floor((WORLD_HALF - 1) / PLOT); // farthest plot ring whose cells all stay in the world
+const SITE_BANDS = [
+  { from: 1, to: 1, min: 1, max: 1 }, // one close to the start so the first pieces find something
+  { from: 2, to: 4, min: 7, max: 11 },
+  { from: 5, to: 9, min: 14, max: 22 },
+  { from: 10, to: 14, min: 18, max: 28 },
+  { from: 15, to: LAST_RING, min: 20, max: 32 },
+];
 /** Two site plots must be at least this many plots apart (2 = never touching, even diagonally). */
 const MIN_PLOT_GAP = 2;
+const randInt = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
 
 function pickReveal() {
   let r = Math.random() * MYSTERY_POOL.reduce((s, [, w]) => s + w, 0);
@@ -70,28 +80,29 @@ export class Mysteries {
   }
 
   /**
-   * Scatter fresh sites around the starting plot (never in it): at most one per plot, and
-   * site plots never touch each other, so they're spread across the map.
+   * Scatter fresh sites over the whole world (never in the starting plot): a random number per
+   * distance band (SITE_BANDS), at most one per plot, and site plots never touch each other.
    */
   reset() {
     this.group.clear();
     this.sites.clear();
     const ring = (px, pz) => Math.max(Math.abs(px), Math.abs(pz));
-    const plots = [];
-    for (let px = -MAX_RING; px <= MAX_RING; px++)
-      for (let pz = -MAX_RING; pz <= MAX_RING; pz++) if (ring(px, pz) > 0) plots.push([px, pz]);
-    shuffle(plots);
-    // One site close to the start so the first few pieces can find something.
-    plots.sort((a, b) => (ring(...a) === 1 ? 0 : 1) - (ring(...b) === 1 ? 0 : 1));
     const chosen = [];
-    for (const [px, pz] of plots) {
-      if (chosen.length >= SITE_COUNT) break;
-      if (chosen.length && ring(px, pz) === 1) continue; // only one in the first ring
-      if (chosen.some(([cx, cz]) => ring(px - cx, pz - cz) < MIN_PLOT_GAP)) continue;
-      chosen.push([px, pz]);
-      const x = plotCenter(px) + Math.floor(Math.random() * PLOT) - 1;
-      const z = plotCenter(pz) + Math.floor(Math.random() * PLOT) - 1;
-      this.#add(x, z);
+    for (const band of SITE_BANDS) {
+      const plots = [];
+      for (let px = -band.to; px <= band.to; px++)
+        for (let pz = -band.to; pz <= band.to; pz++) if (ring(px, pz) >= band.from) plots.push([px, pz]);
+      shuffle(plots);
+      let left = randInt(band.min, band.max);
+      for (const [px, pz] of plots) {
+        if (!left) break;
+        if (chosen.some(([cx, cz]) => ring(px - cx, pz - cz) < MIN_PLOT_GAP)) continue;
+        chosen.push([px, pz]);
+        left--;
+        const x = plotCenter(px) + Math.floor(Math.random() * PLOT) - 1;
+        const z = plotCenter(pz) + Math.floor(Math.random() * PLOT) - 1;
+        this.#add(x, z);
+      }
     }
   }
 

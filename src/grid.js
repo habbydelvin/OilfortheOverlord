@@ -13,6 +13,9 @@ export const DIRS = [
  * offers neighbouring plots to unlock.
  */
 export const PLOT = 3;
+/** Edge of the world: no cell past ±WORLD_HALF on x or z, and the camera stops there too. */
+export const WORLD_HALF = 60;
+export const inWorld = (x, z) => Math.abs(x) <= WORLD_HALF && Math.abs(z) <= WORLD_HALF;
 export const plotOf = (v) => Math.floor((v + 1) / PLOT);
 export const plotCenter = (p) => p * PLOT;
 
@@ -43,9 +46,9 @@ export class Grid {
     return this.cells.size;
   }
 
-  /** Cells a piece may use right now: territory cells in expansion mode, anywhere otherwise. */
+  /** Cells a piece may use right now: inside the world, and inside the territory in expansion mode. */
   allowed(x, z) {
-    return !this.expansionMode || this.inTerritory(x, z);
+    return inWorld(x, z) && (!this.expansionMode || this.inTerritory(x, z));
   }
 
   /** Empty cells you can build on: inside the territory (expansion mode) or next to your land. */
@@ -124,7 +127,7 @@ export class Grid {
     const out = new Set();
     for (const { x, z } of this.cells.values()) {
       for (const [dx, dz] of DIRS) {
-        if (!this.has(x + dx, z + dz)) out.add(key(x + dx, z + dz));
+        if (!this.has(x + dx, z + dz) && inWorld(x + dx, z + dz)) out.add(key(x + dx, z + dz));
       }
     }
     return out;

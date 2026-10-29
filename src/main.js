@@ -3,7 +3,8 @@ import './theme.css';
 import './themeShine.js';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
-import { initMusic } from './music.js';
+import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
+import { bindCardHover, boom, buzz, confirm, coin, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning } from './sfx.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, key as plotKey } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
@@ -34,7 +35,16 @@ const SEED_TERRAIN = 'capital';
 
 // ---------- setup ----------
 const { renderer, scene, camera, sun, followTarget } = createScene(document.getElementById('app'));
-initMusic(); // background track: loads now, starts (fading in) on the first click or key press
+initMusic(); // background track downloads now; it starts with the game, once sound is allowed
+onMusicVolume((volume) => {
+  audioCfg.music = volume;
+  const input = document.querySelector('#debug input[data-s="audio"][data-k="music"]');
+  if (!input || document.activeElement === input) return;
+  input.value = String(volume);
+  const val = document.querySelector('#debug [data-v="audio.music"]');
+  if (val) val.textContent = String(volume);
+  input.closest('.dbg-row')?.classList.toggle('changed', volume !== AUDIO_DEFAULTS.music);
+});
 const perf = new Perf(renderer); // '-' toggles the overlay
 const rig = new CameraRig(camera, renderer.domElement);
 const grid = new Grid();
@@ -66,7 +76,31 @@ const iconCfg = loadIconConfig(); // Game Debug → Map icons
 const zoomIcons = new ZoomIcons(document.getElementById('mapIcons'), camera, rig, iconCfg);
 const payoutCfg = loadPayoutConfig();
 const payout = new Payout(camera, document.getElementById('floaters'), payoutCfg);
+const audioCfg = { music: getMusicVolume(), sfx: getSfxVolume() };
+const AUDIO_DEFAULTS = { music: MUSIC_VOLUME_DEFAULT, sfx: SFX_VOLUME_DEFAULT };
+const AUDIO_PARAMS = [
+  { group: 'Audio' },
+  { key: 'music', label: 'Music', min: 0, max: MUSIC_VOLUME_MAX, step: 1, hint: '100 is full level, 200 is twice as loud. Same control as the corner slider.' },
+  { key: 'sfx', label: 'SFX', min: 0, max: SFX_VOLUME_MAX, step: 1, hint: '100 is the old quiet level. 299 is the default.' },
+];
+bindCardHover(document.getElementById('shopCards'));
+bindCardHover(document.getElementById('pickCards'));
+
 const debug = createDebugPanel(document.getElementById('debug'), document.getElementById('btnDebug'), payoutCfg, {
+  audio: {
+    params: AUDIO_PARAMS,
+    defaults: AUDIO_DEFAULTS,
+    cfg: audioCfg,
+    save: () => {},
+    clear: () => {
+      localStorage.removeItem('oto.music');
+      localStorage.removeItem('oto.sfx');
+    },
+    onChange: (p) => {
+      if (!p || p.key === 'music') setMusicVolume(audioCfg.music);
+      if (!p || p.key === 'sfx') setSfxVolume(audioCfg.sfx);
+    },
+  },
   onPlay: () => previewPayout(),
   expansionMode: () => grid.expansionMode,
   onExpansionMode: (on) => setExpansionMode(on),
@@ -450,6 +484,7 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
   await missiles.fire(targets, {
     onImpact: ({ x, z }) => {
       if (run !== runId) return;
+      boom();
       dust.burst(x, z, 1.8);
       fog.disturb(x, z);
       shake.amount = Math.min(shake.amount + missileCfg.shake, 1.2);
@@ -638,6 +673,7 @@ function updateDropAnims(dt) {
     const u = a.t - DROP.fall; // time since impact
     if (!a.landed) {
       a.landed = true;
+      thud(Boolean(a.cells));
       const { x, z } = a.mesh.position;
       // A whole Wasteland piece kicks up dust under each of its cells.
       if (a.cells) for (const [cx, cz] of a.cells) dust.burst(cx, cz, 0.8);
@@ -674,12 +710,15 @@ function applyShake(dt) {
 
 // ---------- HUD ----------
 let toastTimer = 0;
-function toast(msg, kind = '', ms = 1600) {
+function toast(msg, kind = '', ms = 1600, sound = true) {
   const el = $('toast');
   el.textContent = msg;
   el.className = `show ${kind}`;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => (el.className = kind), ms);
+  if (!sound) return;
+  if (kind === 'bad') deny();
+  else if (kind === 'good') tick(true);
 }
 
 function pop(el) {
@@ -988,6 +1027,13 @@ function showOil(amount, bump = false) {
   }
 }
 
+/** One blip per hopping tile: oil, food, or a quiet thud when the tile only marks unrest or idle. */
+function chimeTile(tile) {
+  if (tile.oil) coin();
+  if (tile.food) food();
+  if (!tile.oil && !tile.food) thud();
+}
+
 function runPayout(e, onDone) {
   const tiles = e.perCell
     .filter((p) => p.food || p.idle || p.oil || EFFECT_TILES.has(p.terrain))
@@ -998,9 +1044,11 @@ function runPayout(e, onDone) {
   let shown = turn.stockpile;
   let store = turn.food;
   document.body.classList.add('paying');
+  confirm();
   payout.start(
     tiles,
     (tile) => {
+      chimeTile(tile);
       if (tile.oil) {
         shown += tile.oil;
         showOil(shown, true);
@@ -1204,6 +1252,7 @@ function gameOver(reason) {
   $('gameoverStats').textContent =
     `Survived to ${SEASONS[turn.season]}, round ${turn.round} · ${turn.total} barrels delivered in total`;
   $('gameover').classList.remove('hidden');
+  doom();
 }
 
 function settleTurn(e) {
@@ -1770,6 +1819,7 @@ function buy(k) {
   if (!BASIC_SHOP.has(k)) turn.unlocked.add(k); // action cards too: once bought, they can be drawn at random
   turn.pinned.push(k);
   hand.addPinned(k);
+  coin();
   renderShop();
 }
 
@@ -1782,6 +1832,7 @@ $('btnShopReroll').addEventListener('click', () => {
   if (turn.coins < cost) return toast('Not enough excess oil to reroll', 'bad');
   turn.coins -= cost;
   shopRerolls++;
+  shuffle();
   stockShop();
   renderShop(true);
 });
@@ -1844,6 +1895,7 @@ $('pickCards').addEventListener('click', (e) => {
     turn.pinned.push(k);
     if (holdingPurchases) hand.addPinned(k);
   }
+  coin();
   toast(`${cardDef(k).name} unlocked${inHand ? ' and added to your next hand' : ''}`, 'good', 2600);
   closeCardPick();
 });
@@ -1952,14 +2004,19 @@ function tryPlace() {
   const result = placement.validate(cells);
   if (!result.ok) {
     placement.reject();
-    toast(result.reason, 'bad');
+    buzz();
+    toast(result.reason, 'bad', 1600, false);
     return;
   }
   if (ACTIONS[piece.terrain]) {
     hand.consume();
     if (piece.terrain === 'spark') spark(cells);
     else if (piece.terrain === 'militia') militia(...cells[0]);
-    else demolish(...cells[0]);
+    else if (piece.terrain === 'demolish2') {
+      const targets = placement.demolishable(cells);
+      targets.forEach(([x, z]) => demolish(x, z, true));
+      toast(`Demolished ${targets.length} tile${targets.length === 1 ? '' : 's'}`);
+    } else demolish(...cells[0]);
     return;
   }
   const idleBefore = economyNow().idle;
@@ -2007,6 +2064,7 @@ function spark(cells) {
   payout.start(
     hit,
     (tile) => {
+      chimeTile(tile);
       if (tile.oil) {
         turn.stockpile += tile.oil;
         turn.total += tile.oil;
@@ -2025,8 +2083,8 @@ function spark(cells) {
   );
 }
 
-/** Demolish: the tile is removed; a building on Pre-war Ruins leaves the ruins behind. */
-function demolish(x, z) {
+/** Demolish: the tile is removed; a building on Pre-war Ruins leaves the ruins behind. `quiet`: no toast. */
+function demolish(x, z, quiet = false) {
   const cell = grid.get(x, z);
   const name = TERRAINS[cell.terrain].name;
   removeMesh(cell.mesh);
@@ -2034,7 +2092,7 @@ function demolish(x, z) {
   if (cell.onRuins && cell.terrain !== 'ruins') addTile(x, z, 'ruins');
   frontier.rebuild(grid);
   placement.cell = null; // force ghost revalidation
-  toast(`Demolished the ${name}`);
+  if (!quiet) toast(`Demolished the ${name}`);
   updateHUD();
 }
 
@@ -2091,6 +2149,7 @@ $('btnReroll').addEventListener('click', () => {
   if (turn.freeRerolls > 0) {
     // Target reward: free, and doesn't raise the price of the next paid reroll.
     turn.freeRerolls--;
+    shuffle();
     hand.reroll();
     updateHUD();
     toast(`Hand rerolled for free (${turn.freeRerolls} free reroll${turn.freeRerolls === 1 ? '' : 's'} left)`, 'good');
@@ -2101,6 +2160,7 @@ $('btnReroll').addEventListener('click', () => {
     toast(`Not enough oil to reroll (costs ${cost})`, 'bad');
     return;
   }
+  shuffle();
   hand.reroll();
   turn.rerolls++;
   turn.stockpile -= cost;
@@ -2473,11 +2533,49 @@ factory.ready.then(() => {
   clearInterval(loadTimer);
   $('loadingFill').style.width = '100%';
   warmUpModels();
-  resetIsland();
-  last = performance.now();
-  requestAnimationFrame(frame);
-  $('loading').classList.add('done');
-  setTimeout(() => $('loading').remove(), 700);
+  // Sound has to be allowed before the opening hand is dealt, or that whoosh is skipped.
+  // When the browser blocks autoplay, the loading screen stays up for one click or key.
+  let started = false;
+  let swallowNextClick = false;
+  const go = () => {
+    const sound = unlockSfx();
+    startMusic();
+    if (started || !sound) return sound;
+    started = true;
+    resetIsland();
+    last = performance.now();
+    requestAnimationFrame(frame);
+    $('loading').classList.add('done');
+    setTimeout(() => $('loading').remove(), 700);
+    if (swallowNextClick) {
+      swallowNextClick = false;
+      // The click that unlocks sound would otherwise land on the new dialogue and skip the typewriter.
+      const swallow = (click) => {
+        click.stopPropagation();
+        click.preventDefault();
+        window.removeEventListener('click', swallow, true);
+      };
+      window.addEventListener('click', swallow, true);
+    }
+    return true;
+  };
+  if (go()) return;
+  $('loadingHint').textContent = 'Click to begin';
+  const onGesture = (e) => {
+    if (e.type === 'pointerdown') swallowNextClick = true;
+    if (go()) {
+      window.removeEventListener('pointerdown', onGesture, true);
+      window.removeEventListener('keydown', onGesture, true);
+    }
+  };
+  window.addEventListener('pointerdown', onGesture, true);
+  window.addEventListener('keydown', onGesture, true);
+  // resume() often reports "running" on a later turn, still from the same click.
+  whenSfxRunning().then(() => {
+    if (!go()) return;
+    window.removeEventListener('pointerdown', onGesture, true);
+    window.removeEventListener('keydown', onGesture, true);
+  });
 });
 
 // The Wasteland piece models (about 330 MB) load after the buildings, while the intro plays.

@@ -6,15 +6,17 @@
  * the new one fades in, on equal-power curves so the overall loudness does not dip or bump at the seam.
  * The very first copy fades in from silence.
  *
- * Browsers only allow sound after the player interacts with the page, so the music starts on the first
- * click or key press (for example, pressing Enter in the intro). The file downloads straight away, so it
- * is ready by then.
+ * The file downloads straight away. Playback starts when the game does (see startMusic), which is also
+ * when the browser is asked to allow sound. The crossfade is not booked until the context is running,
+ * so a suspended context cannot stack copies of the track.
  *
  * The bottom-left control (index.html #music) mutes it and sets the volume; both are saved in localStorage.
  */
 
 const URL = '/audio/OverlordIsWatching.mp3';
-const DEFAULT_VOLUME = 67; // slider position 0-100; the level is its square (67 -> 0.45, a background level)
+export const MUSIC_VOLUME_DEFAULT = 67; // slider position; the level is its square, capped at 2
+export const MUSIC_VOLUME_MAX = 200; // 100 = full level, 200 = twice as loud
+const DEFAULT_VOLUME = MUSIC_VOLUME_DEFAULT;
 const SETTINGS_KEY = 'oto.music';
 const FADE_IN = 4; // seconds, first start
 const CROSSFADE = 4; // seconds, loop seam
@@ -34,14 +36,14 @@ const OUT = curve(false);
 const settings = { volume: DEFAULT_VOLUME, muted: false };
 try {
   const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}');
-  if (typeof saved.volume === 'number' && saved.volume >= 0 && saved.volume <= 100) settings.volume = saved.volume;
+  if (typeof saved.volume === 'number' && saved.volume >= 0 && saved.volume <= MUSIC_VOLUME_MAX) settings.volume = saved.volume;
   if (typeof saved.muted === 'boolean') settings.muted = saved.muted;
 } catch {
   /* keep defaults */
 }
 const save = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-/** Squared, so the slider feels even to the ear (loudness is not linear in gain). */
-const level = () => (settings.muted ? 0 : (settings.volume / 100) ** 2);
+/** Squared, so the slider feels even to the ear (loudness is not linear in gain). Capped at 2. */
+const level = () => (settings.muted ? 0 : Math.min(2, (settings.volume / 100) ** 2));
 
 let ctx = null;
 let master = null;
@@ -70,20 +72,34 @@ function playCopy(when, fadeIn) {
   setTimeout(() => playCopy(next, CROSSFADE), Math.max(0, (when - ctx.currentTime) * 1000));
 }
 
-async function start() {
-  // Created inside the click / key press, so the browser lets it play.
-  ctx = new AudioContext();
-  master = ctx.createGain();
-  master.gain.value = level();
-  master.connect(ctx.destination);
-  ctx.resume();
-  try {
-    buffer = await ctx.decodeAudioData(await download);
-  } catch (error) {
-    console.warn('Background music could not be loaded.', error);
-    return;
+let playbackArmed = false;
+
+function beginPlayback() {
+  if (playbackArmed || !ctx || ctx.state !== 'running') return;
+  playbackArmed = true;
+  download
+    .then((raw) => ctx.decodeAudioData(raw))
+    .then((decoded) => {
+      buffer = decoded;
+      playCopy(ctx.currentTime + 0.05, FADE_IN);
+    })
+    .catch((error) => {
+      playbackArmed = false;
+      console.warn('Background music could not be loaded.', error);
+    });
+}
+
+/** Open the music context and start the track once the browser is allowing sound. Safe to call again. */
+export function startMusic() {
+  if (!ctx) {
+    ctx = new AudioContext();
+    master = ctx.createGain();
+    master.gain.value = level();
+    master.connect(ctx.destination);
+    ctx.addEventListener('statechange', beginPlayback);
   }
-  playCopy(ctx.currentTime + 0.05, FADE_IN);
+  if (ctx.state === 'suspended') ctx.resume();
+  beginPlayback();
 }
 
 /** Volume and mute changes glide over a fraction of a second instead of clicking. */
@@ -92,11 +108,22 @@ function applyLevel() {
   updateControl();
 }
 
+let volumeListener = null;
+/** Called with the saved slider position after the corner control or the debug panel changes it. */
+export function onMusicVolume(fn) {
+  volumeListener = fn;
+}
+
+export function getMusicVolume() {
+  return settings.volume;
+}
+
 export function setMusicVolume(volume) {
-  settings.volume = Math.max(0, Math.min(100, Math.round(volume)));
+  settings.volume = Math.max(0, Math.min(MUSIC_VOLUME_MAX, Math.round(volume)));
   settings.muted = settings.volume === 0;
   save();
   applyLevel();
+  volumeListener?.(settings.volume);
 }
 
 export function setMusicMuted(muted) {
@@ -136,7 +163,7 @@ function mountControl() {
   updateControl();
 }
 
-/** Download the track now, show the control, and start the music on the player's first click or key press. */
+/** Download the track now and show the control. Playback waits for startMusic. */
 export function initMusic() {
   if (download) return;
   mountControl();
@@ -144,13 +171,6 @@ export function initMusic() {
     if (!r.ok) throw new Error(`${URL}: ${r.status}`);
     return r.arrayBuffer();
   });
-  download.catch(() => {}); // reported when it is decoded
-  const begin = () => {
-    window.removeEventListener('pointerdown', begin, true);
-    window.removeEventListener('keydown', begin, true);
-    start();
-  };
-  window.addEventListener('pointerdown', begin, true);
-  window.addEventListener('keydown', begin, true);
+  download.catch(() => {}); // reported when playback starts
 }
 

@@ -60,7 +60,7 @@ export const EVENTS = {
     replies: [
       { say: 'They are needed at the wells!', retort: 'They are needed where I say they are needed.' },
       { say: "Take them. We'll manage.", retort: 'You will. You have no choice.' },
-      { say: 'Will they come back?', retort: 'No.' },
+      { say: 'Will they come back?', retort: 'When I am done with them. If any are left.' },
     ],
   },
   famine: {
@@ -144,7 +144,7 @@ export const EVENTS = {
     ],
     replies: [
       { say: 'Stop it! Disarm it!', retort: 'Too late, Overseer. Watch the sky.' },
-      { say: 'Did you send your men to dig there?', retort: 'I send my men wherever I please.' },
+      { say: 'Can you stop it?', retort: "I could. Consider why I don't." },
     ],
     apply: ({ showOfForce }) => showOfForce(),
   },
@@ -156,7 +156,7 @@ export const EVENTS = {
     mods: { drought: true },
     lines: ['Not a drop has fallen in months. Your pumps cough sand.', 'Your oases are mud. The farms will have to make do. As will you.'],
     replies: [
-      { say: 'The farms will wither!', retort: 'Then wither faster at the wells. Oil does not need rain.' },
+      { say: 'The farms will wither!', retort: 'Then let them wither. Oil does not need rain.' },
       { say: "We'll ration the water.", retort: 'See that you ration it away from my oil.' },
     ],
   },
@@ -166,9 +166,9 @@ export const EVENTS = {
     weight: 1,
     text: () => 'Sand buries the outskirts. Every hand this year comes with one extra Wasteland.',
     mods: { extraWaste: 1 },
-    lines: ['A wall of sand is rolling over your city.', 'Wherever it settles, the land dies. Find somewhere to put it.'],
+    lines: ['A wall of sand is rolling over your city.', 'Wherever it settles, the land dies.'],
     replies: [
-      { say: 'We will dig it out.', retort: 'Dig, then. The barrels will not fill themselves while you shovel.' },
+      { say: 'We will build around it.', retort: 'Build faster. The sand will not wait, and neither will I.' },
       { say: 'Can nothing stop it?', retort: 'I could. I will not.' },
     ],
   },
@@ -268,7 +268,7 @@ export const EVENTS = {
         label: 'Extra supplies',
         text: () => '+1 card in every hand this year',
         say: 'Bring us supplies.',
-        retort: 'More pieces for your little board. How quaint.',
+        retort: 'More scrap for your little city. How quaint.',
         mods: { handBonus: 1 },
       },
     ],

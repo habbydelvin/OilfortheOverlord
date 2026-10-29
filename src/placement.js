@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { pieceOffsets } from './pieces.js';
+import { inWorld } from './grid.js';
 import { hasBlockout } from './models.js';
 import { ACTIONS, TERRAINS, cardDef, isBuilding, isCamp, applyTileGap, fitFull } from './tiles.js';
 
@@ -54,9 +55,13 @@ export class Placement {
     const action = ACTIONS[piece.terrain];
     if (action) {
       // Action cards: no blocks, just a footprint over the cells they affect.
-      const r = action.range;
       this.offsets = [];
-      for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) this.offsets.push([dx, dz]);
+      if (action.size) {
+        for (let dx = 0; dx < action.size; dx++) for (let dz = 0; dz < action.size; dz++) this.offsets.push([dx, dz]);
+      } else {
+        const r = action.range;
+        for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) this.offsets.push([dx, dz]);
+      }
       for (const [ox, oz] of this.offsets) {
         const f = cellPart(this.footGeo, this.footMat);
         f.position.set(ox, 0.015, oz);
@@ -91,6 +96,14 @@ export class Placement {
     return this.offsets.map(([ox, oz]) => [cell[0] + ox, cell[1] + oz]);
   }
 
+  /** The cells among `cells` holding a tile that Demolish may remove (not a Capital or a camp). */
+  demolishable(cells) {
+    return cells.filter(([x, z]) => {
+      const cell = this.grid.get(x, z);
+      return cell && cell.terrain !== 'capital' && !isCamp(cell.terrain);
+    });
+  }
+
   validate(cells) {
     if (this.piece?.terrain === 'spark') {
       if (!cells.some(([x, z]) => this.grid.has(x, z))) return { ok: false, reason: 'No tiles in range' };
@@ -103,12 +116,17 @@ export class Placement {
       if (isCamp(cell.terrain)) return { ok: false, reason: 'Send in the Militia to clear bandits' };
       return { ok: true, reason: '' };
     }
+    if (this.piece?.terrain === 'demolish2') {
+      if (!this.demolishable(cells).length) return { ok: false, reason: 'Nothing to demolish here' };
+      return { ok: true, reason: '' };
+    }
     if (this.piece?.terrain === 'militia') {
       const cell = this.grid.get(...cells[0]);
       if (!cell || !isCamp(cell.terrain)) return { ok: false, reason: 'The militia only clears bandit camps' };
       return { ok: true, reason: '' };
     }
     const building = this.piece && isBuilding(this.piece.terrain);
+    if (cells.some(([x, z]) => !inWorld(x, z))) return { ok: false, reason: 'Edge of the world' };
     if (cells.some(([x, z]) => !this.grid.allowed(x, z))) return { ok: false, reason: 'Outside your territory' };
     if (!this.grid.expansionMode && this.mysteries && cells.some(([x, z]) => this.mysteries.has(x, z)))
       return { ok: false, reason: 'Build next to a ? site to uncover it' };

@@ -7,10 +7,10 @@ const decimals = (step) => (String(step).split('.')[1] ?? '').length;
  * Each tuning section edits its `cfg` in place (read live) and saves to localStorage.
  * `fog` and `gfx` are optional extra sections: { params, defaults, cfg, save, clear, onChange(param) }.
  */
-export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog, gfx, missiles, icons, scaling, onMissiles, onPerf }) {
+export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog, gfx, missiles, icons, scaling, audio, onMissiles, onPerf }) {
   const fmt = (p, v) => (p.type === 'select' || p.type === 'color' ? v : Number(v).toFixed(decimals(p.step)));
   const payout = { id: 'payout', params: PAYOUT_PARAMS, defaults: PAYOUT_DEFAULTS, cfg, save: savePayoutConfig, clear: clearPayoutConfig };
-  const sections = [gfx && { id: 'gfx', ...gfx }, missiles && { id: 'missiles', ...missiles }, payout, scaling && { id: 'scaling', ...scaling }, icons && { id: 'icons', ...icons }, fog && { id: 'fog', ...fog }].filter(Boolean);
+  const sections = [audio && { id: 'audio', ...audio }, gfx && { id: 'gfx', ...gfx }, missiles && { id: 'missiles', ...missiles }, payout, scaling && { id: 'scaling', ...scaling }, icons && { id: 'icons', ...icons }, fog && { id: 'fog', ...fog }].filter(Boolean);
   const sectionOf = (id) => sections.find((s) => s.id === id);
 
   function rowsFor({ id, params, defaults, cfg }) {
@@ -112,7 +112,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
         sections.map((sec) => [sec.id, Object.fromEntries(Object.keys(sec.defaults).map((k) => [k, sec.cfg[k]]))]),
       );
       const json = JSON.stringify(all, null, 2);
-      if (await copyText(json)) status('Copied all debug values (payout → PAYOUT_DEFAULTS, fog → FOG, missiles → MISSILE)');
+      if (await copyText(json)) status('Copied all debug values (audio, payout, fog, missiles, and the rest)');
       else showJson(json);
     }
   });

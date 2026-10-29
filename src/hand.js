@@ -1,6 +1,7 @@
 import { pieceOf, randomPiece, rotateCells, shapeFits, SHAPES } from './pieces.js';
 import { ACTIONS, ICONS, TERRAINS, cardDef, cardText, hex, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
 import { WORKERS } from './economy.js';
+import { bindCardHover, chirp, deal as dealSfx, tick } from './sfx.js';
 
 const MP_ICON = ICONS.manpower;
 const FOOD_ICON = ICONS.food;
@@ -46,6 +47,7 @@ export class Hand {
       e.preventDefault();
       this.rotate(1);
     });
+    bindCardHover(el);
     this.deal();
   }
 
@@ -54,7 +56,9 @@ export class Hand {
   }
 
   select(i) {
-    this.selected = i >= 0 && i < this.cards.length ? i : -1;
+    const next = i >= 0 && i < this.cards.length ? i : -1;
+    if (next !== this.selected) tick(next >= 0);
+    this.selected = next;
     this.render();
     this.onChange?.(this.piece);
   }
@@ -89,6 +93,7 @@ export class Hand {
     this.leaveAs = 'discard'; // the old hand slides away
     this.render();
     this.onChange?.(null);
+    dealSfx();
   }
 
   /** Empty the hand (the shop opens with an empty hand that fills as cards are bought). */
@@ -148,6 +153,7 @@ export class Hand {
     p.rot = (p.rot + dir + 4) % 4;
     this.render();
     this.onChange?.(p);
+    chirp();
   }
 
   /**

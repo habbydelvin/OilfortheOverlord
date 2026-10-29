@@ -2,7 +2,8 @@ import './library.css';
 import * as THREE from 'three';
 import { SHAPES } from './pieces.js';
 import { ACTIONS, SHOP_ITEMS, TERRAINS, TERRAIN_KEYS, TileFactory, cardText, hex } from './tiles.js';
-import { SCALE, P, loadScaleConfig } from './scalingConfig.js';
+import { SCALE, P, loadScaleConfig, eventPct, FIRST_EVENT_YEAR } from './scalingConfig.js';
+import { EVENTS, KIND_LABEL } from './events.js';
 
 loadScaleConfig(); // show the tuned numbers
 
@@ -27,7 +28,63 @@ const GROUPS = [
     title: 'Junk',
     blurb: 'Clogs the hand. Only Wasteland is drawn as a polyomino. The four Wasteland colours share one look and split a draw weight of about 5.4 (≈30% of draws). Wasteland must be placed before ending the turn and can never be built on.',
   },
+  {
+    id: 'events',
+    title: 'Events',
+    blurb: `One event is drawn at the start of every year from year ${FIRST_EVENT_YEAR} on and lasts until the next tribute. Each met tribute in a row makes Pressure and Disaster 25% more likely; a missed tribute halves them and makes Good fortune and Choice ×1.75. Events whose condition isn't met are skipped. Effect text shows year-${FIRST_EVENT_YEAR} strength; numbers marked "e.g." use a sample city (2 camps, 2 settlements, tribute 20).`,
+  },
 ];
+
+/** Readable form of each event's `when` draw condition (events.js). */
+const EVENT_WHEN = {
+  showOfForce: 'You have at least one building and an empty cell next to your land',
+  earthquake: 'There is an empty cell next to your land',
+  mercenaries: 'You have at least one camp',
+  prospectors: 'A hidden "?" site remains',
+  taxSettlements: 'You have at least one settlement',
+};
+
+const SAMPLE_INFO = { camps: 2, settlements: 2, sites: 1, quota: 20, buildings: 3, open: 5 };
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+function eventHTML(key) {
+  const ev = EVENTS[key];
+  const p = ev.scale ? eventPct(ev.scale, FIRST_EVENT_YEAR) : 0;
+  const info = { ...SAMPLE_INFO, cliffs: SCALE.earthquakeCliffs };
+  const total = Object.values(EVENTS).reduce((s, e) => s + e.weight, 0);
+  const scaling = ev.scale
+    ? `${P(SCALE[`${ev.scale}Base`])} in year ${FIRST_EVENT_YEAR}, +${P(SCALE[`${ev.scale}PerYear`])}/yr, max ${P(SCALE[`${ev.scale}Max`])}`
+    : key === 'earthquake'
+      ? `${SCALE.earthquakeCliffs} cliffs`
+      : 'Fixed';
+  const sampled = (fn) => {
+    const src = String(fn);
+    return /info\?\.(camps|quota|settlements)/.test(src) ? `${esc(fn(p, null, info))} <span class="eg">e.g.</span>` : esc(fn(p, null, info));
+  };
+  // Choice texts that need the live economy to read sensibly.
+  const override = { 'refugees:Take them in': `+${P(p)} worker slots, ${P(p)} of the food grown eaten on top each season` };
+  const choices = ev.choices
+    ? `<ul class="choices">${ev.choices
+        .map((c) => `<li><b>${esc(c.label)}</b>: ${override[`${key}:${c.label}`] ?? sampled(c.text)}<div class="say">“${esc(c.say)}” — <i>${esc(c.retort)}</i></div></li>`)
+        .join('')}</ul>`
+    : '';
+  const lines = typeof ev.lines === 'function' ? ev.lines(p) : ev.lines ?? [];
+  return `
+    <article class="tile event ${ev.kind}" id="event-${key}">
+      <div class="event-head"><span class="badge ${ev.kind}">${KIND_LABEL[ev.kind]}</span></div>
+      <h3>${esc(ev.name)}</h3>
+      <p class="key">${key}</p>
+      <div class="rule">${sampled(ev.text)}</div>
+      ${choices}
+      <blockquote class="dialogue">${lines.map((l) => `<p>${esc(l)}</p>`).join('')}</blockquote>
+      <dl>
+        <div><dt>Kind</dt><dd>${KIND_LABEL[ev.kind]}</dd></div>
+        <div><dt>Draw</dt><dd>${ev.weight} · ${Math.round((ev.weight / total) * 1000) / 10}% (base)</dd></div>
+        <div><dt>Scaling</dt><dd>${scaling}</dd></div>
+        <div><dt>Only when</dt><dd>${EVENT_WHEN[key] ?? 'Always'}</dd></div>
+      </dl>
+    </article>`;
+}
 
 const NAME = Object.fromEntries(TERRAIN_KEYS.map((k) => [k, TERRAINS[k].name]));
 
@@ -181,7 +238,7 @@ function cardHTML(key, thumb) {
 
 function actionHTML(key) {
   const a = ACTIONS[key];
-  const area = a.range ? `${2 * a.range + 1}×${2 * a.range + 1} around the target` : 'The target cell';
+  const area = a.size ? `${a.size}×${a.size} square, target is a corner` : a.range ? `${2 * a.range + 1}×${2 * a.range + 1} around the target` : 'The target cell';
   return `
     <article class="tile action" id="tile-${key}">
       <div class="thumb symbol-thumb" style="--top:${hex(a.top)};--edge:${hex(a.edge)}"><span>${a.symbol}</span></div>
@@ -232,9 +289,19 @@ document.getElementById('lede').textContent = 'Loading blockouts…';
 
 const thumbs = await renderThumbs();
 document.getElementById('lede').textContent =
-  `${TERRAIN_KEYS.length} tiles, ${Object.keys(ACTIONS).length} action cards · bag weight ${bagWeight}. Weights are relative. Capital and the toxic crater are never drawn; shop tiles are locked until bought.`;
+  `${TERRAIN_KEYS.length} tiles, ${Object.keys(ACTIONS).length} action cards, ${Object.keys(EVENTS).length} events · bag weight ${bagWeight}. Weights are relative. Capital and the toxic crater are never drawn; shop tiles are locked until bought.`;
 
 root.innerHTML = GROUPS.map((group) => {
+  if (group.id === 'events') {
+    return `
+    <section class="group">
+      <header>
+        <h2>${group.title}</h2>
+        <p>${group.blurb}</p>
+      </header>
+      <div class="grid">${Object.keys(EVENTS).map(eventHTML).join('')}</div>
+    </section>`;
+  }
   if (group.id === 'action') {
     return `
     <section class="group">

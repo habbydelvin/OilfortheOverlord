@@ -10,6 +10,8 @@
  *   dialogue.close()
  */
 
+import { choiceClick, choiceHover, click as clickSfx, speak } from './sfx.js';
+
 /** Portrait per speaker. A string starting with '<svg' is inlined; anything else is used as an image URL. */
 export const PORTRAITS = {
   // Bump ?v= when the image file changes, so browsers drop the cached copy.
@@ -130,10 +132,19 @@ export class Dialogue {
     // Start time comes from the first frame's own timestamp: rAF's `now` can be slightly earlier
     // than performance.now(), and a negative count made slice(0, -1) flash almost the whole line.
     let start = null;
+    let voiced = 0;
     const step = (now) => {
       start ??= now;
-      this.shown = Math.max(0, Math.min(text.length, Math.floor(((now - start) / 1000) * CHARS_PER_SEC)));
+      const next = Math.max(0, Math.min(text.length, Math.floor(((now - start) / 1000) * CHARS_PER_SEC)));
+      let talk = false;
+      for (let i = this.shown; i < next; i++) {
+        if (text[i] === ' ') continue;
+        voiced++;
+        if (voiced % 2 === 0) talk = true;
+      }
+      this.shown = next;
       el.textContent = text.slice(0, this.shown);
+      if (talk) speak();
       if (this.shown < text.length) this.raf = requestAnimationFrame(step);
       else this.#finishTyping();
     };
@@ -170,8 +181,9 @@ export class Dialogue {
     i = (i + n) % n;
     // Skip disabled choices (a choice can be disabled, e.g. "not enough food").
     for (let k = 0; k < n && this.choices[i].disabled; k++) i = (i + dir + n) % n;
-    if (this.choices[i].disabled) return;
+    if (this.choices[i].disabled || i === this.selected) return;
     this.selected = i;
+    choiceHover();
     for (const b of this.$('.dlg-choices').children) b.classList.toggle('on', Number(b.dataset.i) === this.selected);
   }
 
@@ -185,11 +197,13 @@ export class Dialogue {
         this.selected = pick;
       }
       if (this.choices[this.selected]?.disabled) return;
+      choiceClick();
       const done = this.resolve;
       this.resolve = null;
       done(this.selected);
       return;
     }
+    clickSfx();
     const done = this.resolve;
     this.resolve = null;
     done();

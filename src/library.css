@@ -254,6 +254,39 @@ h1 {
   color: #e8bf68;
 }
 
+/* Events: no thumbnail, a coloured kind badge and stripe instead. */
+.event { --kind: #9aa5a6; border-top: 3px solid var(--kind); }
+.event.pressure { --kind: #e08a3a; }
+.event.disaster { --kind: #e0533f; }
+.event.fortune { --kind: #7cc46a; }
+.event.choice { --kind: #5fa3e0; }
+.event-head { padding: 12px 12px 0; }
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #0c0e10;
+  background: var(--kind);
+}
+.choices { margin: 8px 12px 0; padding: 0 0 0 16px; font-size: 13px; line-height: 1.45; }
+.choices li + li { margin-top: 6px; }
+.choices .say { color: var(--muted); font-size: 12px; }
+.eg { font-size: 11px; color: var(--muted); font-style: italic; }
+.dialogue {
+  margin: 10px 12px 0;
+  padding: 0 0 0 10px;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.4;
+}
+.dialogue p { margin: 0 0 4px; }
+
 /* Resource icons in rule text (shared with the game cards). */
 .ico { width: 1.15em; height: 1.15em; vertical-align: -0.22em; margin-left: 2px; }
 .ico.res-mp { color: #f0b27a; }

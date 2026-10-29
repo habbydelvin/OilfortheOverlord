@@ -41,7 +41,7 @@ const FINISHED = {
   refinery: { yaw: 0, fit: 'Refinery_HiveCity' },
   station: { yaw: 0, fit: 'OilStation_HiveCity' },
   farm: { yaw: 0, fit: 'HydroFarm_HiveCity' },
-  tarpit: { yaw: 0, fit: 'WasteTar_HiveCity' },
+  tarpit: { yaw: 0, fit: 'WasteTar_HiveCity', dust: true }, // dust: strip its floating dust clusters (removeDust)
   pump: { yaw: 0, fit: 'PumpStation_HiveCity' },
   oasis: { yaw: 0, fit: 'WasteOasis_HiveCity' },
   labourcamp: { yaw: 0, fit: 'LaborCamp_HiveCity' },
@@ -424,8 +424,9 @@ function imageReady(texture, timeout = 30000) {
 
 
 /**
- * The piece files carry animated dust clusters (Waste<Name>_Dust and its _DustNN_NN parts) that read as
- * floating chunks over the board. Remove them. Returns the names of every removed node (for the tracks).
+ * The Wasteland piece files and the Tar Pit carry animated dust clusters (Waste<Name>_Dust and its _DustNN_NN
+ * parts) that read as floating chunks over the board. Remove them. Returns the names of every removed node
+ * (for the tracks).
  */
 const DUST_NAME = /_Dust(\d|$)/;
 function removeDust(raw, name) {
@@ -443,7 +444,7 @@ function removeDust(raw, name) {
     });
     root.removeFromParent();
   }
-  if (roots.length) console.info(`Wasteland ${name}: removed ${clusters} dust clusters`);
+  if (roots.length) console.info(`[models] ${name}: removed ${clusters} dust clusters`);
   return removed;
 }
 
@@ -700,7 +701,7 @@ export async function decodeImage(img) {
 
 async function loadFbx(loader, spec, track) {
   const raw = await loader.loadAsync(`${MODEL_URL}${spec.file}?v=${MODEL_VERSION}`, track ? (e) => trackBytes(spec.file, e) : undefined);
-  const removed = spec.piece ? removeDust(raw, spec.piece) : new Set();
+  const removed = spec.piece || spec.finished?.dust ? removeDust(raw, spec.piece ?? spec.key) : new Set();
   toStandard(raw);
   // Object3D.clone copies `animations`, so every tile copy can play them.
   raw.animations = raw.animations

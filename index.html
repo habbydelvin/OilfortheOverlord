@@ -55,6 +55,15 @@
         background: #e8bf68;
         transition: width 0.25s ease;
       }
+      #loading .hint {
+        margin-top: 14px;
+        min-height: 1em;
+        font-size: 13px;
+        letter-spacing: 0.14em;
+        text-align: center;
+        text-transform: uppercase;
+        color: #c9a86a;
+      }
     </style>
   </head>
   <body>
@@ -62,6 +71,7 @@
       <div>
         <div class="title">Oil for the Overlord</div>
         <div class="bar"><i id="loadingFill"></i></div>
+        <div class="hint" id="loadingHint"></div>
       </div>
     </div>
     <div id="app"></div>
@@ -70,7 +80,7 @@
     <!-- Music: mute button + volume slider (src/music.js). Outside #ui so it stays usable over dialogue scenes. -->
     <div id="music">
       <button id="btnMusic" type="button" aria-label="Mute music"></button>
-      <input id="musicVolume" type="range" min="0" max="100" step="1" aria-label="Music volume" />
+      <input id="musicVolume" type="range" min="0" max="200" step="1" aria-label="Music volume" />
     </div>
 
     <div id="ui">

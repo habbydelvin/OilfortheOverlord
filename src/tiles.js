@@ -284,6 +284,7 @@ export const isCamp = (terrain) => terrain === 'raider' || Boolean(TERRAINS[terr
 /**
  * Action cards: bought in the shop, played on the board for a one-off effect, never become tiles.
  * range: Chebyshev radius of the cells they affect (0 = just the target cell).
+ * size:  instead of range, an N×N square with the target cell as its corner.
  */
 export const ACTIONS = {
   spark: {
@@ -307,6 +308,17 @@ export const ACTIONS = {
     range: 0,
     weight: 0.4,
     rule: 'Remove a tile (not a Capital or a camp)',
+  },
+  demolish2: {
+    name: 'Wrecking Crew',
+    trigger: 'On play',
+    top: 0xb5452f,
+    edge: 0x7a2c1e,
+    category: 'action',
+    symbol: '⊠',
+    size: 2, // a 2×2 square, the hovered cell is its corner (instead of a range around it)
+    weight: 0.4,
+    rule: 'Remove up to 4 tiles in a 2×2 square (not Capitals or camps)',
   },
   militia: {
     name: 'Send in the Militia',
@@ -372,9 +384,11 @@ export const AREAS = {
   labourcamp: 'plus',
   crater: 'plus',
   spark: 'square',
+  demolish2: 'block2',
 };
 
 export function areaGridHTML(area) {
+  if (area === 'block2') return `<div class="shape area-grid" style="grid-template-columns:repeat(2,1fr)">${'<i class="area"></i>'.repeat(4)}</div>`;
   let squares = '';
   for (let z = 0; z < 3; z++)
     for (let x = 0; x < 3; x++) {
@@ -411,6 +425,7 @@ export const SHOP_ITEMS = [
   ['refinery', 5],
   ['spark', 2], // action cards: one use, only from the shop
   ['demolish', 2],
+  ['demolish2', 4],
   ['militia', 2],
 ];
 
