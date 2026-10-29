@@ -155,7 +155,7 @@ function statLines(stats) {
   }
   if (stats.oilMultiplierPerAdjacent) {
     for (const [neighbour, n] of Object.entries(stats.oilMultiplierPerAdjacent)) {
-      lines.push(`Oil ×${n} for each adjacent ${NAME[neighbour] ?? neighbour}`);
+      lines.push(`Makes ${n}× the oil of each adjacent ${NAME[neighbour] ?? neighbour}`);
     }
   }
   if (stats.builtOnBonus) lines.push(`When built on: ${bonusText(stats.builtOnBonus)}, any building`);

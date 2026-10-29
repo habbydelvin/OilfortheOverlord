@@ -13,7 +13,8 @@ export const WORKERS = { farm: 1, station: 1, refinery: 1 };
  *     Worker buildings (farms, stations, refineries) are staffed in placement order; past the cap the
  *     newest go idle and produce nothing.
  *  2. Food: staffed farms grow, capital/settlements eat. Not enough food -> fed < 1.
- *  3. Oil: crude (staffed stations) × refinery multiplier × fed.
+ *  3. Oil: (crude from staffed stations + refinery oil) × fed. A staffed refinery makes 0.5× the crude of each
+ *     staffed station next to it.
  *  4. Food store: spare food is banked (up to FOOD_PER_CAPITAL per Capital, the rest is wasted);
  *     a shortfall is covered from the store before `fed` drops.
  *
@@ -49,6 +50,8 @@ export function computeEconomy(grid, state = {}) {
   let droughtFood = 0;
   let crude = 0;
   let refineryLinks = 0;
+  let refineryCrude = 0;
+  const refineries = [];
   const counts = {};
   // Bonus counts for the HUD breakdown tooltips.
   const bonus = { labourCamps: 0, ruins: 0, pumpFarms: 0, oasisFarms: 0, tarpitStations: 0, capitalFood: 0, capitalCrude: 0 };
@@ -150,11 +153,7 @@ export function computeEconomy(grid, state = {}) {
       }
       crude += per.rawCrude;
     } else if (t === 'refinery') {
-      // Only staffed stations feed a refinery.
-      refineryLinks += DIRS.filter(([dx, dz]) => {
-        const n = grid.get(cell.x + dx, cell.z + dz);
-        return n?.terrain === 'station' && !isIdle(n.x, n.z);
-      }).length;
+      refineries.push(per); // its oil comes from its neighbours' crude, worked out once all stations are known
     } else if (t === 'crater') {
       const victims = near.filter((n) => n === 'farm' || n === 'settlement').length;
       craterFood += victims;
@@ -171,6 +170,24 @@ export function computeEconomy(grid, state = {}) {
   }
   farmFood += eventFood;
   crude += eventCrude;
+
+  // Refineries make oil of their own: REFINERY_SHARE × the crude of each staffed Oil Station next to them
+  // (after the year event, so Oil Boom helps them too). Stations further away are not affected.
+  const REFINERY_SHARE = TERRAINS.refinery.stats.oilMultiplierPerAdjacent.station;
+  const crudeAt = new Map(perCell.filter((p) => p.terrain === 'station' && p.rawCrude).map((p) => [`${p.x},${p.z}`, p.rawCrude]));
+  for (const per of refineries) {
+    let fromStations = 0;
+    for (const [dx, dz] of DIRS) {
+      const c = crudeAt.get(`${per.x + dx},${per.z + dz}`);
+      if (c) {
+        fromStations += c;
+        refineryLinks++;
+      }
+    }
+    per.rawCrude = REFINERY_SHARE * fromStations;
+    refineryCrude += per.rawCrude;
+  }
+  crude += refineryCrude;
 
   const free = cap - used;
   const idle = idleKeys.size;
@@ -192,10 +209,9 @@ export function computeEconomy(grid, state = {}) {
   const storeAfter = Math.min(foodCap, rawStore);
   const foodWasted = rawStore - storeAfter;
 
-  const refineryMult = 1 + 0.5 * refineryLinks;
   // Taxed settlements pay oil straight into the season's yield.
   const taxOil = (mods.settlementOil ?? 0) * (counts.settlement ?? 0);
-  const oilMade = Math.round(crude * refineryMult * fed) + taxOil;
+  const oilMade = Math.round(crude * fed) + taxOil;
   // Siphoners tap the pipelines: a share of this season's oil (never below 0).
   const banditOil = camps.oil * SCALE.banditOil;
   const oilStolen = Math.min(oilMade, banditOil);
@@ -254,7 +270,7 @@ export function computeEconomy(grid, state = {}) {
     foodCap,
     foodWasted,
     crude,
-    refineryMult,
+    refineryCrude: Math.round(refineryCrude * 10) / 10, // before hunger, like crude
     refineryLinks,
     oil,
     counts,

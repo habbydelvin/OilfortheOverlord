@@ -928,8 +928,8 @@ function breakdown(kind, e) {
     add(`Tar pit bonus ×${e.bonus.tarpitStations}`, 2 * e.bonus.tarpitStations);
     add('Capital doubles', e.bonus.capitalCrude);
     if (turn.event) add(turn.event.name, e.eventCrude);
+    add(`Refineries (${e.refineryLinks} adjacent station${e.refineryLinks === 1 ? '' : 's'})`, e.refineryCrude);
     total('Crude', e.crude);
-    mul(`Refineries (${e.refineryLinks} station link${e.refineryLinks === 1 ? '' : 's'})`, e.refineryMult);
     mul('Hunger', e.fed);
     add('Settlement tax', e.taxOil);
     add(`Siphoner camps ×${c('bandit_siphon')}`, -e.oilStolen);

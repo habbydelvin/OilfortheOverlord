@@ -82,7 +82,7 @@ export const TERRAINS = {
     category: 'building',
     buildable: false,
     weight: 1,
-    rule: '+0.5× oil per adjacent station',
+    rule: 'Makes 0.5× the oil of each adjacent station',
     stats: { manpower: -1, oilMultiplierPerAdjacent: { station: 0.5 } },
   },
 
