@@ -544,7 +544,7 @@ function recolourOnMainThread(groundMap) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(img, 0, 0);
   const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const result = recolourSalt(data.data);
+  const result = recolourSalt(data.data, canvas.width);
   if (result.share > 0.02) {
     ctx.putImageData(data, 0, 0);
     groundMap.image = canvas;

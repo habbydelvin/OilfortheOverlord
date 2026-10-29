@@ -2,7 +2,7 @@
  * Neon tiles: the tile under a boosted building (one next to tiles that boost it, economy.js rules) lights up like
  * a ring of gas flame, kept square: a white-hot line along the tile's edges with a halo in the building's colour,
  * a curtain of light rising from the edges and fading upward in flickering streaks, and narrow flames shooting up
- * from the edges, all rippling: rings of light run in across the ground and a wave runs around the edge, lifting
+ * from the edges, all rippling around the tile: bands of light run along the ground's edges and a wave runs around the edge, lifting
  * the curtain and flames as it passes. Each boosting neighbour makes it glow more (brighter, a wider halo, a taller curtain and flames).
  * The building itself keeps its own colours; idle (greyed) buildings don't glow.
  *  - Hydro-farm (green): Water Pump, Oasis, Capital
@@ -66,13 +66,14 @@ const VERT = /* glsl */ `
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }`;
 
-// Ripples: square rings of light on the ground (rings across the half-tile, how fast they run in), and the wave
-// running around the edge (crests around the tile, laps per second).
-const RIPPLE = { rings: 5, speed: 0.55 };
+// Ripples circle the tile, flowing right along its front edge (as the board camera first sees it): bands of light
+// on the ground along the edges (bands around the tile, laps per second), and the wave lifting the curtain and
+// flames (crests around the tile, laps per second).
+const RIPPLE = { bands: 8, speed: 0.22 };
 const WAVE = { crests: 3, speed: 0.4 };
 
 const COMMON = /* glsl */ `
-  #define RIPPLE_RINGS ${RIPPLE.rings.toFixed(2)}
+  #define RIPPLE_BANDS ${RIPPLE.bands.toFixed(2)}
   #define RIPPLE_SPEED ${RIPPLE.speed.toFixed(2)}
   #define WAVE_CRESTS ${WAVE.crests.toFixed(2)}
   #define WAVE_SPEED ${WAVE.speed.toFixed(2)}
@@ -89,8 +90,8 @@ const COMMON = /* glsl */ `
     return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
   }`;
 
-// The ground: a white-hot line along the edges, a halo in the colour fading inward, a faint fill, and square
-// ripples of light running in from the edge one after another, fading as they go.
+// The ground: a white-hot line along the edges, a halo in the colour fading inward, a faint fill, and bands of light
+// running around the tile along its edges.
 const GROUND_FRAG = /* glsl */ `
   ${COMMON}
   uniform float uReach;
@@ -101,7 +102,14 @@ const GROUND_FRAG = /* glsl */ `
     float core = 1.0 - smoothstep(0.004, 0.016, d);
     float flicker = 0.88 + 0.12 * noise(vec2(d * 40.0 + uTime * 0.9, vUv.x * 9.0 + vUv.y * 7.0));
     float halo = exp(-max(0.0, d - 0.012) / uReach) * uHalo * flicker;
-    float ripple = pow(0.5 + 0.5 * sin(6.2832 * (d * RIPPLE_RINGS - uTime * RIPPLE_SPEED)), 6.0) * exp(-d / 0.3);
+    // Where this point is around the tile's edge (0-1, the same path as the curtain's wave), from its nearest edge.
+    float along;
+    if (d == 1.0 - vUv.y) along = vUv.x;               // back edge
+    else if (d == 1.0 - vUv.x) along = 1.0 + (1.0 - vUv.y); // right edge
+    else if (d == vUv.y) along = 2.0 + (1.0 - vUv.x);  // front edge
+    else along = 3.0 + vUv.y;                           // left edge
+    along *= 0.25;
+    float ripple = pow(0.5 + 0.5 * sin(6.2832 * (along * RIPPLE_BANDS + uTime * RIPPLE_SPEED)), 6.0) * exp(-d / 0.14);
     float a = clamp(max(core, halo) + uFill + ripple * uHalo * 0.75, 0.0, 1.0);
     gl_FragColor = vec4(mix(uColor, vec3(1.0), core * 0.75 + ripple * 0.2), a * uOpacity);
     #include <colorspace_fragment>
@@ -114,7 +122,7 @@ const CURTAIN_FRAG = /* glsl */ `
   ${COMMON}
   uniform float uFlame;
   float wave(float along) { // along: 0-1 around the tile's edge
-    return 0.5 + 0.5 * sin(6.2832 * (along * WAVE_CRESTS - uTime * WAVE_SPEED));
+    return 0.5 + 0.5 * sin(6.2832 * (along * WAVE_CRESTS + uTime * WAVE_SPEED));
   }
   void main() {
     float h = vUv.y;
