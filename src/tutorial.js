@@ -21,7 +21,8 @@ import { L, onLangChange } from './i18n.js';
  * and update() every frame. The tutorial calls back into main.js only through the `api` object.
  */
 
-export const TUTORIAL_KEY = 'oto.tutorialDone';
+// Versioned: bumping it (v2, v3...) makes every player replay the tutorial once on the next release.
+export const TUTORIAL_KEY = 'oto.tutorialDone.v2';
 export const TUTORIAL_QUOTA = 25;
 /** The old Overseer has already missed two tributes: this is his last chance. */
 export const TUTORIAL_STRIKES = 2;

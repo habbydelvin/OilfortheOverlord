@@ -29,11 +29,12 @@
  */
 
 const KEY = 'oto.lang';
-let lang = 'en';
+// Chinese by default; English only once the player has switched to it (setLang saves the choice).
+let lang = 'zh';
 try {
-  if (localStorage.getItem(KEY) === 'zh') lang = 'zh';
+  if (localStorage.getItem(KEY) === 'en') lang = 'en';
 } catch {
-  /* no storage: English */
+  /* no storage: Chinese */
 }
 
 export const getLang = () => lang;

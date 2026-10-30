@@ -24,9 +24,12 @@ const DEV_KEYS = [
   'oto.previewConfig',
 ];
 
+/** Saves from older releases that no longer count: the old tutorial flag (now oto.tutorialDone.v2, tutorial.js). */
+const OLD_KEYS = ['oto.tutorialDone'];
+
 if (RELEASE) {
   try {
-    for (const k of DEV_KEYS) localStorage.removeItem(k);
+    for (const k of [...DEV_KEYS, ...OLD_KEYS]) localStorage.removeItem(k);
   } catch {
     /* storage unavailable: the defaults are used anyway */
   }
