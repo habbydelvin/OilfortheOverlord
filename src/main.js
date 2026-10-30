@@ -3282,7 +3282,7 @@ function frame(now) {
   neonTiles.update(dt, time);
   // Outlines where the card being placed (or hovered) would be boosted.
   const placing = hand.piece;
-  boostHints.update(dt, time, grid, (placing ?? hand.hoveredPiece)?.terrain ?? null, Boolean(placing));
+  boostHints.update(dt, time, grid, (placing ?? hand.hoveredPiece)?.terrain ?? null, Boolean(placing), placing && !rig.isDragging ? hoveredCell() : null);
   perf.end('ships');
   perf.begin('frontier+mysteries');
   frontier.update(dt, time);

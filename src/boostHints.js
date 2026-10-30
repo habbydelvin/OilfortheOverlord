@@ -2,7 +2,8 @@
  * Boost hints: while you hover a card in the hand, the free tiles where that building would be boosted glow faintly,
  * brighter while you place the card: the same glow as a boosted building's tile (neonGlow.js createGlow), in the
  * colour of the building that gets boosted. For a building, the free tiles next to its boosters; for a booster, the
- * free tiles next to the buildings it boosts.
+ * free tiles next to the buildings it boosts. While placing a booster, its area (the 4 tiles around the one under the
+ * pointer) glows too and follows the pointer.
  */
 import { NEON, LIFT, GLOW_OPACITY, createGlow } from './neonGlow.js';
 
@@ -17,6 +18,14 @@ const HINTS = {
   refinery: { near: ['station'], colour: NEON.station },
   labourcamp: { near: ['settlement'], colour: NEON.settlement },
 };
+/** Booster card -> the colour of the buildings it boosts, for its area around the pointer while placing it. */
+const AREA = {
+  pump: NEON.farm,
+  oasis: NEON.farm,
+  tarpit: NEON.station,
+  refinery: NEON.station,
+  labourcamp: NEON.settlement,
+};
 const HOVER = 0.45; // glow strength while hovering the card (share of a one-booster building's glow)
 const PLACING = 1; // while placing it
 const FADE = 8; // how quickly the glows follow (per second)
@@ -30,15 +39,17 @@ const DIRS = [
 export class BoostHints {
   #key = ''; // what the current hints are for (card + board), to recount only when it changes
   #glows = new Map(); // "x,z|colour" -> { glow, target, opacity }
+  #area = { colour: null, glows: [], opacity: 0 }; // the placed booster's area, around the pointer
 
   constructor(scene) {
     this.scene = scene;
   }
 
   /**
-   * Every frame. `terrain`: the card hovered or being placed (null for none); `placing`: true while placing it.
+   * Every frame. `terrain`: the card hovered or being placed (null for none); `placing`: true while placing it;
+   * `cursor`: the cell [x, z] under the pointer (null for none).
    */
-  update(dt, time, grid, terrain, placing) {
+  update(dt, time, grid, terrain, placing, cursor = null) {
     const hint = HINTS[terrain];
     const key = hint ? `${terrain}|${grid.cells.size}|${this.#boardStamp(grid)}` : '';
     if (key !== this.#key) {
@@ -57,6 +68,32 @@ export class BoostHints {
       }
       h.glow.paint(h.opacity * GLOW_OPACITY, time + h.phase);
     }
+    this.#updateArea(k, time, placing && cursor ? AREA[terrain] : null, cursor);
+  }
+
+  /** The booster's area: 4 glows on the tiles around the pointer's, moved along with it. */
+  #updateArea(k, time, colour, cursor) {
+    const area = this.#area;
+    if (colour && colour !== area.colour) {
+      for (const glow of area.glows) glow.dispose();
+      area.glows = DIRS.map(() => {
+        const glow = createGlow(colour, 'boost area');
+        glow.setLevel(1);
+        this.scene.add(glow.group);
+        return glow;
+      });
+      area.colour = colour;
+      area.opacity = 0;
+    }
+    if (!area.glows.length) return;
+    area.opacity += ((colour ? PLACING : 0) - area.opacity) * k;
+    const visible = area.opacity > 0.003;
+    area.glows.forEach((glow, i) => {
+      glow.group.visible = visible;
+      if (!visible) return;
+      if (colour) glow.group.position.set(cursor[0] + DIRS[i][0], LIFT, cursor[1] + DIRS[i][1]);
+      glow.paint(area.opacity * GLOW_OPACITY, time + i * 17);
+    });
   }
 
   /** Changes whenever a tile is placed, removed or replaced (a cheap fingerprint of the board). */
