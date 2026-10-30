@@ -15,6 +15,7 @@ import { Placement } from './placement.js';
 import { Hand, pieceCost } from './hand.js';
 import { copySeam } from './seamlessGround.js';
 import { NeonTiles } from './neonGlow.js';
+import { setupLegend } from './legend.js';
 import { Mysteries } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
@@ -84,6 +85,7 @@ const iconCfg = loadIconConfig(); // Game Debug → Map icons
 const zoomIcons = new ZoomIcons(document.getElementById('mapIcons'), camera, rig, iconCfg);
 const traffic = new Traffic(scene); // ships flying between the tiles
 const neonTiles = new NeonTiles(scene); // boosted buildings' tiles glow
+setupLegend(document.getElementById('btnLegend'), document.getElementById('legend')); // icon legend window
 const payoutCfg = loadPayoutConfig();
 const payout = new Payout(camera, document.getElementById('floaters'), payoutCfg);
 const audioCfg = { music: getMusicVolume(), sfx: getSfxVolume() };

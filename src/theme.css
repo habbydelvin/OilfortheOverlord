@@ -80,7 +80,8 @@
   height: 19px; /* the oil icon on Reroll sits lower in this font */
 }
 #libraryLink,
-#btnHelp {
+#btnHelp,
+#btnLegend {
   letter-spacing: 0.02em; /* same width as before */
 }
 /* The cards keep their own lettering. */
@@ -89,8 +90,9 @@
   font-family: 'Avenir Next', 'Nunito', 'Segoe UI', 'OTO Han Sans', system-ui, sans-serif;
 }
 
-/* ---------- steel windows: Controls, game over ---------- */
+/* ---------- steel windows: Controls, icon legend, game over ---------- */
 #help,
+#legend,
 #gameover .box {
   border-color: transparent;
   border-radius: 0;
@@ -100,11 +102,16 @@
   outline-offset: -11px;
   color: var(--dp-cream);
 }
-#help {
+#help,
+#legend {
   font-family: var(--dp-serif);
 }
-#help .help-head {
+#help .help-head,
+#legend .legend-head {
   color: var(--dp-head);
+}
+#legend .legend-section {
+  color: var(--dp-muted);
 }
 #help b {
   color: #fff3d8;
@@ -323,7 +330,8 @@
 
 /* ---------- top left: links ---------- */
 #libraryLink,
-#btnHelp {
+#btnHelp,
+#btnLegend {
   color: var(--dp-head);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
 }
@@ -452,6 +460,7 @@
  */
 #panel,
 #help,
+#legend,
 #gameover .box,
 #shop .shop-band,
 #cardPick .shop-band {
@@ -465,6 +474,7 @@
 }
 #panel::before,
 #help::before,
+#legend::before,
 #gameover .box::before,
 #shop .shop-band::before,
 #cardPick .shop-band::before,
