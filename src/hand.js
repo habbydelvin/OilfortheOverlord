@@ -104,6 +104,11 @@ export class Hand {
 
   /** True while a card is being dragged out of the hand. */
   dragging = false;
+
+  /** The card under the pointer (null for none). */
+  get hoveredPiece() {
+    return this.#hover ? (this.cards[this.#hover.index] ?? null) : null;
+  }
   #press = null;
   #justDragged = false;
 

@@ -33,7 +33,7 @@ const LEVELS = [
   { opacity: 1, reach: 0.095, halo: 0.85, fill: 0.09, height: 0.55, flame: 1 },
 ];
 const HALF = 0.49; // a hair inside the cell, so neighbouring glows don't overlap
-const LIFT = 0.006; // just above the tile's ground
+export const LIFT = 0.006; // just above the tile's ground
 const FADE = 3; // how quickly the glow follows a change (per second)
 const DIRS = [
   [1, 0],
@@ -208,6 +208,54 @@ function neonMaterial(fragmentShader, colour, extra) {
   });
 }
 
+/** Ground and curtain geometry, shared by every glow. */
+let shared = null;
+const geometries = () => (shared ??= { ground: groundGeometry(), curtain: curtainGeometry() });
+
+/** The first boost level's opacity: a single glow at the strength of a building with one booster. */
+export const GLOW_OPACITY = LEVELS[1].opacity;
+
+/**
+ * One tile's glow in this colour (the ground's edge, halo and ripples, the curtain of light and its flames), for the
+ * boosted buildings here and for other effects (the boost hints, boostHints.js). Place `group` at the tile, set its
+ * level (1-4), then paint it every frame with an opacity and the time.
+ */
+export function createGlow(colour, name = 'neon') {
+  const geo = geometries();
+  const group = new THREE.Group();
+  group.name = name;
+  const ground = new THREE.Mesh(geo.ground, neonMaterial(GROUND_FRAG, colour, { uReach: { value: 0.05 }, uHalo: { value: 0.6 }, uFill: { value: 0.05 } }));
+  const curtain = new THREE.Mesh(geo.curtain, neonMaterial(CURTAIN_FRAG, colour, { uFlame: { value: 0.7 } }));
+  ground.renderOrder = 1;
+  curtain.renderOrder = 2;
+  group.add(ground, curtain);
+  return {
+    group,
+    level: 0,
+    setLevel(level) {
+      const L = LEVELS[level];
+      this.level = level;
+      const g = ground.material.uniforms;
+      g.uReach.value = L.reach;
+      g.uHalo.value = L.halo;
+      g.uFill.value = L.fill;
+      curtain.material.uniforms.uFlame.value = L.flame;
+      curtain.scale.y = L.height;
+    },
+    paint(opacity, time) {
+      for (const mesh of [ground, curtain]) {
+        mesh.material.uniforms.uOpacity.value = opacity;
+        mesh.material.uniforms.uTime.value = time;
+      }
+    },
+    dispose() {
+      group.removeFromParent();
+      ground.material.dispose();
+      curtain.material.dispose();
+    },
+  };
+}
+
 export class NeonTiles {
   #tiles = new Map(); // tile holder -> { group, ground, curtain, level, target, opacity }
 
@@ -215,8 +263,6 @@ export class NeonTiles {
     this.group = new THREE.Group();
     this.group.name = 'neon tiles';
     scene.add(this.group);
-    this.groundGeo = groundGeometry();
-    this.curtainGeo = curtainGeometry();
   }
 
   /** Recount boosts (call when the board or its economy changes). */
@@ -230,38 +276,17 @@ export class NeonTiles {
       if (!tile && level) tile = this.#create(cell.mesh, cell.terrain, colour);
       if (!tile) continue;
       tile.target = level ? LEVELS[level].opacity : 0;
-      if (level && tile.level !== level) this.#setLevel(tile, level);
+      if (level && tile.level !== level) tile.setLevel(level);
       live.add(cell.mesh);
     }
     for (const [holder, tile] of this.#tiles) if (!live.has(holder)) tile.target = 0; // removed or replaced: fade out
   }
 
   #create(holder, terrain, colour) {
-    const group = new THREE.Group();
-    group.name = `neon:${terrain}`;
-    const ground = new THREE.Mesh(
-      this.groundGeo,
-      neonMaterial(GROUND_FRAG, colour, { uReach: { value: 0.05 }, uHalo: { value: 0.6 }, uFill: { value: 0.05 } }),
-    );
-    const curtain = new THREE.Mesh(this.curtainGeo, neonMaterial(CURTAIN_FRAG, colour, { uFlame: { value: 0.7 } }));
-    ground.renderOrder = 1;
-    curtain.renderOrder = 2;
-    group.add(ground, curtain);
-    this.group.add(group);
-    const tile = { group, ground, curtain, level: 0, target: 0, opacity: 0, phase: Math.random() * 100 };
+    const tile = Object.assign(createGlow(colour, `neon:${terrain}`), { target: 0, opacity: 0, phase: Math.random() * 100 });
+    this.group.add(tile.group);
     this.#tiles.set(holder, tile);
     return tile;
-  }
-
-  #setLevel(tile, level) {
-    const L = LEVELS[level];
-    tile.level = level;
-    const g = tile.ground.material.uniforms;
-    g.uReach.value = L.reach;
-    g.uHalo.value = L.halo;
-    g.uFill.value = L.fill;
-    tile.curtain.material.uniforms.uFlame.value = L.flame;
-    tile.curtain.scale.y = L.height;
   }
 
   /** Every frame: fade toward the target, follow the tile (it drops in), animate the flames. */
@@ -276,17 +301,12 @@ export class NeonTiles {
       }
       tile.group.position.set(holder.position.x, holder.position.y + LIFT, holder.position.z);
       tile.group.visible = holder.visible;
-      for (const mesh of [tile.ground, tile.curtain]) {
-        mesh.material.uniforms.uOpacity.value = tile.opacity;
-        mesh.material.uniforms.uTime.value = time + tile.phase;
-      }
+      tile.paint(tile.opacity, time + tile.phase);
     }
   }
 
   #dispose(tile) {
-    this.group.remove(tile.group);
-    tile.ground.material.dispose();
-    tile.curtain.material.dispose();
+    tile.dispose();
   }
 
   /** Remove every glow at once (a new game). */

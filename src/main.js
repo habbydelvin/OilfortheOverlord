@@ -16,6 +16,7 @@ import { Placement } from './placement.js';
 import { Hand, pieceCost } from './hand.js';
 import { copySeam } from './seamlessGround.js';
 import { NeonTiles } from './neonGlow.js';
+import { BoostHints } from './boostHints.js';
 import { setupLegend } from './legend.js';
 import { Mysteries } from './mystery.js';
 import { Expansion } from './expansion.js';
@@ -89,6 +90,7 @@ const iconCfg = loadIconConfig(); // Game Debug → Map icons
 const zoomIcons = new ZoomIcons(document.getElementById('mapIcons'), camera, rig, iconCfg);
 const traffic = new Traffic(scene); // ships flying between the tiles
 const neonTiles = new NeonTiles(scene); // boosted buildings' tiles glow
+const boostHints = new BoostHints(scene); // outlines where the hovered / placed card would be boosted
 setupLegend(document.getElementById('btnLegend'), document.getElementById('legend')); // icon legend window
 const payoutCfg = loadPayoutConfig();
 const payout = new Payout(camera, document.getElementById('floaters'), payoutCfg);
@@ -3278,6 +3280,9 @@ function frame(now) {
   perf.begin('ships');
   traffic.update(dt, grid);
   neonTiles.update(dt, time);
+  // Outlines where the card being placed (or hovered) would be boosted.
+  const placing = hand.piece;
+  boostHints.update(dt, time, grid, (placing ?? hand.hoveredPiece)?.terrain ?? null, Boolean(placing));
   perf.end('ships');
   perf.begin('frontier+mysteries');
   frontier.update(dt, time);
