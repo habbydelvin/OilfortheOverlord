@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "release": "vite build --mode release --emptyOutDir && rm -f OilfortheOverlordRelease.zip && cd dist && zip -qr -X ../OilfortheOverlordRelease.zip . -x '.DS_Store' '*/.DS_Store'",
     "models": "node tools/convert-models.mjs"
   },
   "dependencies": {

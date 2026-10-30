@@ -1,3 +1,4 @@
+import { RELEASE } from './release.js'; // first: clears dev tuning before any settings load
 import './ui.css';
 import './theme.css';
 import './themeShine.js';
@@ -105,7 +106,9 @@ const AUDIO_PARAMS = [
 bindCardHover(document.getElementById('shopCards'));
 bindCardHover(document.getElementById('pickCards'));
 
-const debug = createDebugPanel(document.getElementById('debug'), document.getElementById('btnDebug'), payoutCfg, {
+const debug = RELEASE
+  ? { toggle() {}, refresh() {}, refreshMode() {} } // release: no Game Debug panel
+  : createDebugPanel(document.getElementById('debug'), document.getElementById('btnDebug'), payoutCfg, {
   audio: {
     params: AUDIO_PARAMS,
     defaults: AUDIO_DEFAULTS,
@@ -2700,7 +2703,7 @@ rig.onClick = tryPlace;
  * Dev-testing hotkeys (Space, `, -, N, M, P, V, T, X). Off for players; set true to use them again.
  * The Game Debug panel (its button, top left) still has the same tools.
  */
-const DEV_HOTKEYS = false;
+const DEV_HOTKEYS = false && !RELEASE; // never in the release build
 
 window.addEventListener('keydown', (e) => {
   if (document.getElementById('loading')) return; // no shortcuts until the island exists
@@ -3508,5 +3511,8 @@ factory.extrasReady.then(async (extras) => {
   adoptBlockouts();
 });
 
-// Handy for debugging in the console.
-window.tileIsland = { tutorial, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };
+// Release build: players get no Game Debug button, no tile library link (library.html isn't built), no cheats.
+if (RELEASE) for (const id of ['btnDebug', 'debug', 'libraryLink']) document.getElementById(id)?.remove();
+
+// Handy for debugging in the console (dev builds only).
+if (!RELEASE) window.tileIsland = { tutorial, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };
