@@ -10,7 +10,7 @@
  */
 
 const SFX_BASE = 0.32; // gain at volume 100, the old fixed level
-export const SFX_VOLUME_DEFAULT = 300;
+export const SFX_VOLUME_DEFAULT = 299;
 export const SFX_VOLUME_MAX = 300;
 const SFX_KEY = 'oto.sfx';
 const MAX = 8;

@@ -12,7 +12,7 @@ import { preloadCardArt } from './tiles.js';
 import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
 import { hasBlockout, loadProgress, breathe, decodeImage } from './models.js';
 import { Frontier } from './frontier.js';
-import { Placement } from './placement.js';
+import { Placement, GHOST_LAYER, PREVIEW_PARAMS, PREVIEW_DEFAULTS, loadPreviewConfig, savePreviewConfig, clearPreviewConfig } from './placement.js';
 import { Hand, pieceCost } from './hand.js';
 import { copySeam } from './seamlessGround.js';
 import { NeonTiles } from './neonGlow.js';
@@ -63,8 +63,9 @@ const grid = new Grid();
 const factory = new TileFactory();
 const tiles = new THREE.Group();
 scene.add(tiles);
-const frontier = new Frontier(scene);
-const placement = new Placement(scene, grid, factory);
+const previewCfg = loadPreviewConfig(); // Game Debug → Placement preview
+const frontier = new Frontier(scene, previewCfg);
+const placement = new Placement(scene, grid, factory, previewCfg);
 const mysteries = new Mysteries(scene);
 const dust = new Dust(scene);
 const expansion = new Expansion(scene);
@@ -133,6 +134,13 @@ const debug = createDebugPanel(document.getElementById('debug'), document.getEle
   onShake: () => {
     camShake.add(missileCfg.shake);
     return 'Shake: one missile impact';
+  },
+  preview: {
+    params: PREVIEW_PARAMS,
+    defaults: PREVIEW_DEFAULTS,
+    cfg: previewCfg,
+    save: savePreviewConfig,
+    clear: clearPreviewConfig,
   },
   shake: {
     params: SHAKE_PARAMS,
@@ -3252,6 +3260,27 @@ async function playIntro() {
   toast(L(`First tribute: ${turn.quota} barrels, due after Winter`, `首次贡品：${turn.quota} 桶，冬季结束后上缴`), 'bad', 3200);
 }
 
+/**
+ * The placement ghost, on top of everything (the fog of war included): its own pass over the finished frame,
+ * with the depth cleared so only the ghost's own parts hide each other. Same lights; shadows reuse this frame's map.
+ */
+function renderGhost() {
+  if (!placement.blocks.visible && !placement.feet.visible) return;
+  const bg = scene.background;
+  const autoClear = renderer.autoClear;
+  const shadows = renderer.shadowMap.autoUpdate;
+  scene.background = null;
+  renderer.autoClear = false;
+  renderer.shadowMap.autoUpdate = false;
+  renderer.clearDepth();
+  camera.layers.set(GHOST_LAYER);
+  renderer.render(scene, camera);
+  camera.layers.set(0);
+  scene.background = bg;
+  renderer.autoClear = autoClear;
+  renderer.shadowMap.autoUpdate = shadows;
+}
+
 let last = performance.now();
 function frame(now) {
   const dt = Math.min((now - last) / 1000, 0.05);
@@ -3317,6 +3346,7 @@ function frame(now) {
   perf.gpuBegin();
   fog.render(camera); // offscreen fog pass (High/Medium/Low on high-DPI screens)
   renderer.render(scene, camera);
+  renderGhost();
   perf.gpuEnd();
   perf.end('render (cpu)');
   perf.begin('payout');

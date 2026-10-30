@@ -8,6 +8,12 @@ import { L, both, onLangChange } from './i18n.js';
 const OK_COLOR = new THREE.Color(0x8be39a);
 const BAD_COLOR = new THREE.Color(0xe0563f);
 const HOVER_Y = 0.5;
+/**
+ * Render layer for the ghost. The main render skips it; main.js draws it in a second pass after everything
+ * else (depth cleared), so the preview always shows on top of the fog of war and the tiles around it.
+ */
+export const GHOST_LAYER = 1;
+const toGhostLayer = (o) => o.layers.set(GHOST_LAYER);
 const goal = new THREE.Vector3(); // reused every frame
 /** How fast a rotation swings into place (1/s): higher is snappier. ~0.15s to settle. */
 const SPIN_RATE = 26;
@@ -17,6 +23,34 @@ function cellPart(geo, mat) {
   holder.add(applyTileGap(fitFull(new THREE.Mesh(geo, mat))));
   return holder;
 }
+
+/** Placement preview look (Game Debug → Placement preview), saved to localStorage. Read live every frame. */
+export const PREVIEW_DEFAULTS = {
+  frontierOpacity: 0.15, // pale squares on every empty cell next to your land (frontier.js)
+  validOpacity: 0.4, // green footprint under the piece where it can go
+  invalidOpacity: 0.4, // red footprint where it can't
+  blockOpacity: 0.8, // the plain coloured stand-in blocks (tiles with a 3D model show the model as is)
+};
+export const PREVIEW_PARAMS = [
+  { group: 'Placement preview' },
+  { key: 'frontierOpacity', label: 'Open cell opacity', min: 0, max: 1, step: 0.01, hint: 'pale squares on empty cells next to your land' },
+  { key: 'validOpacity', label: 'Valid footprint opacity', min: 0, max: 1, step: 0.01 },
+  { key: 'invalidOpacity', label: 'Invalid footprint opacity', min: 0, max: 1, step: 0.01 },
+  { key: 'blockOpacity', label: 'Stand-in block opacity', min: 0, max: 1, step: 0.01, hint: 'only tiles without a 3D model' },
+];
+const PREVIEW_KEY = 'oto.previewConfig';
+export function loadPreviewConfig() {
+  const cfg = { ...PREVIEW_DEFAULTS };
+  try {
+    const saved = JSON.parse(localStorage.getItem(PREVIEW_KEY) ?? '{}');
+    for (const k of Object.keys(cfg)) if (typeof saved[k] === 'number') cfg[k] = saved[k];
+  } catch {
+    /* keep defaults */
+  }
+  return cfg;
+}
+export const savePreviewConfig = (cfg) => localStorage.setItem(PREVIEW_KEY, JSON.stringify(cfg));
+export const clearPreviewConfig = () => localStorage.removeItem(PREVIEW_KEY);
 
 /**
  * Ghost preview for the selected piece: floating blocks that follow the cursor
@@ -34,7 +68,8 @@ export class Placement {
   #last = null; // piece and rotation last shown, to tell a rotation from a new piece
   #lastRot = 0;
 
-  constructor(scene, grid, factory) {
+  constructor(scene, grid, factory, cfg = { ...PREVIEW_DEFAULTS }) {
+    this.cfg = cfg;
     this.grid = grid;
     this.factory = factory;
     const s = 1;
@@ -46,7 +81,7 @@ export class Placement {
 
     this.blockGeo = new THREE.BoxGeometry(s, 0.3, s);
     this.footGeo = new THREE.PlaneGeometry(s, s).rotateX(-Math.PI / 2);
-    this.blockMat = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.82, roughness: 0.8 });
+    this.blockMat = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.8, roughness: 0.8 });
     this.footMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.4, depthWrite: false });
     // The reason text is cached per cell: rebuild it in the new language.
     onLangChange(() => {
@@ -55,6 +90,12 @@ export class Placement {
   }
 
   setPiece(piece) {
+    this.#build(piece);
+    this.blocks.traverse(toGhostLayer);
+    this.feet.traverse(toGhostLayer);
+  }
+
+  #build(piece) {
     // Same piece, new rotation: the ghost is rebuilt in the new orientation, then shown turned back by the
     // difference and eased forward to 0. rotateCells turns (x, z) -> (-z, x), which is -90° about Y in three.js,
     // so one step forward starts at +90°. Rotating again mid-swing adds to what is left.
@@ -195,6 +236,8 @@ export class Placement {
 
     const ok = this.result.ok;
     this.footMat.color.copy(ok ? OK_COLOR : BAD_COLOR);
+    this.footMat.opacity = ok ? this.cfg.validOpacity : this.cfg.invalidOpacity;
+    this.blockMat.opacity = this.cfg.blockOpacity;
     this.blockMat.color.set(cardDef(this.piece.terrain).top);
     if (!ok) this.blockMat.color.lerp(BAD_COLOR, 0.55);
     this.blockMat.emissive.copy(ok ? OK_COLOR : BAD_COLOR).multiplyScalar(0.08);

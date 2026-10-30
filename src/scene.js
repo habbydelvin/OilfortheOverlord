@@ -21,8 +21,14 @@ export function createScene(container) {
   const camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.1, 300);
 
   // Lighting: cool sky fill + warm key light that casts shadows.
-  scene.add(new THREE.HemisphereLight(0xdfe8e4, 0x2a2622, 1.3));
+  const sky = new THREE.HemisphereLight(0xdfe8e4, 0x2a2622, 1.3);
+  scene.add(sky);
   const sun = new THREE.DirectionalLight(0xfff0d6, 2.2);
+  // Layer 1 is the placement ghost's own pass (placement.js GHOST_LAYER): it needs the same lights, and still
+  // casts its shadow on the board.
+  sky.layers.enable(1);
+  sun.layers.enable(1);
+  sun.shadow.camera.layers.enable(1);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.bias = -0.0005;
