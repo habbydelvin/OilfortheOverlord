@@ -27,10 +27,16 @@ const MIN_FRAME_BUILDING = 0.2; // buildings fill the picture, however small
  */
 const KEEP_GROUND = new Set(['oasis', 'tarpit', 'cliffs', 'ruins', 'crater', 'waste-mono']);
 const GROUND_PART = /(_Sand|Ground|_SandTrim|_Pad\d+|_AshScorch)$/; // the ground plate's materials (see seamlessGround.js)
-/** Per-card camera overrides: elevation (degrees), closeUp (share of the building kept), focus (aim height, 0-1), margin. */
+/**
+ * Per-card camera overrides: elevation (degrees), closeUp (share of the building kept), focus (aim height, 0-1),
+ * margin, tile (seen from above, the tile's width fills the picture edge to edge, instead of what stands on it).
+ */
 const VIEWS = {
   // Wasteland: the sand seen from straight above, close up (its original card picture).
   wasteland: { elevation: 90, closeUp: 0.55, margin: 0 },
+  // Tar Pit and Oasis: like the Wasteland, the whole tile seen from straight above.
+  tarpit: { elevation: 90, tile: true, margin: 0 },
+  oasis: { elevation: 90, tile: true, margin: 0 },
   // The crater's glowing pool sits below its rim: look down into it a little more.
   crater: { elevation: 28 },
 };
@@ -189,7 +195,11 @@ function snapshot(source, view = {}, key = '') {
   }
   scene.add(model);
   // Close-up: frame only the middle of the building, so it overflows the picture and its detail fills the slot.
-  const box = contentBounds(model, building ? MIN_FRAME_BUILDING : MIN_FRAME);
+  // tile: the tile's width fills the picture from edge to edge (trimmed a little top and bottom), like the Wasteland's.
+  const tileHalf = 0.47;
+  const box = view.tile
+    ? new THREE.Box3(new THREE.Vector3(-tileHalf, 0, -tileHalf / (WIDTH / HEIGHT)), new THREE.Vector3(tileHalf, 0.02, tileHalf / (WIDTH / HEIGHT)))
+    : contentBounds(model, building ? MIN_FRAME_BUILDING : MIN_FRAME);
   const mid = box.getCenter(new THREE.Vector3());
   if (view.focus !== undefined) mid.y = box.min.y + (box.max.y - box.min.y) * view.focus; // aim lower or higher
   const half = box.getSize(new THREE.Vector3()).multiplyScalar((view.closeUp ?? CLOSE_UP) / 2);

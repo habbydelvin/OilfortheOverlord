@@ -1119,13 +1119,13 @@ body.dragging-card * {
   transform: translate3d(var(--plx, 0px), var(--ply, 0px), 0) scale(1.22);
   transform-origin: 50% 85%;
 }
-/* Wasteland's picture is its sand seen from above: it fills its slot as before, not enlarged or spilling out. */
-.card .snap:has(img[src*='/wasteland.webp']),
-#inspect .card-big .snap:has(img[src*='/wasteland.webp']) {
+/* Wasteland, Tar Pit and Oasis pictures show the tile from above: they fill their slot, not enlarged or spilling out. */
+.card .snap:has(img:is([src*='/wasteland.webp'], [src*='/tarpit.webp'], [src*='/oasis.webp'])),
+#inspect .card-big .snap:has(img:is([src*='/wasteland.webp'], [src*='/tarpit.webp'], [src*='/oasis.webp'])) {
   overflow: hidden;
 }
-.card .snap img[src*='/wasteland.webp'],
-#inspect .card-big .snap img[src*='/wasteland.webp'] {
+.card .snap img:is([src*='/wasteland.webp'], [src*='/tarpit.webp'], [src*='/oasis.webp']),
+#inspect .card-big .snap img:is([src*='/wasteland.webp'], [src*='/tarpit.webp'], [src*='/oasis.webp']) {
   transform: translate3d(var(--plx, 0px), var(--ply, 0px), 0);
 }
 

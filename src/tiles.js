@@ -513,7 +513,7 @@ export const BASIC_SHOP = new Set(['station', 'farm', 'settlement']);
  * Card pictures: front renders of each tile model (public/cards/snapshots, made by tools/card-snapshots.html).
  * Card key -> image; the four Wasteland colours share one. Bump SNAPSHOT_VERSION after re-rendering.
  */
-const SNAPSHOT_VERSION = '20261030-noground';
+const SNAPSHOT_VERSION = '20261030-land2';
 const SNAPSHOTS = {
   capital: 'capital', settlement: 'settlement', farm: 'farm', pump: 'pump', station: 'station', refinery: 'refinery',
   oasis: 'oasis', tarpit: 'tarpit', labourcamp: 'labourcamp', cliffs: 'cliffs', ruins: 'ruins', crater: 'crater',
