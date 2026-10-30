@@ -1,7 +1,7 @@
 /**
  * Icon legend: a small window on the left (opened from the "Icon legend" button in the top-left column) listing
  * every icon and marker the board shows, each next to its name, with a short description on hover: the buildings'
- * map icons, the boosters with their "+n" tag, the "?" sites, idle buildings, the neon tiles of boosted buildings,
+ * map icons, the boosters with their "+n" tag, the mystery sites (shafts of light), idle buildings, the neon tiles of boosted buildings,
  * and the resources.
  */
 import { ICONS } from './tiles.js';
@@ -16,7 +16,7 @@ const attr = (text) => text.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 const badge = (icon, { idle = false, boost = null } = {}) =>
   `<span class="map-icon legend-ico${idle ? ' idle' : ''}">${icon}${boost ? `<span class="map-boost"><b>+n</b>${ICONS[boost]}</span>` : ''}</span>`;
 const plain = (icon) => `<span class="legend-ico legend-plain">${icon}</span>`;
-const mystery = () => '<span class="legend-ico legend-mystery">?</span>';
+const mystery = () => '<span class="legend-ico legend-mystery"></span>';
 const neon = (colour) => `<span class="legend-ico legend-neon" style="--neon:${hex(colour)}"></span>`;
 
 /** [section title, [[icon, name, description], ...]] */
@@ -44,7 +44,7 @@ function sections() {
     [
       L('Markers', '标记'),
       [
-        [mystery(), L('"?" site', '神秘地点'), L('Something is hidden here. Build next to it to reveal it.', '这里藏着什么。在相邻处建造即可揭示。')],
+        [mystery(), L('Mystery site', '神秘地点'), L('A shaft of light through the clouds: something is hidden there. Build next to it to reveal it.', '穿透云层的光柱：那里藏着什么。在相邻处建造即可揭示。')],
         [badge(MAP_ICONS.devil), L('Bandit / rebel camp', '匪营 / 叛军营地'), L('Hostile camp: it steals from you each season (workers, food or oil). Send in the Militia to clear it.', '敌对营地：每季都会偷走你的资源（人力、食物或石油）。派遣民兵即可清除。')],
         [badge(ICONS.food, { idle: true }), L('Idle building', '闲置建筑'), L('Not enough manpower to staff it: it produces nothing until a worker is free.', '人力不足，无人运作：在有空闲人力前不产出任何东西。')],
       ],

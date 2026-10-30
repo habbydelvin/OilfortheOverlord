@@ -237,8 +237,6 @@ function patch(material, { mode, mask = 1, grid = [1, 1] }) {
 export function makeSeamless(root, footprint, grid = [1, 1]) {
   root.updateMatrixWorld(true);
   const [w, h] = grid;
-  const size = footprint.getSize(new THREE.Vector3());
-  const toCell = (p) => [((p.x - footprint.min.x) / size.x) * w, ((p.z - footprint.min.z) / size.z) * h];
   const done = new Set();
   const grounds = [];
   root.traverse((o) => {
@@ -246,7 +244,7 @@ export function makeSeamless(root, footprint, grid = [1, 1]) {
     const name = o.material.name ?? '';
     if (SAND_NAME.test(name)) {
       useDesertSand(o.material);
-      dropBorderWalls(o, toCell);
+      dropBorderWalls(o, cellCoords(o, footprint, w, h));
       done.add(o.material);
     } else if (DECAL_NAME.test(name)) {
       paintSand(o.material.map);
@@ -256,31 +254,19 @@ export function makeSeamless(root, footprint, grid = [1, 1]) {
   });
 
   // Painted grounds: each vertex's position in cells, and which cells of the grid the ground covers.
-  const v = new THREE.Vector3();
-  let mask = 0;
-  const tris = [];
+  // (Runs while models load during play: typed arrays and early exits keep it to a few ms per model.)
+  const full = w * h === 1 ? 1 : (() => {
+    let m = 0;
+    for (let z = 0; z < h; z++) for (let x = 0; x < w; x++) m |= 1 << (z * 4 + x);
+    return m;
+  })();
+  let mask = w * h === 1 ? 1 : 0;
   for (const o of grounds) {
-    dropBorderWalls(o, toCell);
-    const pos = o.geometry.attributes.position;
-    const cells = new Float32Array(pos.count * 2);
-    const xz = [];
-    for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
-      const [cx, cz] = toCell(v);
-      cells[i * 2] = cx;
-      cells[i * 2 + 1] = cz;
-      xz.push(cx, cz);
-    }
+    const cells = cellCoords(o, footprint, w, h);
+    dropBorderWalls(o, cells);
     o.geometry.setAttribute('seamCell', new THREE.BufferAttribute(cells, 2));
-    const index = o.geometry.index;
-    const n = index ? index.count : pos.count;
-    for (let i = 0; i < n; i += 3) {
-      const [a, b, c] = [0, 1, 2].map((k) => (index ? index.getX(i + k) : i + k));
-      tris.push([xz[a * 2], xz[a * 2 + 1], xz[b * 2], xz[b * 2 + 1], xz[c * 2], xz[c * 2 + 1]]);
-    }
+    if (mask !== full) mask = coverMask(o.geometry, cells, w, h, mask, full);
   }
-  for (let z = 0; z < h; z++) for (let x = 0; x < w; x++) if (tris.some((t) => inTriangle(x + 0.5, z + 0.5, t))) mask |= 1 << (z * 4 + x);
-  if (w * h === 1) mask = 1;
   for (const o of grounds) {
     if (done.has(o.material)) continue;
     paintSand(o.material.map); // measured now, while loading, rather than on the first frame it's drawn
@@ -290,35 +276,81 @@ export function makeSeamless(root, footprint, grid = [1, 1]) {
   return done.size;
 }
 
+/** Each vertex's position in cells of the footprint's grid (x, z pairs), straight from the world matrix. */
+function cellCoords(o, footprint, w, h) {
+  const pos = o.geometry.attributes.position;
+  const e = o.matrixWorld.elements;
+  const sx = w / (footprint.max.x - footprint.min.x);
+  const sz = h / (footprint.max.z - footprint.min.z);
+  const out = new Float32Array(pos.count * 2);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    out[i * 2] = (e[0] * x + e[4] * y + e[8] * z + e[12] - footprint.min.x) * sx;
+    out[i * 2 + 1] = (e[2] * x + e[6] * y + e[10] * z + e[14] - footprint.min.z) * sz;
+  }
+  return out;
+}
+
+/** Add to `mask` the cells (bit z * 4 + x) whose centre lies inside one of the triangles; stops once all are found. */
+function coverMask(g, cells, w, h, mask, full) {
+  const index = g.index?.array;
+  const n = index ? index.length : g.attributes.position.count;
+  for (let i = 0; i + 2 < n && mask !== full; i += 3) {
+    const a = index ? index[i] : i;
+    const b = index ? index[i + 1] : i + 1;
+    const c = index ? index[i + 2] : i + 2;
+    const ax = cells[a * 2], az = cells[a * 2 + 1];
+    const bx = cells[b * 2], bz = cells[b * 2 + 1];
+    const cx = cells[c * 2], cz = cells[c * 2 + 1];
+    // Only the cell centres inside the triangle's bounding box can be inside it.
+    const x0 = Math.max(0, Math.ceil(Math.min(ax, bx, cx) - 0.5));
+    const x1 = Math.min(w - 1, Math.floor(Math.max(ax, bx, cx) - 0.5));
+    const z0 = Math.max(0, Math.ceil(Math.min(az, bz, cz) - 0.5));
+    const z1 = Math.min(h - 1, Math.floor(Math.max(az, bz, cz) - 0.5));
+    for (let z = z0; z <= z1; z++) {
+      for (let x = x0; x <= x1; x++) {
+        const bit = 1 << (z * 4 + x);
+        if (!(mask & bit) && inTriangle(x + 0.5, z + 0.5, ax, az, bx, bz, cx, cz)) mask |= bit;
+      }
+    }
+  }
+  return mask;
+}
+
 /**
  * The ground parts are thin slabs. Where a tile borders open desert, the slab's side wall shows from the board
  * camera as a dark line along the tile's edge. Remove the walls standing on a cell border (every corner on the
  * same cell line); the desert sits just below, so nothing opens up behind them.
  */
-function dropBorderWalls(o, toCell) {
+function dropBorderWalls(o, cells) {
   const g = o.geometry;
-  const pos = g.attributes.position;
-  const v = new THREE.Vector3();
-  const cells = [];
-  for (let i = 0; i < pos.count; i++) cells.push(toCell(v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld)));
+  const count = g.attributes.position.count;
+  const src = g.index?.array;
+  const n = src ? src.length : count;
   const eps = 0.01;
-  const onLine = (a, b, c, axis) => {
-    const k = cells[a][axis];
-    return Math.abs(k - Math.round(k)) < eps && Math.abs(cells[b][axis] - k) < eps && Math.abs(cells[c][axis] - k) < eps;
+  const onLine = (a, b, c, k) => {
+    const v = cells[a * 2 + k];
+    return Math.abs(v - Math.round(v)) < eps && Math.abs(cells[b * 2 + k] - v) < eps && Math.abs(cells[c * 2 + k] - v) < eps;
   };
-  const index = g.index ? Array.from(g.index.array) : Array.from({ length: pos.count }, (_, i) => i);
-  const kept = [];
-  for (let i = 0; i + 2 < index.length; i += 3) {
-    const [a, b, c] = [index[i], index[i + 1], index[i + 2]];
+  const kept = count > 65535 ? new Uint32Array(n) : new Uint16Array(n);
+  let k = 0;
+  for (let i = 0; i + 2 < n; i += 3) {
+    const a = src ? src[i] : i;
+    const b = src ? src[i + 1] : i + 1;
+    const c = src ? src[i + 2] : i + 2;
     if (onLine(a, b, c, 0) || onLine(a, b, c, 1)) continue;
-    kept.push(a, b, c);
+    kept[k++] = a;
+    kept[k++] = b;
+    kept[k++] = c;
   }
-  if (kept.length === index.length) return;
-  g.setIndex(kept);
+  if (k === n) return;
+  g.setIndex(new THREE.BufferAttribute(kept.slice(0, k), 1));
   g.clearGroups();
 }
 
-function inTriangle(px, pz, [ax, az, bx, bz, cx, cz]) {
+function inTriangle(px, pz, ax, az, bx, bz, cx, cz) {
   const d1 = (px - bx) * (az - bz) - (ax - bx) * (pz - bz);
   const d2 = (px - cx) * (bz - cz) - (bx - cx) * (pz - cz);
   const d3 = (px - ax) * (cz - az) - (cx - ax) * (pz - az);

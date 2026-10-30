@@ -3384,10 +3384,15 @@ function warmUpModels(models = factory.models) {
  * first tile of each kind lands without a hitch.
  */
 async function warmUpModelsGradually(models) {
+  // At most one upload per frame, so two big textures never land in the same frame.
+  const nextFrame = () => new Promise((resolve) => {
+    requestAnimationFrame(resolve);
+    setTimeout(resolve, 100); // a hidden tab doesn't draw frames: keep going slowly
+  });
   for (const tex of modelTextures(models)) {
     await decodeImage(tex.image);
     renderer.initTexture(tex);
-    await breathe();
+    await nextFrame();
   }
   for (const model of models.values()) {
     try {

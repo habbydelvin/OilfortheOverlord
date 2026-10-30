@@ -2205,15 +2205,13 @@ body.striking #mapIcons {
   width: 15px;
   height: 15px;
 }
-/* The "?" site marker, drawn like the one on the map (mystery.js). */
+/* A mystery site: a small shaft of warm light, like the ones over the map (mystery.js). */
 .legend-mystery {
-  display: grid;
-  place-items: center;
-  border: 2px solid #e8bf68;
-  border-radius: 50%;
-  background: #1d2326;
-  color: #e8bf68;
-  font: 700 12px 'Avenir Next', system-ui, sans-serif;
+  background:
+    radial-gradient(ellipse 50% 22% at 50% 92%, rgba(255, 230, 176, 0.85), transparent 70%),
+    linear-gradient(90deg, transparent 18%, rgba(255, 230, 176, 0.6) 42%, rgba(255, 246, 220, 0.95) 50%, rgba(255, 230, 176, 0.6) 58%, transparent 82%);
+  -webkit-mask: linear-gradient(transparent, #000 35%, #000);
+  mask: linear-gradient(transparent, #000 35%, #000);
 }
 /* A neon tile: a glowing square in the building's colour (neonGlow.js). */
 .legend-neon {

@@ -617,8 +617,7 @@ async function recolourInWorker(groundMap) {
   });
   if (!result) return null;
   if (result.share > 0.02) {
-    if (shrunk) groundMap.image.close();
-    useBitmap(groundMap, result.bitmap);
+    useBitmap(groundMap, result.bitmap); // the old bitmap may be shared with other textures: left to the garbage collector
   } else result.bitmap.close();
   return { ref: result.ref, share: result.share };
 }
@@ -790,12 +789,20 @@ function loadImage(id, track) {
       id,
       (async () => {
         const blob = await fetchBlob(`${TEX_URL}${id}.webp?v=${MODEL_VERSION}`, track ? (e) => trackBytes(`tex:${id}`, e) : null);
+        // Decoded and flipped for WebGL by the browser off the main thread, so uploading it later is a plain copy
+        // (an <img> is flipped on the main thread during the upload: a hitch per texture while models load in play).
+        try {
+          const bitmap = await createImageBitmap(blob, { imageOrientation: 'flipY', premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+          return { img: bitmap, blob, flipped: true };
+        } catch {
+          // older browsers: a plain image, flipped at upload
+        }
         const url = URL.createObjectURL(blob);
         const img = new Image();
         img.src = url;
         await img.decode().catch(() => new Promise((resolve) => (img.complete ? resolve() : (img.onload = img.onerror = resolve))));
         URL.revokeObjectURL(url);
-        return { img, blob };
+        return { img, blob, flipped: false };
       })(),
     );
   }
@@ -809,8 +816,9 @@ async function glbTexture(slot, srgb, track) {
   if (!glbTextures.has(key)) {
     glbTextures.set(
       key,
-      loadImage(slot.id, track).then(({ img, blob }) => {
+      loadImage(slot.id, track).then(({ img, blob, flipped }) => {
         const t = new THREE.Texture(img);
+        if (flipped) t.flipY = false; // the bitmap is already flipped
         t.wrapS = slot.wrapS;
         t.wrapT = slot.wrapT;
         t.repeat.fromArray(slot.repeat);
