@@ -59,7 +59,6 @@ const SNAPSHOT_MODELS = {
   bandit_raider: 'bandit_raider',
   bandit_siphon: 'bandit_siphon',
   bandit_scav: 'bandit_scav',
-  bandit_smuggle: 'bandit_smuggle',
   wasteland: 'waste-mono',
 };
 

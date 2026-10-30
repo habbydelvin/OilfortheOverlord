@@ -30,7 +30,6 @@ export const BLOCKOUTS = {
   bandit_raider: 'Camp03.fbx', // red
   bandit_siphon: 'Camp05.fbx', // grey (near-black tent)
   bandit_scav: 'Camp01.fbx', // green (olive tent)
-  bandit_smuggle: 'Camp02.fbx', // blue
 };
 
 /**
@@ -56,7 +55,6 @@ const FINISHED = {
   bandit_raider: { yaw: 0, fit: 'RaiderCampRed_HiveCity' },
   bandit_siphon: { yaw: 0, fit: 'RaiderCampGray_HiveCity' },
   bandit_scav: { yaw: 0, fit: 'RaiderCampGreen_HiveCity' },
-  bandit_smuggle: { yaw: 0, fit: 'RaiderCampBlue_HiveCity' },
   settlement: { yaw: 0, fit: 'Village02_HiveCity' },
 };
 

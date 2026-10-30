@@ -9,6 +9,8 @@ const OK_COLOR = new THREE.Color(0x8be39a);
 const BAD_COLOR = new THREE.Color(0xe0563f);
 const HOVER_Y = 0.5;
 const goal = new THREE.Vector3(); // reused every frame
+/** How fast a rotation swings into place (1/s): higher is snappier. ~0.15s to settle. */
+const SPIN_RATE = 26;
 /** A full-cell ghost part in a holder (the holder takes the offset; the part shrinks by the tile gap). */
 function cellPart(geo, mat) {
   const holder = new THREE.Group();
@@ -26,6 +28,11 @@ export class Placement {
   cell = null;
   result = { ok: false, reason: '' };
   shake = 0;
+  spin = 0; // radians the ghost still has to turn (eases to 0), so a rotation swings instead of snapping
+  base = new THREE.Vector3(); // eased hover position, before the spin and shake offsets
+  spinCentre = new THREE.Vector3(); // centre of the piece's cells (local), the point it turns around
+  #last = null; // piece and rotation last shown, to tell a rotation from a new piece
+  #lastRot = 0;
 
   constructor(scene, grid, factory) {
     this.grid = grid;
@@ -48,6 +55,18 @@ export class Placement {
   }
 
   setPiece(piece) {
+    // Same piece, new rotation: the ghost is rebuilt in the new orientation, then shown turned back by the
+    // difference and eased forward to 0. rotateCells turns (x, z) -> (-z, x), which is -90° about Y in three.js,
+    // so one step forward starts at +90°. Rotating again mid-swing adds to what is left.
+    if (piece && piece === this.#last && piece.rot !== this.#lastRot) {
+      let d = (piece.rot - this.#lastRot + 4) % 4;
+      if (d === 3) d = -1;
+      this.spin += d * (Math.PI / 2);
+    } else {
+      this.spin = 0;
+    }
+    this.#last = piece;
+    this.#lastRot = piece?.rot ?? 0;
     this.piece = piece;
     this.tinted = null; // new ghost materials: re-tint on the next update
     this.blocks.clear();
@@ -75,6 +94,11 @@ export class Placement {
       return;
     }
     this.offsets = pieceOffsets(piece);
+    this.spinCentre.set(
+      this.offsets.reduce((a, o) => a + o[0], 0) / this.offsets.length,
+      0,
+      this.offsets.reduce((a, o) => a + o[1], 0) / this.offsets.length,
+    );
     const blockout = hasBlockout(piece.terrain) && this.factory?.models?.has(piece.terrain);
     // Wasteland previews as its whole-piece model, centred on the piece's cells.
     const wholePiece = piece.terrain.startsWith('wasteland') ? this.factory?.previewPiece(piece.shape, piece.rot) : null;
@@ -118,7 +142,7 @@ export class Placement {
       const cell = this.grid.get(...cells[0]);
       if (!cell) return { ok: false, reason: L('Nothing to demolish here', '这里没有可拆除的东西') };
       if (cell.terrain === 'capital') return { ok: false, reason: L("A Capital can't be demolished", '首都不能被拆除') };
-      if (isCamp(cell.terrain)) return { ok: false, reason: L('Send in the Militia to clear bandits', '派遣民兵来清除土匪') };
+      if (isCamp(cell.terrain)) return { ok: false, reason: L('Send in the Militia to clear camps', '派遣民兵来清除营地') };
       return { ok: true, reason: '' };
     }
     if (this.piece?.terrain === 'demolish2') {
@@ -127,7 +151,7 @@ export class Placement {
     }
     if (this.piece?.terrain === 'militia') {
       const cell = this.grid.get(...cells[0]);
-      if (!cell || !isCamp(cell.terrain)) return { ok: false, reason: L('The militia only clears bandit camps', '民兵只能清除匪营') };
+      if (!cell || !isCamp(cell.terrain)) return { ok: false, reason: L('The militia only clears bandit and rebel camps', '民兵只能清除匪营和叛军营地') };
       return { ok: true, reason: '' };
     }
     // Optional extra rule (the tutorial: only the highlighted cells).
@@ -189,8 +213,24 @@ export class Placement {
 
     this.feet.position.set(cell[0], 0, cell[1]);
     goal.set(cell[0], HOVER_Y + Math.sin(time * 3) * 0.05, cell[1]);
-    if (wasHidden) this.blocks.position.copy(goal);
-    else this.blocks.position.lerp(goal, 1 - Math.exp(-22 * dt));
+    if (wasHidden) this.base.copy(goal);
+    else this.base.lerp(goal, 1 - Math.exp(-22 * dt));
+    this.blocks.position.copy(this.base);
+
+    // Turn around the centre of the cells: rotation about the group origin, plus (c - R·c) to keep c fixed.
+    if (this.spin) {
+      this.spin *= Math.exp(-SPIN_RATE * dt);
+      if (Math.abs(this.spin) < 0.002) this.spin = 0;
+    }
+    this.blocks.rotation.y = this.spin;
+    if (this.spin) {
+      const c = this.spinCentre;
+      const cos = Math.cos(this.spin);
+      const sin = Math.sin(this.spin);
+      // three.js Y rotation: x' = x cos + z sin, z' = -x sin + z cos
+      this.blocks.position.x += c.x - (c.x * cos + c.z * sin);
+      this.blocks.position.z += c.z - (-c.x * sin + c.z * cos);
+    }
 
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 0.5);

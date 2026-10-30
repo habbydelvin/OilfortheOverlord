@@ -234,7 +234,7 @@ export const EVENTS = {
         get label() {
           return L('Turn them away', '把他们赶走');
         },
-        text: () => L('+1 raider camp', '+1 掠夺者营地'),
+        text: () => L('+1 rebel camp', '+1 叛军营地'),
         get say() {
           return L("Close the gates. We can't feed them.", '关上城门。我们养不起他们。');
         },

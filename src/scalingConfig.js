@@ -3,8 +3,7 @@
  *
  * Year events: a percentage that starts at `<event>Base` in year 2 (the first event year), grows by
  * `<event>PerYear` each year after, and stops at `<event>Max`. Good events scale the same way.
- * Rebel (raider) camps: each takes a percentage of the worker slots; several add up, capped at
- * `campStackMax`. Bandit camps take a flat amount each. Every scaled effect is at least 1.
+ * Rebel (raider) camps and bandit camps take a flat amount each. Every scaled effect is at least 1.
  *
  * `SCALE` is read live, so slider changes apply straight away (even to the running year's event).
  * To make a tweak permanent: "Copy JSON" in the debug panel and paste it over SCALE_DEFAULTS.
@@ -32,12 +31,10 @@ export const SCALE_DEFAULTS = {
   prospectorsPerYear: 0.02,
   prospectorsMax: 0.25,
   earthquakeCliffs: 3,
-  campSlots: 0.15,
-  campStackMax: 0.6,
+  rebelSlots: 2,
   banditSlots: 2,
   banditOil: 2,
   banditFood: 2,
-  banditStockpile: 3,
 };
 
 /** First year that draws an event; its strength is the base value. */
@@ -60,14 +57,12 @@ export const SCALE_PARAMS = [
   ...eventRows('prospectors', 'Prospectors oil (× tribute)'),
   { group: 'Scaling · Earthquake' },
   { key: 'earthquakeCliffs', label: 'Cliffs created', min: 1, max: 10, step: 1 },
-  { group: 'Scaling · Rebel camps (% per camp)' },
-  { key: 'campSlots', label: 'Rebels: worker slots', min: 0, max: 0.5, step: 0.01, hint: 'Raider Camp (from starvation)' },
-  { key: 'campStackMax', label: 'Stacking cap', min: 0.1, max: 1, step: 0.01, hint: 'most all rebel camps can take in total' },
+  { group: 'Scaling · Rebel camps (flat, per camp)' },
+  { key: 'rebelSlots', label: 'Rebel Camp: worker slots', min: 0, max: 10, step: 1, hint: 'Rebel Camp (from starvation)' },
   { group: 'Bandit camps (flat, per camp, per season)' },
   { key: 'banditSlots', label: 'Raider Hideout: worker slots', min: 0, max: 10, step: 1 },
   { key: 'banditOil', label: 'Siphoner: oil', min: 0, max: 10, step: 1 },
   { key: 'banditFood', label: 'Scavenger: food', min: 0, max: 10, step: 1 },
-  { key: 'banditStockpile', label: 'Smuggler: barrels from stockpile', min: 0, max: 20, step: 1 },
 ];
 
 export const SCALE = { ...SCALE_DEFAULTS };
@@ -93,8 +88,6 @@ export function eventPct(id, year) {
   return Math.max(0, Math.min(max, base + per * Math.max(0, year - FIRST_EVENT_YEAR)));
 }
 
-/** Share (0..1) taken by `count` camps of one kind at `pct` each, with the stacking cap. */
-export const campShare = (count, pct) => Math.min(SCALE.campStackMax, count * pct);
 
 /** A scaled amount: round(total × |frac|), at least 1 whenever frac isn't 0; keeps frac's sign. */
 export function scaled(total, frac) {

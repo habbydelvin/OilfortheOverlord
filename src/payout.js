@@ -115,8 +115,7 @@ export class Payout {
           // Triggered but made nothing (e.g. Spark on a Refinery with no station beside it).
           (tile.zero ? '<div class="row zero"><b>0</b></div>' : '') +
           // Raider camps produce nothing; they just stir unrest.
-          (tile.terrain === 'raider' || tile.terrain === 'bandit_raider' ? `<div class="row neg" style="--c:#e0533f"><b>${L('unrest', '动乱')}</b></div>` : '') +
-          (tile.terrain === 'bandit_smuggle' ? `<div class="row neg" style="--c:#e0533f"><b>-10%</b><span>${L('stockpile', '库存')}</span></div>` : '');
+          (tile.terrain === 'raider' || tile.terrain === 'bandit_raider' ? `<div class="row neg" style="--c:#e0533f"><b>${L('unrest', '动乱')}</b></div>` : '');
       let el = null;
       if (rows) {
         el = document.createElement('div');

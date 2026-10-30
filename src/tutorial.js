@@ -34,8 +34,8 @@ export const markTutorialDone = () => localStorage.setItem(TUTORIAL_KEY, '1');
 const CAPITAL = [[0, 0]];
 const rotateHint = () =>
   L(
-    '<div class="coach-hint">It does not fit this way round. Rotate it: <b>R</b>, <b>right-click</b>, or the <b>mouse wheel</b> while dragging.</div>',
-    '<div class="coach-hint">这个方向放不进去。旋转它：拖动时按 <b>R</b>、<b>右键</b>，或滚动<b>鼠标滚轮</b>。</div>',
+    '<div class="coach-hint">It does not fit this way round. Rotate it: <b>R</b>, or <b>right-click</b> (also while dragging).</div>',
+    '<div class="coach-hint">这个方向放不进去。旋转它：按 <b>R</b> 或<b>右键</b>（拖动时也可以）。</div>',
   );
 
 /**

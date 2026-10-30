@@ -105,11 +105,16 @@ h1 {
   box-shadow: inset 0 0 0 1px var(--line);
 }
 
-.thumb {
-  display: block;
-  width: 100%;
-  height: auto;
-  background: #14181a;
+/* The game card itself (styles from cards.css), on a dark stage like the table. */
+.card-stage {
+  display: grid;
+  place-items: center;
+  padding: 34px 12px 18px; /* room above: tile pictures pop out over the card frame */
+  background: radial-gradient(ellipse at 50% 40%, rgba(255, 255, 255, 0.06), transparent 70%), #101314;
+}
+.card-stage .card {
+  --w: 205px; /* shop-card size */
+  cursor: default;
 }
 
 .swatches {
@@ -233,21 +238,6 @@ h1 {
 }
 
 /* Action cards have no 3D tile: a big glowing symbol instead. */
-.symbol-thumb {
-  display: grid;
-  place-items: center;
-  aspect-ratio: 3 / 2;
-  background: radial-gradient(ellipse at 50% 45%, rgba(255, 255, 255, 0.08), transparent 70%), #1c2325;
-}
-
-.symbol-thumb span {
-  font-size: 96px;
-  line-height: 1;
-  color: var(--top);
-  filter: brightness(1.7);
-  text-shadow: 0 0 22px var(--top);
-}
-
 .rule .trigger {
   font-size: 0.8em;
   font-weight: 600;
@@ -263,7 +253,7 @@ h1 {
 .event.fortune { --kind: #7cc46a; }
 .event.choice { --kind: #5fa3e0; }
 .event-head { padding: 12px 12px 0; }
-.badge {
+.event-head .badge {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 999px;

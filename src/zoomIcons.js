@@ -99,7 +99,6 @@ function iconFor(terrain) {
     case 'bandit_raider':
     case 'bandit_siphon':
     case 'bandit_scav':
-    case 'bandit_smuggle':
       return DEVIL;
     default:
       return null;

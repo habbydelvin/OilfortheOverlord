@@ -55,7 +55,7 @@ for (const [k, v] of await loadBundle('waste')) all.set(k, v);
 const DEFAULT_KEYS = [
   'capital', 'settlement', 'farm', 'pump', 'station', 'refinery',
   'oasis', 'tarpit', 'labourcamp', 'cliffs', 'ruins', 'crater',
-  'raider', 'bandit_raider', 'bandit_siphon', 'bandit_scav', 'bandit_smuggle', 'waste-mono',
+  'raider', 'bandit_raider', 'bandit_siphon', 'bandit_scav', 'waste-mono',
 ];
 const keys = q.get('keys')?.split(',') ?? DEFAULT_KEYS;
 const cols = Number(q.get('cols') ?? 6);

@@ -4,7 +4,7 @@ import { hasBlockout, loadCoreModels, loadBundle } from './models.js';
 import { buildRaiderCamp } from './raiderMesh.js';
 import { buildLabourCamp } from './labourCampMesh.js';
 import { copySeam } from './seamlessGround.js';
-import { SCALE, P } from './scalingConfig.js';
+import { SCALE } from './scalingConfig.js';
 import { L } from './i18n.js';
 
 /**
@@ -28,7 +28,7 @@ export const TERRAINS = {
     category: 'building',
     buildable: false,
     weight: 0, // only the starting tile
-    rule: '+4 worker slots · Eats 3 food each season · Adjacent buildings trigger twice',
+    rule: '+4 worker slots · Adjacent buildings trigger twice',
     stats: { food: -3, manpower: 4 },
   },
   settlement: {
@@ -83,7 +83,7 @@ export const TERRAINS = {
     category: 'building',
     buildable: false,
     weight: 1,
-    rule: 'Makes 0.5× the oil of each adjacent station',
+    rule: '0.5× oil per adjacent station',
     stats: { manpower: -1, oilMultiplierPerAdjacent: { station: 0.5 } },
   },
 
@@ -201,7 +201,7 @@ export const TERRAINS = {
     stats: { adjacentPenalty: { farm: { manpower: -1, food: -1 }, settlement: { manpower: -1, food: -1 } } },
   },
   raider: {
-    name: 'Raider Camp',
+    name: 'Rebel Camp',
     trigger: 'Passive',
     top: 0x7a3a2a,
     edge: 0x52261b,
@@ -209,7 +209,7 @@ export const TERRAINS = {
     buildable: false,
     weight: 0, // only spawned when the food runs out (net ≤ 0 and empty stores)
     get rule() {
-      return `-${P(SCALE.campSlots)} worker slots · Arrives when the food stores run dry · One leaves each season with a food surplus`;
+      return `-${SCALE.rebelSlots} worker slots`;
     },
     stats: { drain: 'slots' },
   },
@@ -227,7 +227,7 @@ export const TERRAINS = {
     bandit: true,
     tent: 0x8c2f22,
     get rule() {
-      return `-${SCALE.banditSlots} worker slots · Clear it with Send in the Militia`;
+      return `-${SCALE.banditSlots} worker slots`;
     },
     stats: { drain: 'banditSlots' },
   },
@@ -242,7 +242,7 @@ export const TERRAINS = {
     bandit: true,
     tent: 0x22201e,
     get rule() {
-      return `-${SCALE.banditOil} oil each season · Clear it with Send in the Militia`;
+      return `-${SCALE.banditOil} oil`;
     },
     stats: { drain: 'oil' },
   },
@@ -257,24 +257,9 @@ export const TERRAINS = {
     bandit: true,
     tent: 0x6f7a2a,
     get rule() {
-      return `-${SCALE.banditFood} food each season · Clear it with Send in the Militia`;
+      return `-${SCALE.banditFood} food`;
     },
     stats: { drain: 'food' },
-  },
-  bandit_smuggle: {
-    name: 'Smuggler Den',
-    trigger: 'Passive',
-    top: 0x3e4a5c,
-    edge: 0x29313d,
-    category: 'junk',
-    buildable: false,
-    weight: 0,
-    bandit: true,
-    tent: 0x34506e,
-    get rule() {
-      return `Steals ${SCALE.banditStockpile} barrels from your oil stockpile each season · Clear it with Send in the Militia`;
-    },
-    stats: { drain: 'stockpile' },
   },
 };
 
@@ -309,7 +294,7 @@ export const ACTIONS = {
     symbol: '✕',
     range: 0,
     weight: 0.4,
-    rule: 'Remove a tile (not a Capital or a camp)',
+    rule: 'Remove a tile',
   },
   demolish2: {
     name: 'Wrecking Crew',
@@ -320,7 +305,7 @@ export const ACTIONS = {
     symbol: '⊠',
     size: 2, // a 2×2 square, the hovered cell is its corner (instead of a range around it)
     weight: 0.4,
-    rule: 'Remove up to 4 tiles in a 2×2 square (not Capitals or camps)',
+    rule: 'Remove up to 4 tiles in a 2×2 square',
   },
   militia: {
     name: 'Send in the Militia',
@@ -331,22 +316,21 @@ export const ACTIONS = {
     symbol: '⚔',
     range: 0,
     weight: 0, // shop only
-    rule: 'Clear one bandit or raider camp',
+    rule: 'Clear one bandit or rebel camp',
   },
 };
 
 const TRIGGER_ZH = { Passive: '被动', 'On trigger': '触发时', Junk: '废料', 'On play': '打出时' };
 const WASTELAND_ZH = { name: '荒地', rule: '3×3 荒地区域有几率出现匪营' };
-const MILITIA_ZH = '用“派遣民兵”清除';
 
 /** Chinese name and rule for each card; a function rule reads the live SCALE values like the English getter. */
 const ZH = {
-  capital: { name: '首都', rule: '+4 人力 · 每季消耗 3 食物 · 相邻建筑触发两次' },
+  capital: { name: '首都', rule: '+4 人力 · 相邻建筑触发两次' },
   settlement: { name: '定居点', rule: '+2 人力' },
   farm: { name: '水培农场', rule: '+2 食物' },
   pump: { name: '水泵站', rule: '相邻农场 +2 食物' },
   station: { name: '采油站', rule: '+2 石油' },
-  refinery: { name: '炼油厂', rule: '产出每个相邻采油站产量 0.5 倍的石油' },
+  refinery: { name: '炼油厂', rule: '每个相邻采油站 0.5× 石油' },
   wasteland1: WASTELAND_ZH,
   wasteland2: WASTELAND_ZH,
   wasteland3: WASTELAND_ZH,
@@ -358,17 +342,16 @@ const ZH = {
   ruins: { name: '战前遗迹', rule: '在旁边建造即可清除 · 清除后手牌补至 5 张' },
   crater: { name: '毒坑', rule: '每个相邻农场/定居点 -1 人力，-1 食物' },
   raider: {
-    name: '掠夺者营地',
-    rule: () => `-${P(SCALE.campSlots)} 人力 · 粮仓耗尽时出现 · 食物有盈余时每季离开一个`,
+    name: '叛军营地',
+    rule: () => `-${SCALE.rebelSlots} 人力`,
   },
-  bandit_raider: { name: '掠夺者巢穴', rule: () => `-${SCALE.banditSlots} 人力 · ${MILITIA_ZH}` },
-  bandit_siphon: { name: '窃油者营地', rule: () => `每季 -${SCALE.banditOil} 石油 · ${MILITIA_ZH}` },
-  bandit_scav: { name: '拾荒者营地', rule: () => `每季 -${SCALE.banditFood} 食物 · ${MILITIA_ZH}` },
-  bandit_smuggle: { name: '走私者窝点', rule: () => `每季从石油库存中偷走 ${SCALE.banditStockpile} 桶 · ${MILITIA_ZH}` },
+  bandit_raider: { name: '掠夺者巢穴', rule: () => `-${SCALE.banditSlots} 人力` },
+  bandit_siphon: { name: '窃油者营地', rule: () => `-${SCALE.banditOil} 石油` },
+  bandit_scav: { name: '拾荒者营地', rule: () => `-${SCALE.banditFood} 食物` },
   spark: { name: '火花', rule: '触发 3×3 范围内的地块' },
-  demolish: { name: '拆除', rule: '移除一个地块（首都和营地除外）' },
-  demolish2: { name: '拆迁队', rule: '移除 2×2 范围内至多 4 个地块（首都和营地除外）' },
-  militia: { name: '派遣民兵', rule: '清除一个匪营或掠夺者营地' },
+  demolish: { name: '拆除', rule: '移除一个地块' },
+  demolish2: { name: '拆迁队', rule: '移除 2×2 范围内至多 4 个地块' },
+  militia: { name: '派遣民兵', rule: '清除一个匪营或叛军营地' },
 };
 
 // name, trigger and rule become getters that answer in the current language (the English stays above).
@@ -517,7 +500,7 @@ const SNAPSHOT_VERSION = '20261030-land2';
 const SNAPSHOTS = {
   capital: 'capital', settlement: 'settlement', farm: 'farm', pump: 'pump', station: 'station', refinery: 'refinery',
   oasis: 'oasis', tarpit: 'tarpit', labourcamp: 'labourcamp', cliffs: 'cliffs', ruins: 'ruins', crater: 'crater',
-  raider: 'raider', bandit_raider: 'bandit_raider', bandit_siphon: 'bandit_siphon', bandit_scav: 'bandit_scav', bandit_smuggle: 'bandit_smuggle',
+  raider: 'raider', bandit_raider: 'bandit_raider', bandit_siphon: 'bandit_siphon', bandit_scav: 'bandit_scav',
   wasteland1: 'wasteland', wasteland2: 'wasteland', wasteland3: 'wasteland', wasteland4: 'wasteland',
 };
 for (const [key, file] of Object.entries(SNAPSHOTS)) if (TERRAINS[key]) TERRAINS[key].snapshot = `/cards/snapshots/${file}.webp?v=${SNAPSHOT_VERSION}`;

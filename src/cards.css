@@ -1,0 +1,325 @@
+/*
+ * Card look, shared by the game (ui.css) and the tile library (library.js): the metal frame, LED panel,
+ * picture slot, name and rules, upkeep dial, action-card symbol, and resource icons in rule text.
+ * Layout-specific card rules (hand fan, shop size, inspect panel) live with their screens in ui.css.
+ */
+
+/*
+ * Card frame: public/cards/CardBaseTall.png, built from the frame art (CardBase.png) by
+ * tools/make-card-frame.py so it is already card-shaped (1.82 × as tall as wide). One plain background:
+ * CSS border-image slices left a hairline seam down the middle of every card.
+ * Everything is sized from --w, the card width:
+ *  - LED grid (top right, over the frame's 3×3 tiles): the piece shape, see shapeGridHTML in tiles.js.
+ *  - centre panel, tinted with the card colour: picture slot (.snap, for tile snapshots), then name and rules.
+ */
+.card,
+#inspect .card-big {
+  --w: 165px;
+  position: relative;
+  width: var(--w);
+  height: calc(var(--w) * 1.82);
+  display: flex;
+  flex-direction: column;
+  /* Inside the centre panel (its top is 0.404 × w down, its bottom 0.244 × w up). */
+  padding: calc(var(--w) * 0.44) calc(var(--w) * 0.13) calc(var(--w) * 0.27);
+  background: url('/cards/CardBaseTall.png') 0 0 / 100% 100% no-repeat;
+  isolation: isolate; /* the colour tint blends with the frame only, not the board behind it */
+  filter: drop-shadow(var(--sx, 0px) var(--sy, 6px) 8px rgba(0, 0, 0, 0.55));
+}
+
+.card {
+  cursor: pointer;
+  transition: transform 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.3), filter 0.18s;
+}
+
+/* The card's colour, multiplied into the centre panel so the metal texture still shows through. */
+.card::before,
+#inspect .card-big::before {
+  content: '';
+  position: absolute;
+  left: 10.5%;
+  right: 10.5%;
+  top: calc(var(--w) * 0.405);
+  bottom: calc(var(--w) * 0.245);
+  border-radius: 4px;
+  background: var(--top);
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+
+/* Shop cards keep a simple CSS lift; hand cards are moved by hand.js. */
+#shopCards .card:hover {
+  transform: translateY(-10px);
+}
+
+.card.selected {
+  filter: drop-shadow(0 0 1.5px var(--gold)) drop-shadow(0 0 1.5px var(--gold)) drop-shadow(var(--sx, 0px) calc(var(--sy, 6px) + 8px) 14px rgba(0, 0, 0, 0.55));
+}
+
+/* Touch: a drag on a card picks it up instead of scrolling (which would cancel the drag). */
+#hand .card {
+  touch-action: none;
+}
+#hand .card img {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+/* Being dragged onto the board: the 3D ghost shows it there, so the card in hand dims. */
+.card.selected.dragging {
+  opacity: 0.45;
+}
+body.dragging-card,
+body.dragging-card * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+.card.deal {
+  animation: deal 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+
+/* LED panel, top right: a bit bigger than the frame's own 3×3 tiles, which it covers (right edge at 97%). */
+.card .art,
+#inspect .card-big .art {
+  position: absolute;
+  right: 3%;
+  top: calc(var(--w) * 0.022);
+  width: calc(var(--w) * 0.27);
+  height: calc(var(--w) * 0.27);
+  padding: calc(var(--w) * 0.018);
+  border-radius: calc(var(--w) * 0.025);
+  background: linear-gradient(180deg, #2a2724, #151412);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), inset 0 1px 3px rgba(0, 0, 0, 0.8), 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+/* Action cards light no squares: keep the frame's own tiles showing. */
+.card .art:empty {
+  display: none;
+}
+
+.card .shape,
+#inspect .card-big .shape {
+  width: 100%;
+  height: 100%;
+  display: grid; /* columns come from shapeGridHTML (3, or 4 for the I piece) */
+  gap: 9%;
+}
+
+/* An unlit LED: dark glass. */
+.card .shape i,
+#inspect .card-big .shape i {
+  border-radius: 18%;
+  background: radial-gradient(circle at 40% 35%, rgba(255, 255, 255, 0.1), transparent 60%), #0d0d0c;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06), inset 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+/* A lit LED: a hot, almost white core fading to the card colour, with a soft glow around it. */
+.card .shape i.on,
+#inspect .card-big .shape i.on {
+  --led: color-mix(in srgb, var(--top) 75%, white);
+  background:
+    radial-gradient(circle at 42% 38%, rgba(255, 255, 255, 0.85), transparent 28%),
+    radial-gradient(circle at 50% 50%, var(--led), var(--top) 75%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 0 calc(var(--w) * 0.018) var(--led),
+    0 0 calc(var(--w) * 0.05) color-mix(in srgb, var(--led) 70%, transparent);
+}
+
+/* Area of effect: the cells a tile affects light up yellow. */
+.card .shape i.area,
+#inspect .card-big .shape i.area {
+  --led: #ffe27a;
+  background:
+    radial-gradient(circle at 42% 38%, rgba(255, 255, 255, 0.85), transparent 28%),
+    radial-gradient(circle at 50% 50%, var(--led), #e0a91c 75%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 0 calc(var(--w) * 0.018) var(--led),
+    0 0 calc(var(--w) * 0.05) color-mix(in srgb, var(--led) 70%, transparent);
+}
+
+/* Picture slot at the top of the centre panel: a tile snapshot later, the symbol on action cards. */
+.card .snap,
+#inspect .card-big .snap {
+  position: relative; /* above the colour tint */
+  flex: none;
+  height: calc(var(--w) * 0.5);
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+  overflow: hidden;
+}
+/* The recessed look only once there is a snapshot. An empty dark box read as the card being cut in half. */
+.card .snap:has(img),
+#inspect .card-big .snap:has(img) {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+.card .snap img,
+#inspect .card-big .snap img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* transparent renders: show the whole model, never crop it */
+}
+/*
+ * The picture is drawn larger than its slot and may spill past it (over the card's frame): the building, on a
+ * transparent background, pops out of the card. It grows mostly upward and sideways, clear of the name below.
+ * Parallax on hand cards: --plx / --ply follow the card's tilt (hand.js), so the building shifts against the card.
+ */
+.card .snap:has(img),
+#inspect .card-big .snap:has(img) {
+  overflow: visible;
+}
+.card .snap img,
+#inspect .card-big .snap img {
+  transform: translate3d(var(--plx, 0px), var(--ply, 0px), 0) scale(1.22);
+  transform-origin: 50% 85%;
+}
+/* Wasteland, Tar Pit and Oasis pictures show the tile from above: they fill their slot, not enlarged or spilling out. */
+.card .snap:has(img:is([src*='/wasteland.webp'], [src*='/tarpit.webp'], [src*='/oasis.webp'])),
+#inspect .card-big .snap:has(img:is([src*='/wasteland.webp'], [src*='/tarpit.webp'], [src*='/oasis.webp'])) {
+  overflow: hidden;
+}
+.card .snap img:is([src*='/wasteland.webp'], [src*='/tarpit.webp'], [src*='/oasis.webp']),
+#inspect .card-big .snap img:is([src*='/wasteland.webp'], [src*='/tarpit.webp'], [src*='/oasis.webp']) {
+  transform: translate3d(var(--plx, 0px), var(--ply, 0px), 0);
+}
+
+.card.junk {
+  filter: saturate(0.6) drop-shadow(var(--sx, 0px) var(--sy, 6px) 8px rgba(0, 0, 0, 0.55));
+}
+
+.card.junk.selected {
+  filter: saturate(0.6) drop-shadow(0 0 1.5px var(--gold)) drop-shadow(0 0 1.5px var(--gold)) drop-shadow(var(--sx, 0px) calc(var(--sy, 6px) + 8px) 14px rgba(0, 0, 0, 0.55));
+}
+
+/* Text over textured metal: a heavier shadow than on the old flat cards. Centred in what is left under the picture. */
+.card .name,
+.card .rule {
+  position: relative; /* above the colour tint */
+  text-align: center;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95), 0 0 6px rgba(0, 0, 0, 0.7);
+}
+
+.card .name {
+  margin-top: auto;
+  font-size: calc(var(--w) * 0.088);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: 1.15;
+}
+
+.card .rule {
+  margin: calc(var(--w) * 0.015) 0 auto;
+  font-size: calc(var(--w) * 0.064);
+  line-height: 1.28;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+/* Amounts in the rules ("+2" and its resource icon): larger than the words around them. */
+.card .rule .amt,
+#inspect .card-big .rule .amt {
+  font-size: 1.7em;
+  font-weight: 700;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+
+/*
+ * Upkeep (manpower or food the tile takes): a gauge readout set into the frame's top-left dial (its dark face is
+ * centred 0.100 × w across, 0.089 × w down), glowing like the LED panel on the other side. Free tiles stay unlit.
+ */
+.card .badge {
+  --d: calc(var(--w) * 0.19); /* the dial's face and rim */
+  position: absolute;
+  left: calc(var(--w) * 0.1 - var(--d) / 2);
+  top: calc(var(--w) * 0.089 - var(--d) / 2);
+  width: var(--d);
+  height: var(--d);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 38% 30%, rgba(255, 255, 255, 0.14), transparent 45%),
+    radial-gradient(circle at 50% 50%, #22201d 0%, #0c0b0a 72%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    inset 0 2px 4px rgba(0, 0, 0, 0.9),
+    0 0 0 calc(var(--w) * 0.007) rgba(0, 0, 0, 0.55);
+  font-size: calc(var(--w) * 0.074);
+  font-weight: 700;
+  line-height: 1;
+  color: #ffe2b0;
+  text-shadow: 0 0 calc(var(--w) * 0.02) rgba(255, 168, 70, 0.95), 0 0 calc(var(--w) * 0.045) rgba(255, 140, 40, 0.55);
+  z-index: 1;
+}
+.card .badge .ico {
+  width: calc(var(--w) * 0.094);
+  height: calc(var(--w) * 0.094);
+  margin-top: calc(var(--w) * 0.002);
+  color: #f0b27a;
+  filter: drop-shadow(0 0 calc(var(--w) * 0.012) rgba(255, 168, 70, 0.8));
+}
+.card .badge.free {
+  color: rgba(255, 255, 255, 0.4);
+  text-shadow: none;
+}
+.card .badge.free .ico {
+  opacity: 0.45;
+  filter: none;
+}
+
+/* In the corner of the dark screen in the top band. */
+.card .hotkey {
+  position: absolute;
+  top: calc(var(--w) * 0.095);
+  right: 41%;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 11px;
+  line-height: 15px;
+  color: #ddd;
+}
+
+/* Action cards: a big symbol in the picture slot instead of a tile shape. */
+.card .symbol {
+  font-size: calc(var(--w) * 0.3);
+  line-height: 1;
+  color: var(--top);
+  filter: brightness(1.7);
+  text-shadow: 0 0 calc(var(--w) * 0.1) var(--top);
+}
+
+.card.action {
+  filter: drop-shadow(0 0 2px var(--top)) drop-shadow(var(--sx, 0px) var(--sy, 6px) 8px rgba(0, 0, 0, 0.55));
+}
+
+.card.action.selected {
+  filter: drop-shadow(0 0 1.5px var(--gold)) drop-shadow(0 0 1.5px var(--gold)) drop-shadow(var(--sx, 0px) calc(var(--sy, 6px) + 8px) 14px rgba(0, 0, 0, 0.55));
+}
+
+/* "On trigger" heading above a card's effect lines. */
+.card .rule .trigger,
+#inspect .rule .trigger {
+  margin-bottom: 2px;
+  font-size: 0.8em;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+
+/* Resource icons inside card rule text and badges. */
+.ico.res-mp { color: #f0b27a; }
+.ico.res-food { color: #e0533f; }
+.ico.res-oil { color: #e08a3a; }
+.rule .ico {
+  width: 1.15em;
+  height: 1.15em;
+  margin-left: 2px;
+  vertical-align: -0.22em;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.5));
+}

@@ -27,6 +27,7 @@ import { Dialogue } from './dialogue.js';
 import { TIERS, TIER_ORDER, REWARDS, LOW_STREAK_LIMIT, rollReward, scaledQuota } from './targets.js';
 import { loadPayoutConfig } from './payoutConfig.js';
 import { createDebugPanel } from './debugPanel.js';
+import { CameraShake, SHAKE_PARAMS, SHAKE_DEFAULTS, loadShakeConfig, saveShakeConfig, clearShakeConfig } from './cameraShake.js';
 import { SCALE, SCALE_PARAMS, SCALE_DEFAULTS, loadScaleConfig, saveScaleConfig, clearScaleConfig, eventPct, P } from './scalingConfig.js';
 import { Traffic } from './traffic.js';
 import { ZoomIcons, ICON_PARAMS, ICON_DEFAULTS, loadIconConfig, saveIconConfig, clearIconConfig } from './zoomIcons.js';
@@ -73,6 +74,8 @@ const fog = new FogOfWar(scene, fogCfg);
 fog.attachRenderer(renderer, scene, [tiles]);
 const missileCfg = loadMissileConfig(); // Game Debug → Missiles
 const missiles = new MissileStrike(scene, camera, missileCfg);
+const shakeCfg = loadShakeConfig(); // Game Debug → Missile camera shake
+const camShake = new CameraShake(camera, shakeCfg); // missile strikes only; tiles etc. use the small `shake` jolt
 const gfxCfg = loadGfxConfig();
 const applyGraphics = () => applyGfx(gfxCfg, { renderer, scene, sun, fog });
 applyGraphics();
@@ -125,6 +128,17 @@ const debug = createDebugPanel(document.getElementById('debug'), document.getEle
     return 'Tutorial reset: Year 0 started';
   },
   onMissiles: () => (tutorialBlocks() ? 'Not during the tutorial' : previewMissileStrike()),
+  onShake: () => {
+    camShake.add(missileCfg.shake);
+    return 'Shake: one missile impact';
+  },
+  shake: {
+    params: SHAKE_PARAMS,
+    defaults: SHAKE_DEFAULTS,
+    cfg: shakeCfg,
+    save: saveShakeConfig,
+    clear: clearShakeConfig,
+  },
   missiles: {
     params: MISSILE_PARAMS,
     defaults: MISSILE_DEFAULTS,
@@ -279,16 +293,15 @@ const handSize = () => HAND_SIZE + (turn.event?.mods?.handBonus ?? 0);
 /** Shop price this visit (a Black Market Caravan can halve it). */
 const shopPrice = (price) => Math.max(1, Math.round(price * (turn.shopMult ?? 1)));
 
-/** What a camp kind does: its percentage, plus what all camps of that kind take right now. */
+/** What a camp kind does: its flat amount, plus (for Rebel Camps) what all of them take right now. */
 function campEffect(kind) {
   const e = economyNow();
   const d = TERRAINS[kind].stats.drain;
   const all = (e.camps[d] ?? 0) > 1 ? L(' (all camps)', '（所有营地合计）') : '';
-  if (d === 'slots') return L(`-${P(SCALE.campSlots)} worker slots, -${e.rebelManpower} now${all}`, `人力 -${P(SCALE.campSlots)}，当前 -${e.rebelManpower} 人力${all}`);
+  if (d === 'slots') return L(`-${SCALE.rebelSlots} worker slots each, -${e.rebelManpower} now${all}`, `每个营地人力 -${SCALE.rebelSlots}，当前 -${e.rebelManpower} 人力${all}`);
   if (d === 'banditSlots') return L(`-${SCALE.banditSlots} worker slots`, `-${SCALE.banditSlots} 人力`);
-  if (d === 'oil') return L(`-${SCALE.banditOil} oil each season`, `每季 -${SCALE.banditOil} 石油`);
-  if (d === 'food') return L(`-${SCALE.banditFood} food each season`, `每季 -${SCALE.banditFood} 食物`);
-  return L(`steals ${SCALE.banditStockpile} barrels from the stockpile each season`, `每季从石油库存偷走 ${SCALE.banditStockpile} 桶`);
+  if (d === 'oil') return L(`-${SCALE.banditOil} oil`, `-${SCALE.banditOil} 石油`);
+  return L(`-${SCALE.banditFood} food`, `-${SCALE.banditFood} 食物`);
 }
 
 /** Keeps the food store within what the Capitals can hold (after rewards, Spark, lost Capitals…). */
@@ -570,7 +583,7 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
       boom();
       dust.burst(x, z, 1.8);
       fog.disturb(x, z);
-      shake.amount = Math.min(shake.amount + missileCfg.shake, 1.2);
+      camShake.add(missileCfg.shake);
     },
     onCover: ({ x, z }) => {
       if (!convert || run !== runId) return;
@@ -628,7 +641,7 @@ async function groundStrike(spot, target, lostText = (l) => L(`The silo's missil
   const standing = missiles.showUpright(spot.x, spot.z);
   const prelude = async () => {
     standing.rumble();
-    shake.amount = Math.min(shake.amount + 0.3, 1.2);
+    camShake.add(0.3);
     await wait(1.2);
     standing.remove();
     boom();
@@ -661,7 +674,7 @@ function nearestBuilding(x, z) {
  */
 function unexplodedMissile(site, target = nearestBuilding(site.x, site.z)) {
   dust.burst(site.x, site.z, 1.4);
-  shake.amount = Math.min(shake.amount + 0.6, 1.2);
+  camShake.add(0.6);
   if (!target) {
     // A dud: it stands up, wobbles, and falls over.
     const run = runId;
@@ -1139,7 +1152,7 @@ function breakdown(kind, e) {
     add(L('Taxed settlements', `被征税的${nm('settlement')}`), e.taxSlots);
     add(L(`Population`, '人口'), e.population);
     add(L('Toxic craters', nm('crater')), -e.craterManpower);
-    add(L(`Raider camps ×${c('raider') + c('bandit_raider')}`, `${nm('raider')} ×${c('raider') + c('bandit_raider')}`), -e.raiderManpower);
+    add(L(`Rebel & raider camps ×${c('raider') + c('bandit_raider')}`, `${nm('raider')} ×${c('raider') + c('bandit_raider')}`), -e.raiderManpower);
     if (turn.event) add(turn.event.name, e.eventCap + e.mods.capDelta);
     total(L('Worker slots', '人力总数'), e.cap);
     add(L(`Hydro-farms ×${c('farm')}`, `${nm('farm')} ×${c('farm')}`), -c('farm'));
@@ -1168,12 +1181,10 @@ function breakdown(kind, e) {
     add(L('Settlement tax', `${nm('settlement')}税收`), e.taxOil);
     add(L(`Siphoner camps ×${c('bandit_siphon')}`, `${nm('bandit_siphon')} ×${c('bandit_siphon')}`), -e.oilStolen);
     total(L('This season', '本季'), signed(e.oil));
-    const theft = Math.min(turn.stockpile + e.oil, e.stockpileTheft);
-    add(L(`Smuggler dens ×${c('bandit_smuggle')}`, `${nm('bandit_smuggle')} ×${c('bandit_smuggle')}`), -theft);
     note(
       L(
-        `Stockpile ${turn.stockpile} → ${turn.stockpile + e.oil - theft} / ${turn.quota} tribute`,
-        `石油库存 ${turn.stockpile} → ${turn.stockpile + e.oil - theft} / 贡品 ${turn.quota}`,
+        `Stockpile ${turn.stockpile} → ${turn.stockpile + e.oil} / ${turn.quota} tribute`,
+        `石油库存 ${turn.stockpile} → ${turn.stockpile + e.oil} / 贡品 ${turn.quota}`,
       ),
     );
     note(L(`The Overlord takes all of it after ${SEASONS[yearLength() - 1]}.`, `${SEASONS[yearLength() - 1]}季结束后，霸主会全部拿走。`));
@@ -1597,16 +1608,14 @@ function showGameOver() {
 
 function settleTurn(e) {
   // The year ends after Winter, or early as soon as this season's oil meets the quota.
-  // Smuggler dens take a share of the stockpile (after this season's oil arrives).
-  const stolen = Math.min(turn.stockpile + e.oil, e.stockpileTheft);
   // The tutorial year always runs to Winter (it never meets the quota early anyway).
   const tut = tutorial.active;
-  let yearEnds = turn.season >= yearLength() - 1 || (!tut && turn.stockpile + e.oil - stolen >= turn.quota);
+  let yearEnds = turn.season >= yearLength() - 1 || (!tut && turn.stockpile + e.oil >= turn.quota);
   // Text below is built in the current language when shown (functions), so the toast follows a language switch.
   const season = turn.season;
   const round = turn.round;
   const label = () => L(`${SEASONS[season]}, year ${round}`, `第 ${round} 年${SEASONS[season]}`);
-  turn.stockpile += e.oil - stolen;
+  turn.stockpile += e.oil;
   turn.total += e.oil;
   turn.food = e.storeAfter;
 
@@ -1632,11 +1641,6 @@ function settleTurn(e) {
   if (e.oilStolen)
     lines.push(`<span class="bad">${L(`Siphoners drained ${e.oilStolen} oil from your pipelines.`, `窃油者从你的输油管里抽走了 ${e.oilStolen} 石油。`)}</span>`);
   if (e.banditFood) lines.push(`<span class="bad">${L(`Scavengers stole ${e.banditFood} food.`, `拾荒者偷走了 ${e.banditFood} 食物。`)}</span>`);
-  if (stolen) {
-    lines.push(`<span class="bad">${L(`Smugglers made off with ${stolen} barrels from the stockpile.`, `走私者从石油库存中卷走了 ${stolen} 桶。`)}</span>`);
-    msg.push(L(` · Smugglers stole ${stolen}`, ` · 走私者偷走 ${stolen} 桶`));
-    kind = 'bad';
-  }
   // A full 3×3 block of Wasteland draws a new bandit camp. (Not in the scripted tutorial.)
   for (const camp of tut ? [] : spawnBandits()) {
     queueScene('bandit', camp);
@@ -1648,7 +1652,7 @@ function settleTurn(e) {
   // Rebels: a season with a food surplus drives one camp off; a season that ends with
   // no food at all (net ≤ 0 and empty stores) brings a new camp, in place for the next season.
   if (!tut && Math.round(e.foodBalance) > 0 && departRaider()) {
-    lines.push(`<span class="good">${L('Your people are fed: a raider camp packed up and left.', '你的子民吃饱了：一座掠夺者营地拔营离去。')}</span>`);
+    lines.push(`<span class="good">${L('Your people are fed: a rebel camp packed up and left.', '你的子民吃饱了：一座叛军营地拔营离去。')}</span>`);
     msg.push(L(' · Raiders left', ' · 掠夺者已离去'));
   }
   if (!tut && rebelsRise(e)) {
@@ -2434,22 +2438,19 @@ hand.onDragMove = (x, y) => {
   pointer.set((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1);
   pointerInside = overBoard(x, y);
 };
-// While dragging a card, the mouse wheel rotates the piece (like R / F) instead of zooming the camera.
-// Captured on window so it runs before the camera's own wheel handler on the canvas.
-let wheelRotateAt = 0;
+// While dragging a card (left button held), a right click rotates the piece. A second button pressed during a
+// drag is a "chorded" press: browsers send no pointerdown for it, only mousedown, so it is caught here.
 window.addEventListener(
-  'wheel',
+  'mousedown',
   (e) => {
-    if (!hand.dragging) return;
+    if (e.button !== 2 || !hand.dragging) return;
     e.preventDefault();
     e.stopPropagation();
-    const now = performance.now();
-    if (Math.abs(e.deltaY) < 1 || now - wheelRotateAt < 120) return; // one turn per notch, not per trackpad tick
-    wheelRotateAt = now;
-    hand.rotate(e.deltaY > 0 ? 1 : -1);
+    hand.rotate(1);
   },
-  { capture: true, passive: false },
+  { capture: true },
 );
+window.addEventListener('contextmenu', (e) => hand.dragging && e.preventDefault(), { capture: true });
 hand.onDrop = (x, y) => {
   if (!overBoard(x, y)) return; // dropped back on the hand or a panel: nothing placed, the card stays picked
   hand.onDragMove(x, y);
@@ -2840,6 +2841,7 @@ function resetIsland(opts) {
   anims.length = 0;
   dust.clear();
   shake.amount = 0;
+  camShake.reset();
   expansion.clear();
   fog.reset(grid);
   piecesPlaced = 0;
@@ -3262,6 +3264,7 @@ function frame(now) {
   perf.begin('drops+shake');
   updateDropAnims(dt);
   applyShake(dt);
+  camShake.update(dt, rig.distance); // missile strikes only
   perf.end('drops+shake');
   perf.begin('dust');
   dust.update(dt);

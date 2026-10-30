@@ -15,8 +15,8 @@
  *   Oil for the Overlord 献给霸主的石油 · Overlord 霸主 · Overseer 总督 · Capital 首都 · Hive City 蜂巢城
  *   Settlement 定居点 · Hydro-farm 水培农场 · Water Pump 水泵站 · Oil Station 采油站 · Refinery 炼油厂
  *   Wasteland 荒地 · Oasis 绿洲 · Tar Pit 焦油坑 · Labour Camp 劳工营 · Cliffs 悬崖 · Pre-war Ruins 战前遗迹
- *   Toxic Crater 毒坑 · Raider Camp 掠夺者营地 · Raider Hideout 掠夺者巢穴 · Siphoner Camp 窃油者营地
- *   Scavenger Camp 拾荒者营地 · Smuggler Den 走私者窝点 · bandit camp 匪营 · rebel 叛军 · raiders 掠夺者
+ *   Toxic Crater 毒坑 · Rebel Camp 叛军营地 · Raider Hideout 掠夺者巢穴 · Siphoner Camp 窃油者营地
+ *   Scavenger Camp 拾荒者营地 · bandit camp 匪营 · rebel 叛军 · raiders 掠夺者
  *   Spark 火花 · Demolish 拆除 · Wrecking Crew 拆迁队 · Send in the Militia 派遣民兵
  *   food 食物 · oil 石油 · barrel(s) 桶 · manpower / worker slot(s) 人力 · population 人口
  *   food stores 粮仓 · oil stockpile 石油库存 · tribute 贡品 · quota 配额 · target 目标

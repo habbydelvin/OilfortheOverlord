@@ -1,7 +1,8 @@
+import './cards.css';
 import './library.css';
-import * as THREE from 'three';
 import { SHAPES } from './pieces.js';
-import { ACTIONS, SHOP_ITEMS, TERRAINS, TERRAIN_KEYS, TileFactory, cardText, hex } from './tiles.js';
+import { ACTIONS, ICONS, SHOP_ITEMS, TERRAINS, TERRAIN_KEYS, cardArtHTML, cardDef, cardText, hex, snapHTML } from './tiles.js';
+import { WORKERS } from './economy.js';
 import { SCALE, P, loadScaleConfig, eventPct, FIRST_EVENT_YEAR } from './scalingConfig.js';
 import { EVENTS, KIND_LABEL } from './events.js';
 import { L, applyStatic, onLangChange, setLang } from './i18n.js';
@@ -157,14 +158,13 @@ function statLines(stats) {
   if (stats.drain === 'slots')
     lines.push(
       L(
-        `Worker slots -${P(SCALE.campSlots)} per camp (at most ${P(SCALE.campStackMax)} in total)`,
-        `每个营地使人力 -${P(SCALE.campSlots)}（总计最多 ${P(SCALE.campStackMax)}）`,
+        `Worker slots -${SCALE.rebelSlots} per camp`,
+        `每个营地使人力 -${SCALE.rebelSlots}`,
       ),
     );
   if (stats.drain === 'banditSlots') lines.push(L(`Worker slots -${SCALE.banditSlots}`, `人力 -${SCALE.banditSlots}`));
   if (stats.drain === 'oil') lines.push(L(`Oil -${SCALE.banditOil} per season`, `每季石油 -${SCALE.banditOil}`));
   if (stats.drain === 'food') lines.push(L(`Food -${SCALE.banditFood} per season`, `每季食物 -${SCALE.banditFood}`));
-  if (stats.drain === 'stockpile') lines.push(L(`Stockpile -${SCALE.banditStockpile} barrels per season`, `每季石油库存 -${SCALE.banditStockpile} 桶`));
   if (stats.ruinsBonusManpower) lines.push(L(`On ruins, +${stats.ruinsBonusManpower} extra worker slot`, `建在遗迹上时额外 +${stats.ruinsBonusManpower} 人力`));
   if (stats.adjacent) {
     for (const [neighbour, bonus] of Object.entries(stats.adjacent)) {
@@ -190,62 +190,42 @@ function statLines(stats) {
   return lines.length ? lines : [none];
 }
 
-/** One WebGL context, one still per terrain. A page of live canvases trips the browser context limit. */
-async function renderThumbs() {
-  const width = 480;
-  const height = 320;
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(1);
-  renderer.setSize(width, height, false);
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
-  renderer.shadowMap.enabled = true;
-
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x14181a);
-  scene.add(new THREE.HemisphereLight(0xdfe8e4, 0x2a2622, 1.35));
-  const sun = new THREE.DirectionalLight(0xfff0d6, 2.1);
-  sun.position.set(4, 7, 3);
-  sun.castShadow = true;
-  scene.add(sun);
-
-  const camera = new THREE.PerspectiveCamera(30, width / height, 0.1, 20);
-  camera.position.set(1.45, 1.25, 1.65);
-  camera.lookAt(0, -0.32, 0);
-
-  const factory = new TileFactory();
-  await factory.ready;
-  const urls = {};
-  const offset = new THREE.Vector3(1, 0.72, 1.15).normalize();
-  for (const key of TERRAIN_KEYS) {
-    const mesh = factory.create(key);
-    scene.add(mesh);
-    const box = new THREE.Box3().setFromObject(mesh);
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3());
-    const dist = (Math.max(size.x, size.y, size.z) * 0.68) / Math.sin(THREE.MathUtils.degToRad(16));
-    camera.position.copy(center).addScaledVector(offset, dist);
-    camera.near = Math.max(0.01, dist / 80);
-    camera.far = dist * 12;
-    camera.lookAt(center);
-    camera.updateProjectionMatrix();
-    renderer.render(scene, camera);
-    urls[key] = renderer.domElement.toDataURL('image/png');
-    scene.remove(mesh);
-  }
-  renderer.dispose();
-  return urls;
+/** Upkeep dial, as on a hand card for a single tile: workers needed, food eaten, or a free 0. */
+function badgeHTML(key) {
+  const workers = WORKERS[key] ?? 0;
+  const food = -Math.min(0, TERRAINS[key]?.stats?.food ?? 0);
+  if (workers) return `<div class="badge">-${workers}${ICONS.manpower}</div>`;
+  if (food) return `<div class="badge">-${food}${ICONS.food}</div>`;
+  return `<div class="badge free">0${ICONS.manpower}</div>`;
 }
 
-function cardHTML(key, thumb) {
+/** Wasteland cards show a piece on their LED panel: the most common shape stands in. */
+const SAMPLE_SHAPE = Object.values(SHAPES).sort((x, y) => y.weight - x.weight)[0].cells;
+
+/** The card exactly as it is dealt into the hand (same markup and styles, src/cards.css). */
+function gameCardHTML(key) {
+  const t = cardDef(key);
+  const cls = ['card', t.category === 'junk' ? 'junk' : '', t.category === 'action' ? 'action' : ''].filter(Boolean).join(' ');
+  return `
+      <div class="card-stage">
+        <div class="${cls}" style="--top:${hex(t.top)};--edge:${hex(t.edge)}">
+          ${badgeHTML(key)}
+          <div class="art">${cardArtHTML(key, key.startsWith('wasteland') ? SAMPLE_SHAPE : undefined)}</div>
+          ${snapHTML(t)}
+          <div class="name">${t.name}</div>
+          <div class="rule">${cardText(t)}</div>
+        </div>
+      </div>`;
+}
+
+function cardHTML(key) {
   const terrain = TERRAINS[key];
   const lines = statLines(terrain.stats)
     .map((line) => `<li>${line}</li>`)
     .join('');
   return `
     <article class="tile ${terrain.category}" id="tile-${key}">
-      <img class="thumb" src="${thumb}" alt="${L(`${terrain.name} tile`, `${terrain.name}地块`)}" width="480" height="320" />
+      ${gameCardHTML(key)}
       <div class="swatches" title="${L('Authored top and edge colours', '设定的顶面和边缘颜色')}">
         <i style="background:${hex(terrain.top)}"></i>
         <i style="background:${hex(terrain.edge)}"></i>
@@ -253,7 +233,6 @@ function cardHTML(key, thumb) {
       </div>
       <h3>${terrain.name}</h3>
       <p class="key">${key}</p>
-      <div class="rule">${cardText(terrain)}</div>
       <ul class="stats">${lines}</ul>
       <dl>
         <div><dt>${L('Category', '类别')}</dt><dd>${L(terrain.category, CATEGORY_ZH[terrain.category])}</dd></div>
@@ -274,7 +253,7 @@ function actionHTML(key) {
       : L('The target cell', '目标格');
   return `
     <article class="tile action" id="tile-${key}">
-      <div class="thumb symbol-thumb" style="--top:${hex(a.top)};--edge:${hex(a.edge)}"><span>${a.symbol}</span></div>
+      ${gameCardHTML(key)}
       <div class="swatches" title="${L('Card colours', '卡牌颜色')}">
         <i style="background:${hex(a.top)}"></i>
         <i style="background:${hex(a.edge)}"></i>
@@ -282,7 +261,6 @@ function actionHTML(key) {
       </div>
       <h3>${a.name}</h3>
       <p class="key">${key}</p>
-      <div class="rule">${cardText(a)}</div>
       <dl>
         <div><dt>${L('Category', '类别')}</dt><dd>${L('action', CATEGORY_ZH.action)}</dd></div>
         <div><dt>${L('Area', '范围')}</dt><dd>${area}</dd></div>
@@ -325,12 +303,6 @@ window.addEventListener('storage', (e) => {
 
 const root = document.getElementById('library');
 const lede = document.getElementById('lede');
-const loading = () => (lede.textContent = L('Loading blockouts…', '正在加载模型…'));
-loading();
-const stopLoading = onLangChange(loading);
-
-const thumbs = await renderThumbs();
-stopLoading();
 render();
 onLangChange(render);
 
@@ -371,7 +343,7 @@ function groupHTML(group) {
         <h2>${group.title}</h2>
         <p>${group.blurb}</p>
       </header>
-      <div class="grid">${keys.map((key) => cardHTML(key, thumbs[key])).join('')}</div>
+      <div class="grid">${keys.map(cardHTML).join('')}</div>
       ${extra}
     </section>`;
 }

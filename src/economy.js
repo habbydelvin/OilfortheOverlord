@@ -1,6 +1,6 @@
 import { DIRS } from './grid.js';
 import { TERRAINS } from './tiles.js';
-import { SCALE, campShare, scaled } from './scalingConfig.js';
+import { SCALE, scaled } from './scalingConfig.js';
 import { L } from './i18n.js';
 
 /** Workers each building needs to run. */
@@ -10,7 +10,7 @@ export const WORKERS = { farm: 1, station: 1, refinery: 1 };
  * Calculates one season of the economy from the current grid.
  *
  * Order:
- *  1. Manpower is a capacity, not a resource: cap = capital + settlements + ruins + population - craters - raider camps (2 each).
+ *  1. Manpower is a capacity, not a resource: cap = capital + settlements + ruins + population - craters - rebel camps / raider hideouts (flat, each).
  *     Worker buildings (farms, stations, refineries) are staffed in placement order; past the cap the
  *     newest go idle and produce nothing.
  *  2. Food: staffed farms grow, capital/settlements eat. Not enough food -> fed < 1.
@@ -22,7 +22,7 @@ export const WORKERS = { farm: 1, station: 1, refinery: 1 };
  * state: { population, foodStore } carried between seasons. Population adds +1 manpower each.
  *
  * Scaling (see scalingConfig.js): year events give percentages (mods.farmPct, capPct, stationPct,
- * foodUpkeepPct); camps take a percentage of the total each (slots, oil made, food grown).
+ * foodUpkeepPct); camps take a flat amount each (slots, oil, food).
  */
 /** Population needed to eat 1 food per season. */
 const POP_PER_FOOD = 2;
@@ -44,7 +44,7 @@ export function computeEconomy(grid, state = {}) {
 
   let capBase = 0;
   let craterManpower = 0;
-  const camps = { slots: 0, banditSlots: 0, oil: 0, food: 0, stockpile: 0 }; // camps per drain kind
+  const camps = { slots: 0, banditSlots: 0, oil: 0, food: 0 }; // camps per drain kind
   let farmFood = 0;
   let foodEaten = 0;
   let craterFood = 0;
@@ -96,11 +96,11 @@ export function computeEconomy(grid, state = {}) {
       craterManpower += neighbours(cell.x, cell.z).filter((n) => n === 'farm' || n === 'settlement').length;
     }
   }
-  // Rebel camps and the year event take a share of the gross worker slots; Raider Hideouts a flat amount.
+  // Rebel Camps and Raider Hideouts take a flat amount of worker slots each; the year event a share.
   const capGross = capBase + population;
   // Taxed settlements: some of their people flee the work.
   const taxSlots = (mods.settlementSlots ?? 0) * (counts0(grid, 'settlement'));
-  const rebelManpower = camps.slots ? scaled(capGross, campShare(camps.slots, SCALE.campSlots)) : 0;
+  const rebelManpower = camps.slots * SCALE.rebelSlots;
   const hideoutManpower = camps.banditSlots * SCALE.banditSlots;
   const raiderManpower = rebelManpower + hideoutManpower;
   const eventCap = scaled(capGross, mods.capPct);
@@ -235,8 +235,6 @@ export function computeEconomy(grid, state = {}) {
   // Siphoners tap the pipelines: a share of this season's oil (never below 0).
   const banditOil = camps.oil * SCALE.banditOil;
   const oilStolen = Math.min(oilMade, banditOil);
-  // Smuggler dens: barrels taken from the stockpile each season (flat, per den).
-  const stockpileTheft = camps.stockpile * SCALE.banditStockpile;
   const oil = oilMade - oilStolen;
 
   // Per-tile: farms grow at the staffing rate; final oil is shared out over stations by their crude
@@ -277,7 +275,6 @@ export function computeEconomy(grid, state = {}) {
     taxOil,
     taxSlots,
     oilMade,
-    stockpileTheft,
     mods,
     foodGrown,
     foodEaten: totalEaten,
