@@ -71,12 +71,15 @@ const VERT = /* glsl */ `
 // flames (crests around the tile, laps per second).
 const RIPPLE = { bands: 8, speed: 0.22 };
 const WAVE = { crests: 3, speed: 0.4 };
+// The curtain's streaks of light flow sideways around the tile, constantly (noise units per second; ~72 per lap).
+const STREAK_SPEED = 7;
 
 const COMMON = /* glsl */ `
   #define RIPPLE_BANDS ${RIPPLE.bands.toFixed(2)}
   #define RIPPLE_SPEED ${RIPPLE.speed.toFixed(2)}
   #define WAVE_CRESTS ${WAVE.crests.toFixed(2)}
   #define WAVE_SPEED ${WAVE.speed.toFixed(2)}
+  #define STREAK_SPEED ${STREAK_SPEED.toFixed(2)}
   uniform vec3 uColor;
   uniform float uOpacity;
   uniform float uTime;
@@ -110,12 +113,13 @@ const GROUND_FRAG = /* glsl */ `
     else along = 3.0 + vUv.y;                           // left edge
     along *= 0.25;
     float ripple = pow(0.5 + 0.5 * sin(6.2832 * (along * RIPPLE_BANDS + uTime * RIPPLE_SPEED)), 6.0) * exp(-d / 0.14);
-    float a = clamp(max(core, halo) + uFill + ripple * uHalo * 0.75, 0.0, 1.0);
-    gl_FragColor = vec4(mix(uColor, vec3(1.0), core * 0.75 + ripple * 0.2), a * uOpacity);
+    float a = clamp(max(core, halo) + uFill + ripple * uHalo * 1.1, 0.0, 1.0);
+    gl_FragColor = vec4(mix(uColor, vec3(1.0), core * 0.75 + ripple * 0.3), a * uOpacity);
     #include <colorspace_fragment>
   }`;
 
-// The curtain on each edge (uv.x along the edge, uv.y up): light fading upward in flickering streaks, and three
+// The curtain on each edge (uv.x along the edge, uv.y up): light fading upward in streaks that flow sideways around
+// the tile, and three
 // narrow flames per side that taper to a point and rise and fall at their own pace. A wave runs around the tile:
 // where its crest passes, the curtain swells taller and brighter and the flames leap higher.
 const CURTAIN_FRAG = /* glsl */ `
@@ -126,11 +130,14 @@ const CURTAIN_FRAG = /* glsl */ `
   }
   void main() {
     float h = vUv.y;
-    float w0 = wave((vSide + vUv.x) * 0.25);
-    float n1 = noise(vec2(vUv.x * 18.0 + vSide * 7.3, uTime * 0.7));
-    float n2 = noise(vec2(vUv.x * 43.0 - vSide * 3.1, uTime * 1.4 + 5.0));
-    float streaks = 0.4 + 0.6 * (n1 * 0.65 + n2 * 0.35);
-    float wall = pow(max(0.0, 1.0 - h / (0.5 + 0.5 * w0)), 3.4) * streaks * (0.24 + 0.2 * w0); // faint and low: the building shows through it
+    float along = (vSide + vUv.x) * 0.25; // 0-1 around the tile, unbroken at the corners
+    float w0 = wave(along);
+    // Streaks of light flowing sideways around the tile at a steady pace (rightward along the front edge), with a
+    // little slow change in shape as they go.
+    float n1 = noise(vec2(along * 72.0 + uTime * STREAK_SPEED, uTime * 0.25));
+    float n2 = noise(vec2(along * 172.0 + uTime * STREAK_SPEED * 1.6, 5.0 + uTime * 0.35));
+    float streaks = 0.12 + 0.88 * pow(n1 * 0.65 + n2 * 0.35, 1.6) * 1.5;
+    float wall = pow(max(0.0, 1.0 - h / (0.5 + 0.5 * w0)), 3.0) * streaks * (0.3 + 0.22 * w0); // still low: the building shows through it
     float flame = 0.0;
     for (int i = 0; i < 3; i++) {
       float fi = float(i);
