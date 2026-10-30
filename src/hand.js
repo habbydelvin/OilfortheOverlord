@@ -268,6 +268,10 @@ export class Hand {
       if (html !== c.html) {
         c.el.innerHTML = html;
         c.html = html;
+        // The parts #paint updates every frame (set on them directly, so only they restyle, not the whole card).
+        c.snapImg = c.el.querySelector('.snap img');
+        c.shineEl = c.el.querySelector('.shine');
+        c.written = {};
       }
       // Juice: picking a card makes it pop and wobble; dropping it gives a smaller bump.
       if (selected && !c.selected) this.#kick(c, 4.5, 1);
@@ -444,16 +448,34 @@ export class Hand {
     s.x += s.v * dt;
   }
 
+  /**
+   * Every frame for every card, so it only writes what changed (a style write restyles and repaints the part it's
+   * on): values are rounded so a resting card updates a few times a second, and each is set on the part that uses
+   * it (shadow on the card, sheen on its shine layer, parallax on its picture) rather than on the whole card.
+   */
   #paint(c, hovered) {
     const st = c.el.style;
-    st.transform =
+    const w = (c.written ??= {});
+    const set = (el, key, value) => {
+      if (!el || w[key] === value) return;
+      w[key] = value;
+      if (key === 'transform') el.style.transform = value;
+      else el.style.setProperty(key, value);
+    };
+    set(
+      c.el,
+      'transform',
       `translate3d(${c.x.x.toFixed(1)}px, ${c.y.x.toFixed(1)}px, 0) rotate(${c.rot.x.toFixed(2)}deg) ` +
-      `perspective(700px) rotateX(${c.tx.x.toFixed(2)}deg) rotateY(${c.ty.x.toFixed(2)}deg) scale(${c.scale.x.toFixed(3)})`;
+        `perspective(700px) rotateX(${c.tx.x.toFixed(2)}deg) rotateY(${c.ty.x.toFixed(2)}deg) scale(${c.scale.x.toFixed(3)})`,
+    );
     // Shadow falls further away as the card lifts, and slides opposite to the tilt.
-    st.setProperty('--sx', `${(-c.ty.x * 0.5).toFixed(1)}px`);
-    st.setProperty('--sy', `${(6 + c.lift * 0.25 + c.tx.x * 0.4).toFixed(1)}px`);
+    set(c.el, '--sx', `${(Math.round(-c.ty.x) * 0.5).toFixed(1)}px`);
+    set(c.el, '--sy', `${(Math.round((6 + c.lift * 0.25 + c.tx.x * 0.4) * 2) / 2).toFixed(1)}px`);
     // Sheen sweeps across the frame with the tilt (and drifts slowly at rest).
-    st.setProperty('--shine', `${(50 + c.ty.x * 4 - c.tx.x * 2 + Math.sin(this.#time * 0.5 + c.phase) * 18).toFixed(1)}%`);
-    st.setProperty('--shine-a', hovered ? '1' : '0.45');
+    set(c.shineEl, '--shine', `${Math.round(50 + c.ty.x * 4 - c.tx.x * 2 + Math.sin(this.#time * 0.5 + c.phase) * 18)}%`);
+    set(c.shineEl, '--shine-a', hovered ? '1' : '0.45');
+    // Parallax: the picture shifts against the card's tilt, so the building seems to stand at its own depth.
+    set(c.snapImg, '--plx', `${(Math.round(-c.ty.x * 1.6) / 4).toFixed(2)}px`);
+    set(c.snapImg, '--ply', `${(Math.round(c.tx.x * 1.6) / 4).toFixed(2)}px`);
   }
 }

@@ -467,7 +467,24 @@ export function cardArtHTML(key, cells = [[0, 0]]) {
 
 /** The picture slot above the card text: a tile snapshot when one is set, the symbol for action cards, else empty. */
 export const snapHTML = (t) =>
-  `<div class="snap">${t.symbol ? `<div class="symbol">${t.symbol}</div>` : t.snapshot ? `<img src="${t.snapshot}" alt="">` : ''}</div>`;
+  `<div class="snap">${t.symbol ? `<div class="symbol">${t.symbol}</div>` : t.snapshot ? `<img src="${t.snapshot}" alt="" decoding="async">` : ''}</div>`;
+
+/**
+ * Card pictures and frame art, decoded ahead of time (off the main thread) and kept, so dealing a hand or opening the
+ * shop never stops to decode a 740 × 500 picture. Call once the game has started.
+ */
+const preloaded = [];
+export function preloadCardArt() {
+  const urls = new Set(['/cards/CardBaseTall.png', '/cards/CardSpecMask.png']);
+  for (const t of Object.values(TERRAINS)) if (t.snapshot) urls.add(t.snapshot);
+  for (const url of urls) {
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = url;
+    img.decode().catch(() => {});
+    preloaded.push(img);
+  }
+}
 
 export const isAction = (key) => key in ACTIONS;
 /** Tile or action-card definition for a card key. */
@@ -496,7 +513,7 @@ export const BASIC_SHOP = new Set(['station', 'farm', 'settlement']);
  * Card pictures: front renders of each tile model (public/cards/snapshots, made by tools/card-snapshots.html).
  * Card key -> image; the four Wasteland colours share one. Bump SNAPSHOT_VERSION after re-rendering.
  */
-const SNAPSHOT_VERSION = '20261029-1035';
+const SNAPSHOT_VERSION = '20261030-noground';
 const SNAPSHOTS = {
   capital: 'capital', settlement: 'settlement', farm: 'farm', pump: 'pump', station: 'station', refinery: 'refinery',
   oasis: 'oasis', tarpit: 'tarpit', labourcamp: 'labourcamp', cliffs: 'cliffs', ruins: 'ruins', crater: 'crater',

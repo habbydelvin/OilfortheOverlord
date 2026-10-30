@@ -1105,6 +1105,29 @@ body.dragging-card * {
   height: 100%;
   object-fit: contain; /* transparent renders: show the whole model, never crop it */
 }
+/*
+ * The picture is drawn larger than its slot and may spill past it (over the card's frame): the building, on a
+ * transparent background, pops out of the card. It grows mostly upward and sideways, clear of the name below.
+ * Parallax on hand cards: --plx / --ply follow the card's tilt (hand.js), so the building shifts against the card.
+ */
+.card .snap:has(img),
+#inspect .card-big .snap:has(img) {
+  overflow: visible;
+}
+.card .snap img,
+#inspect .card-big .snap img {
+  transform: translate3d(var(--plx, 0px), var(--ply, 0px), 0) scale(1.22);
+  transform-origin: 50% 85%;
+}
+/* Wasteland's picture is its sand seen from above: it fills its slot as before, not enlarged or spilling out. */
+.card .snap:has(img[src*='/wasteland.webp']),
+#inspect .card-big .snap:has(img[src*='/wasteland.webp']) {
+  overflow: hidden;
+}
+.card .snap img[src*='/wasteland.webp'],
+#inspect .card-big .snap img[src*='/wasteland.webp'] {
+  transform: translate3d(var(--plx, 0px), var(--ply, 0px), 0);
+}
 
 .card.junk {
   filter: saturate(0.6) drop-shadow(var(--sx, 0px) var(--sy, 6px) 8px rgba(0, 0, 0, 0.55));

@@ -8,6 +8,7 @@ import { bindCardHover, boom, buzz, confirm, coin, deny, doom, food, getSfxVolum
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, key as plotKey } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
+import { preloadCardArt } from './tiles.js';
 import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
 import { hasBlockout, loadProgress, breathe, decodeImage } from './models.js';
 import { Frontier } from './frontier.js';
@@ -3399,6 +3400,7 @@ async function warmUpModelsGradually(models) {
 // stand-in block that swaps a second later. factory.ready also resolves if loading
 // fails (the game then runs on coloured blocks).
 factory.ready.then(() => {
+  setTimeout(preloadCardArt, 0); // decode the card pictures in the background, so showing cards never waits
   clearInterval(loadTimer);
   $('loadingFill').style.width = '100%';
   warmUpModels();

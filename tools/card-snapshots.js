@@ -15,15 +15,22 @@ const WIDTH = 740; // 1.48 : 1, the picture slot; sharp on the largest cards at 
 const HEIGHT = 500;
 const ELEVATION = 12; // degrees above the horizon: a low front view that still shows a little of the top
 const FOV = 24; // narrow, so buildings do not look distorted
-const MARGIN = 0; // empty border around the framed area (share of the frame)
-const CLOSE_UP = 0.55; // close-up: share of the building's size kept in frame (1 = the whole building)
+const MARGIN = 0.02; // empty border around the building (share of the frame): a little room for the cards' parallax shift
+const CLOSE_UP = 1; // share of the building's size kept in frame (1 = the whole building, < 1 = a close-up)
 const POSE_TIME = 1.5; // seconds into the animation loop
-const MIN_FRAME = 0.55; // the framed area is at least this share of the tile wide, so flat tiles keep their context
-/** Per-card camera overrides: elevation (degrees), closeUp (share of the building kept), focus (aim height, 0-1). */
+const MIN_FRAME = 0.55; // land tiles: the framed area is at least this share of the tile wide, so they keep their context
+const MIN_FRAME_BUILDING = 0.2; // buildings fill the picture, however small
+
+/**
+ * Land tiles keep their ground (it is their picture: the oasis pool, the tar pit, the crater...). Every other card
+ * shows the building alone, without its ground tile (see hideGround).
+ */
+const KEEP_GROUND = new Set(['oasis', 'tarpit', 'cliffs', 'ruins', 'crater', 'waste-mono']);
+const GROUND_PART = /(_Sand|Ground|_SandTrim|_Pad\d+|_AshScorch)$/; // the ground plate's materials (see seamlessGround.js)
+/** Per-card camera overrides: elevation (degrees), closeUp (share of the building kept), focus (aim height, 0-1), margin. */
 const VIEWS = {
-  wasteland: { elevation: 90 },
-  // The Capital is a tall, thin spire: aim lower, at the tiered city and its lit windows.
-  capital: { focus: 0.3, closeUp: 0.5 },
+  // Wasteland: the sand seen from straight above, close up (its original card picture).
+  wasteland: { elevation: 90, closeUp: 0.55, margin: 0 },
   // The crater's glowing pool sits below its rim: look down into it a little more.
   crater: { elevation: 28 },
 };
@@ -77,7 +84,7 @@ const camera = new THREE.PerspectiveCamera(FOV, WIDTH / HEIGHT, 0.01, 100);
  * they stand on, so small buildings fill the picture instead of a big empty plate. Animated smoke, fire and
  * traffic are left out too (they would throw the framing off). Never narrower than MIN_FRAME of the tile.
  */
-function contentBounds(root) {
+function contentBounds(root, minFrame = MIN_FRAME) {
   const animated = new Set();
   for (const clip of root.animations ?? []) for (const t of clip.tracks) animated.add(THREE.PropertyBinding.parseTrackName(t.name).nodeName);
   root.updateMatrixWorld(true);
@@ -96,9 +103,9 @@ function contentBounds(root) {
   box.min.y = Math.min(box.min.y, 0); // keep the ground line in the picture
   const c = box.getCenter(new THREE.Vector3());
   for (const k of ['x', 'z']) {
-    if (box.max[k] - box.min[k] < MIN_FRAME) {
-      box.min[k] = c[k] - MIN_FRAME / 2;
-      box.max[k] = c[k] + MIN_FRAME / 2;
+    if (box.max[k] - box.min[k] < minFrame) {
+      box.min[k] = c[k] - minFrame / 2;
+      box.max[k] = c[k] + minFrame / 2;
     }
   }
   return box;
@@ -116,7 +123,7 @@ skirt.renderOrder = -10;
 scene.add(skirt);
 
 /** Camera distance (bisection) at which every corner of the box sits inside the frame, minus the margin. */
-function frame(box, elevation = ELEVATION) {
+function frame(box, elevation = ELEVATION, margin = MARGIN) {
   const center = box.getCenter(new THREE.Vector3());
   const e = THREE.MathUtils.degToRad(elevation);
   const dir = new THREE.Vector3(0, Math.sin(e), Math.cos(e));
@@ -131,7 +138,7 @@ function frame(box, elevation = ELEVATION) {
     camera.updateMatrixWorld(true);
     return corners.every((c) => {
       const v = c.clone().project(camera);
-      return Math.abs(v.x) <= 1 - MARGIN * 2 && Math.abs(v.y) <= 1 - MARGIN * 2 && v.z < 1;
+      return Math.abs(v.x) <= 1 - margin * 2 && Math.abs(v.y) <= 1 - margin * 2 && v.z < 1;
     });
   };
   let lo = 0.2;
@@ -156,9 +163,24 @@ function parkShip(model, key) {
   model.add(ship);
 }
 
+/** The building alone: hide its ground plate (sand, painted ground, trim, pads, scorch) and flat decals (roads). */
+function hideGround(root) {
+  root.updateMatrixWorld(true);
+  const b = new THREE.Box3();
+  root.traverse((o) => {
+    if (!o.isMesh || o.isSkinnedMesh) return;
+    const ground = [o.material].flat().every((m) => GROUND_PART.test(m?.name ?? ''));
+    b.setFromObject(o);
+    const flat = b.max.y - b.min.y < 0.03 && b.max.y < 0.05;
+    if (ground || flat) o.visible = false;
+  });
+}
+
 function snapshot(source, view = {}, key = '') {
   const model = cloneModel(source);
   parkShip(model, key);
+  const building = !KEEP_GROUND.has(key);
+  if (building) hideGround(model);
   // Freeze the animation a moment into its loop.
   if (model.animations.length) {
     const mixer = new THREE.AnimationMixer(model);
@@ -167,12 +189,12 @@ function snapshot(source, view = {}, key = '') {
   }
   scene.add(model);
   // Close-up: frame only the middle of the building, so it overflows the picture and its detail fills the slot.
-  const box = contentBounds(model);
+  const box = contentBounds(model, building ? MIN_FRAME_BUILDING : MIN_FRAME);
   const mid = box.getCenter(new THREE.Vector3());
   if (view.focus !== undefined) mid.y = box.min.y + (box.max.y - box.min.y) * view.focus; // aim lower or higher
   const half = box.getSize(new THREE.Vector3()).multiplyScalar((view.closeUp ?? CLOSE_UP) / 2);
   box.set(mid.clone().sub(half), mid.clone().add(half));
-  const center = frame(box, view.elevation);
+  const center = frame(box, view.elevation, view.margin);
   sun.position.copy(center).add(SUN_OFFSET);
   sun.target.position.copy(center);
   sun.target.updateMatrixWorld();
