@@ -1872,7 +1872,8 @@ body.striking #mapIcons {
   opacity: 1;
 }
 
-/* Restart into the tutorial, above the language button. */
+/* Restart into the tutorial, above the language button; the missile strike above it. */
+#btnMissile,
 #btnReplayTutorial {
   position: fixed;
   left: 18px;
@@ -1888,13 +1889,22 @@ body.striking #mapIcons {
   color: #e8bf68;
   cursor: pointer;
 }
+#btnMissile {
+  bottom: 168px;
+}
+#btnMissile svg,
 #btnReplayTutorial svg {
   display: block;
   width: 100%;
   height: 100%;
 }
+#btnMissile:hover,
 #btnReplayTutorial:hover {
   filter: brightness(1.25);
+}
+/* Nothing to fire at right now (a strike or another screen is on): a short shake. */
+#btnMissile.refused {
+  animation: coach-nudge 0.35s ease;
 }
 
 /* Language button (English / 中文), just above the music control. Shows the language it switches to. */
@@ -2138,11 +2148,11 @@ body.striking #mapIcons {
   pointer-events: none;
 }
 
-/* Skip: a round steel button with the skip icon, above the restart, language and music buttons (same ring). */
+/* Skip: a round steel button with the skip icon, above the missile, restart, language and music buttons (same ring). */
 .coach-skip {
   position: fixed;
   left: 18px;
-  bottom: 168px;
+  bottom: 218px;
   width: 42px;
   height: 42px;
   padding: 11px;

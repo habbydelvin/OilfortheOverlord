@@ -64,6 +64,8 @@ export const MISSILE = {
   camFit: 1, // zoom-out factor to fit every target around the Capital
   camLower: 0.08, // Capital this far below screen centre (share of screen height), room for the clouds
   holdAfter: 2, // seconds to watch the clouds after the last impact
+  camFollowRate: 14, // ease speed while the camera tracks the missiles in flight (high: stays centred on it)
+  followFlight: 2.2, // the Overlord's missiles fly this long (s) while tracked, so the camera can keep up
   // preview (M)
   previewCount: 3,
   previewCapital: 'no',
@@ -126,6 +128,8 @@ export const MISSILE_PARAMS = [
   { key: 'camFit', label: 'Fit targets factor', min: 0.3, max: 3, step: 0.05 },
   { key: 'camLower', label: 'Capital below centre', min: -0.3, max: 0.4, step: 0.01, hint: 'share of the screen height' },
   { key: 'holdAfter', label: 'Hold after last hit (s)', min: 0, max: 6, step: 0.1 },
+  { key: 'camFollowRate', label: 'Tracking ease speed', min: 1, max: 20, step: 0.5, hint: 'camera following the missiles in flight' },
+  { key: 'followFlight', label: 'Tracked flight time (s)', min: 0.5, max: 5, step: 0.05 },
 
   { group: 'Missiles · preview (M)' },
   { key: 'previewCount', label: 'Missiles', min: 1, max: 12, step: 1 },

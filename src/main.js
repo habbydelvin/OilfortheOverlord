@@ -575,19 +575,37 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
     await wait(missileCfg.camLead);
     if (run !== runId) return lost;
   }
-  await missiles.fire(targets, {
-    onMove: follow
-      ? (pos, t, u) => {
-          if (run !== runId) return;
-          // Pull back as it climbs, and by the end far enough that the target is in the shot.
-          // (Never zooms back in: the impact is seen from as far out as the flight got.)
-          const reach = Math.hypot(t.x - pos.x, t.z - pos.z);
-          followDist = Math.max(followDist, FOLLOW_CLOSE + pos.y * 1.1 + reach * 0.6 * u);
-          followCamera(pos, followDist, 7);
-        }
-      : undefined,
-    onImpact: ({ x, z }) => {
+  // The camera tracks the missiles in flight: one is followed, centred all the way down; several are framed
+  // together (every missile in the air and the targets still to be hit), reframing as they come down.
+  const flying = new Map(); // target -> { pos, u }
+  const pending = new Set(targets);
+  const track = (pos, t, u) => {
+    if (run !== runId) return;
+    const f = flying.get(t);
+    if (f) {
+      f.pos.copy(pos);
+      f.u = u;
+    } else flying.set(t, { pos: pos.clone(), u });
+    if (targets.length === 1) {
+      // Pull back as it climbs, and by the end far enough that the target is in the shot.
+      // (Never zooms back in: the impact is seen from as far out as the flight got.)
+      const reach = Math.hypot(t.x - pos.x, t.z - pos.z);
+      if (!follow) followDist = Math.max(followDist, missileCfg.camMinDistance * 0.6);
+      followDist = Math.max(followDist, FOLLOW_CLOSE + pos.y * 1.1 + reach * 0.6 * u);
+      followCamera(pos, followDist, missileCfg.camFollowRate);
+    } else frameStrike([...[...flying.values()].map((m) => m.pos), ...[...pending].map((p) => new THREE.Vector3(p.x, 0, p.z))]);
+  };
+  followDist = follow ? followDist : FOLLOW_CLOSE;
+  // From the sky, the Overlord's missiles fly a little slower so the camera can keep up (ground launches set their own).
+  const tracked = targets.map((t) => (t.from || t.flight ? t : { ...t, flight: missileCfg.followFlight }));
+  const original = new Map(tracked.map((t, i) => [t, targets[i]]));
+  await missiles.fire(tracked, {
+    onMove: (pos, t, u) => track(pos, original.get(t), u),
+    onImpact: (hit) => {
       if (run !== runId) return;
+      flying.delete(original.get(hit));
+      pending.delete(original.get(hit));
+      const { x, z } = hit;
       boom();
       dust.burst(x, z, 1.8);
       fog.disturb(x, z);
@@ -612,6 +630,39 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
   rig.release();
   striking = false;
   return lost;
+}
+
+/**
+ * Several missiles in the air: one shot that shows them all (each point where it sits on screen: its ground point
+ * along the view direction), centred on them and zoomed out to fit, easing at the tracking speed.
+ */
+function frameStrike(points) {
+  if (!points.length) return;
+  camera.getWorldDirection(camDir);
+  camDir.y = 0;
+  camDir.normalize();
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  let z0 = Infinity;
+  let z1 = -Infinity;
+  for (const p of points) {
+    const along = p.y / Math.tan(rig.pitch);
+    const gx = p.x + camDir.x * along;
+    const gz = p.z + camDir.z * along;
+    x0 = Math.min(x0, gx);
+    x1 = Math.max(x1, gx);
+    z0 = Math.min(z0, gz);
+    z1 = Math.max(z1, gz);
+  }
+  const reach = Math.hypot(x1 - x0, z1 - z0) / 2;
+  // A wider margin than strikeCamera: missiles in the air shouldn't hug the screen edge.
+  const dist = THREE.MathUtils.clamp(Math.max(missileCfg.camMinDistance, (reach + 2.5) * 2.8 * missileCfg.camFit), rig.minDistance, rig.maxDistance);
+  const rate = missileCfg.camFollowRate * 0.35; // a wide shot moves more calmly
+  rig.posRate = rate;
+  rig.zoomRate = rate * 0.8;
+  rig.goalDistance = dist;
+  const view = camera.view?.enabled ? camera.view : { offsetX: 0, offsetY: 0 };
+  rig.goal.set((x0 + x1) / 2, 0, (z0 + z1) / 2).add(rig.screenShift(view.offsetX, view.offsetY, dist));
 }
 
 /** Closest zoom for the ground-launch close-up. */
@@ -718,12 +769,15 @@ function reportStrike(lost) {
   );
 }
 
-/** Debug (M): play a strike right now (Game Debug → Missiles · preview). */
-function previewMissileStrike() {
+/**
+ * Debug (M): play a strike right now (Game Debug → Missiles · preview). `convert`: the hit tiles become craters;
+ * `capital`: one may hit the Capital (defaults: the preview's settings).
+ */
+function previewMissileStrike({ convert = missileCfg.previewCraters === 'yes', capital = missileCfg.previewCapital === 'yes' } = {}) {
   if (turn.over) return 'Game over: restart first';
   if (striking || shopOpen || eventOpen || payout.active) return 'Finish the current screen first';
   const n = Math.max(1, Math.round(missileCfg.previewCount));
-  const targets = pickStrikeTargets(n, missileCfg.previewCapital === 'yes');
+  const targets = pickStrikeTargets(n, capital);
   // Not enough buildings yet: the rest land on empty sand near the Capital.
   const cap = mainCapital() ?? { x: 0, z: 0 };
   const used = new Set(targets.map((t) => plotKey(t.x, t.z)));
@@ -735,14 +789,30 @@ function previewMissileStrike() {
     targets.push({ x, z });
   }
   const run = runId;
-  playMissileStrike(targets, { convert: missileCfg.previewCraters === 'yes' }).then((lost) => {
+  playMissileStrike(targets, { convert }).then((lost) => {
     if (run !== runId) return;
     eventOpen = false;
+    reportStrike(lost);
     updateHUD();
     if (lost.length) toast(() => L(`The Overlord's missiles destroyed your ${listLost(lost)}`, `霸主的导弹摧毁了你的${listLost(lost)}`), 'bad', 2600);
   });
   return `Missile strike: ${targets.length} missile${targets.length === 1 ? '' : 's'}`;
 }
+
+// Bottom left: a missile strike at will, on random buildings (never the Capital), which become Toxic Craters.
+// As many missiles as Game Debug → Missiles · preview sets (3 by default).
+$('btnMissile').addEventListener('click', (e) => {
+  const btn = e.currentTarget;
+  btn.blur();
+  const busyNow = turn.over || striking || shopOpen || eventOpen || payout.active || tutorial.active;
+  if (busyNow) {
+    btn.classList.remove('refused');
+    void btn.offsetWidth;
+    btn.classList.add('refused');
+    return;
+  }
+  previewMissileStrike({ convert: true, capital: false });
+});
 
 /**
  * Debug (console: tileIsland.debugRandomStrike()): a strike on random spots anywhere on the island, built on or
