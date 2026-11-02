@@ -1041,7 +1041,6 @@ function updateFactoryBars() {
       rec.el.classList.toggle('snap', filled === 0 && prev === need);
       [...rec.el.children].forEach((pip, i) => pip.classList.toggle('on', i < filled));
     }
-    rec.el.classList.toggle('waiting', filled >= need);
     factoryBarV.set(c.x, 0.15, c.z).project(camera);
     const px = (factoryBarV.x * 0.5 + 0.5) * window.innerWidth;
     const py = (-factoryBarV.y * 0.5 + 0.5) * window.innerHeight;
@@ -1195,7 +1194,12 @@ function setGrey(mesh, on) {
 function shadeIdle(e = economyNow()) {
   const idle = new Set();
   for (const p of e.perCell) if (p.idle) idle.add(`${p.x},${p.z}`);
-  for (const cell of grid.cells.values()) if (cell.mesh) setGrey(cell.mesh, idle.has(`${cell.x},${cell.z}`));
+  const need = yearLength();
+  for (const cell of grid.cells.values()) {
+    if (!cell.mesh) continue;
+    const blocked = cell.terrain === 'milfactory' && (cell.missileProgress ?? 0) >= need;
+    setGrey(cell.mesh, idle.has(`${cell.x},${cell.z}`) || blocked);
+  }
   neonTiles.refresh(grid); // boosted buildings' tiles glow (not idle ones)
   zoomIcons.setBoosts(e.boosts); // the boosters' "+n" map icons
 }
@@ -1333,16 +1337,12 @@ function updateHUD() {
     const factories = [...grid.cells.values()].filter((c) => c.terrain === 'milfactory');
     const need = yearLength();
     const finishing = factories.filter((c) => (c.missileProgress ?? 0) + 1 >= need).length;
-    const stuck = factories.filter((c) => (c.missileProgress ?? 0) >= need).length;
     const working = factories.length;
     const room = Math.max(0, cap - missiles);
     const d = $('resMissileD');
     if (finishing && room) {
       d.textContent = `(+${Math.min(finishing, room)})`;
       d.className = 'up';
-    } else if (missiles >= cap) {
-      d.textContent = L('(full)', '(已满)');
-      d.className = stuck || finishing ? 'down' : '';
     } else if (working) {
       d.textContent = L(working === 1 ? '(1 factory)' : `(${working} factories)`, working === 1 ? '(1 座工厂)' : `(${working} 座工厂)`);
       d.className = '';
@@ -1536,12 +1536,6 @@ function updateInspect(cell) {
     const need = yearLength();
     const have = c.missileProgress ?? 0;
     notes.push(L(`Missile progress ${have} / ${need} seasons`, `导弹进度 ${have} / ${need} 季`));
-    if (have >= need)
-      notes.push(
-        missileHandCount() >= currentMissileCap()
-          ? L('Magazine full: the missile stays on the last slot.', '弹库已满：导弹停在最后一格。')
-          : L('Missile waiting to load into the silo.', '导弹等待装入弹库。'),
-      );
   }
   if (c.terrain === 'magazine') {
     const cap = currentMissileCap();
@@ -1947,10 +1941,6 @@ function settleTurn(e) {
   if (missilesMade)
     lines.push(
       `<span class="good">${L(`Military Factory produced ${missilesMade} missile${missilesMade === 1 ? '' : 's'}.`, `军事工厂生产了 ${missilesMade} 枚导弹。`)}</span>`,
-    );
-  if (factoryWork.some((w) => w.stuck))
-    lines.push(
-      `<span class="bad">${L('The magazine is full: the missile stays on the last slot.', '弹库已满：导弹停在最后一格，数量没有增加。')}</span>`,
     );
   if (factoryWork.some((w) => w.unpaid))
     lines.push(`<span class="bad">${L('A Military Factory had no oil and sat idle.', '一座军事工厂没有石油，未能开工。')}</span>`);
@@ -3061,8 +3051,7 @@ function workOvertime(x, z) {
   if ((cell.missileProgress ?? 0) < need) cell.missileProgress = (cell.missileProgress ?? 0) + 1;
   if (cell.missileProgress >= need) {
     const y = deliverFactory(cell, idle);
-    if (y.stuck) toast(L('Magazine full: the missile stays on the last slot', '弹库已满：导弹停在最后一格'), 'bad');
-    else toast(L(y.count > 1 ? 'Overtime finished missiles' : 'Overtime finished a missile', '加班赶出了导弹'), 'good');
+    if (!y.stuck) toast(L(y.count > 1 ? 'Overtime finished missiles' : 'Overtime finished a missile', '加班赶出了导弹'), 'good');
   } else {
     toast(L(`Factory progress ${cell.missileProgress} / ${need}`, `工厂进度 ${cell.missileProgress} / ${need}`), 'good');
   }
