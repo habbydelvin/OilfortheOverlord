@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { hexToWorld } from './grid.js';
 import { ICONS } from './tiles.js';
 
 /**
@@ -176,7 +177,8 @@ export class ZoomIcons {
       // An idle building (no workers, greyed out on the board) shows a greyed-out icon too.
       const idle = cell.mesh?.userData.idle === true;
       if (rec.el._idle !== idle) rec.el.classList.toggle('idle', (rec.el._idle = idle));
-      this.v.set(cell.x, c.height, cell.z).project(this.camera);
+      const pos = hexToWorld(cell.x, cell.z); // not `w`: that is the screen width used just below
+      this.v.set(pos.x, c.height, pos.z).project(this.camera);
       const px = (this.v.x * 0.5 + 0.5) * w;
       const py = (-this.v.y * 0.5 + 0.5) * h;
       const tf = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px) translate(-50%, -50%)`;

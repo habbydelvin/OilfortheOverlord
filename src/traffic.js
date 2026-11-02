@@ -12,6 +12,13 @@
  */
 import * as THREE from 'three';
 import { SHIPS, SHIP_SCALE } from './models.js';
+import { hexToWorld } from './grid.js';
+
+/** A cell's centre on the board, [x, z] (cells are hex grid coordinates, see grid.js). */
+const atCell = (cell) => {
+  const w = hexToWorld(cell.x, cell.z);
+  return [w.x, w.z];
+};
 
 const JOBS = {
   farm: { stops: [['settlement', 'capital']], lane: 0.7, speed: 0.85 },
@@ -107,7 +114,7 @@ export class Traffic {
       terrain: cell.terrain,
       job: JOBS[cell.terrain],
       home: cell.mesh,
-      homeCell: [cell.x, cell.z],
+      homeCell: atCell(cell),
       model,
       rel: spec.rel,
       mesh,
@@ -187,7 +194,8 @@ export class Traffic {
     let total = 0;
     for (const cell of grid.cells.values()) {
       if (!kinds.includes(cell.terrain) || exclude.includes(cell.mesh) || !cell.mesh.visible || !inScene(cell.mesh)) continue;
-      const d = Math.hypot(cell.x - near[0], cell.z - near[1]);
+      const [cx, cz] = atCell(cell);
+      const d = Math.hypot(cx - near[0], cz - near[1]);
       if (d > RANGE || d < 0.5) continue;
       const w = 1 / (1 + d);
       options.push([cell, w]);
@@ -210,7 +218,7 @@ export class Traffic {
       const point = this.#stopPoint(cell, from);
       legs.push({ to: point, cell, kind: 'stop' });
       visited.push(cell.mesh);
-      at = [cell.x, cell.z];
+      at = atCell(cell);
       from = point;
     }
     if (!legs.length) {

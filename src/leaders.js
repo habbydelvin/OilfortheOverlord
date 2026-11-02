@@ -1,7 +1,7 @@
 /**
  * First-contact scenes with the city's enemies. Each plays once per run:
  *   Rebel Leader  — the first raider camp from starvation (or turned-away refugees).
- *   Bandit Leader — the first bandit camp drawn by a 3×3 block of Wasteland.
+ *   Bandit Leader — the first bandit camp drawn by a full cluster of 7 Wasteland.
  * Later camps arrive silently (just the season report line).
  *
  * The replies have real consequences. The scene gets a small context from main.js:

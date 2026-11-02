@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { pieceOffsets } from './pieces.js';
-import { inWorld } from './grid.js';
+import { pieceOffsets, ROTATIONS } from './pieces.js';
+import { inWorld, hexToWorld, hexesAround } from './grid.js';
+import { hexPlane, hexPrism } from './hexGeometry.js';
 import { hasBlockout } from './models.js';
 import { ACTIONS, TERRAINS, cardDef, isBuilding, isCamp, applyTileGap, fitFull } from './tiles.js';
 import { L, both, onLangChange } from './i18n.js';
@@ -26,14 +27,14 @@ function cellPart(geo, mat) {
 
 /** Placement preview look (Game Debug → Placement preview), saved to localStorage. Read live every frame. */
 export const PREVIEW_DEFAULTS = {
-  frontierOpacity: 0.15, // pale squares on every empty cell next to your land (frontier.js)
+  frontierOpacity: 0.15, // pale hexagons on every empty cell next to your land (frontier.js)
   validOpacity: 0.4, // green footprint under the piece where it can go
   invalidOpacity: 0.4, // red footprint where it can't
   blockOpacity: 0.8, // the plain coloured stand-in blocks (tiles with a 3D model show the model as is)
 };
 export const PREVIEW_PARAMS = [
   { group: 'Placement preview' },
-  { key: 'frontierOpacity', label: 'Open cell opacity', min: 0, max: 1, step: 0.01, hint: 'pale squares on empty cells next to your land' },
+  { key: 'frontierOpacity', label: 'Open cell opacity', min: 0, max: 1, step: 0.01, hint: 'pale hexagons on empty cells next to your land' },
   { key: 'validOpacity', label: 'Valid footprint opacity', min: 0, max: 1, step: 0.01 },
   { key: 'invalidOpacity', label: 'Invalid footprint opacity', min: 0, max: 1, step: 0.01 },
   { key: 'blockOpacity', label: 'Stand-in block opacity', min: 0, max: 1, step: 0.01, hint: 'only tiles without a 3D model' },
@@ -72,15 +73,13 @@ export class Placement {
     this.cfg = cfg;
     this.grid = grid;
     this.factory = factory;
-    const s = 1;
-
     this.blocks = new THREE.Group();
     this.feet = new THREE.Group();
     this.blocks.visible = this.feet.visible = false;
     scene.add(this.blocks, this.feet);
 
-    this.blockGeo = new THREE.BoxGeometry(s, 0.3, s);
-    this.footGeo = new THREE.PlaneGeometry(s, s).rotateX(-Math.PI / 2);
+    this.blockGeo = hexPrism(0.3).translate(0, -0.15, 0);
+    this.footGeo = hexPlane();
     this.blockMat = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.8, roughness: 0.8 });
     this.footMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.4, depthWrite: false });
     // The reason text is cached per cell: rebuild it in the new language.
@@ -97,12 +96,12 @@ export class Placement {
 
   #build(piece) {
     // Same piece, new rotation: the ghost is rebuilt in the new orientation, then shown turned back by the
-    // difference and eased forward to 0. rotateCells turns (x, z) -> (-z, x), which is -90° about Y in three.js,
-    // so one step forward starts at +90°. Rotating again mid-swing adds to what is left.
+    // difference and eased forward to 0. One rotation step is a sixth of a turn clockwise on screen, which is -60°
+    // about Y in three.js, so one step forward starts at +60°. Rotating again mid-swing adds to what is left.
     if (piece && piece === this.#last && piece.rot !== this.#lastRot) {
-      let d = (piece.rot - this.#lastRot + 4) % 4;
-      if (d === 3) d = -1;
-      this.spin += d * (Math.PI / 2);
+      let d = (piece.rot - this.#lastRot + ROTATIONS) % ROTATIONS;
+      if (d > ROTATIONS / 2) d -= ROTATIONS;
+      this.spin += d * ((2 * Math.PI) / ROTATIONS);
     } else {
       this.spin = 0;
     }
@@ -121,43 +120,37 @@ export class Placement {
     if (action) {
       // Action cards: no blocks, just a footprint over the cells they affect.
       this.offsets = [];
-      if (action.size) {
-        for (let dx = 0; dx < action.size; dx++) for (let dz = 0; dz < action.size; dz++) this.offsets.push([dx, dz]);
-      } else {
-        const r = action.range;
-        for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) this.offsets.push([dx, dz]);
-      }
+      // `size`: a diamond of 4 cells with the hovered one at its top; `range`: every cell within that many steps.
+      this.offsets = action.size ? [[0, 0], [1, 0], [0, 1], [1, 1]] : hexesAround(0, 0, action.range);
       for (const [ox, oz] of this.offsets) {
         const f = cellPart(this.footGeo, this.footMat);
-        f.position.set(ox, 0.015, oz);
+        const w = hexToWorld(ox, oz);
+        f.position.set(w.x, 0.015, w.z);
         this.feet.add(f);
       }
       return;
     }
     this.offsets = pieceOffsets(piece);
-    this.spinCentre.set(
-      this.offsets.reduce((a, o) => a + o[0], 0) / this.offsets.length,
-      0,
-      this.offsets.reduce((a, o) => a + o[1], 0) / this.offsets.length,
-    );
+    const world = this.offsets.map(([ox, oz]) => hexToWorld(ox, oz)); // offsets on the board (cell offsets convert linearly)
+    this.spinCentre.set(world.reduce((a, w) => a + w.x, 0) / world.length, 0, world.reduce((a, w) => a + w.z, 0) / world.length);
     const blockout = hasBlockout(piece.terrain) && this.factory?.models?.has(piece.terrain);
     // Wasteland previews as its whole-piece model, centred on the piece's cells.
     const wholePiece = piece.terrain.startsWith('wasteland') ? this.factory?.previewPiece(piece.shape, piece.rot) : null;
     if (wholePiece) {
-      const xs = this.offsets.map((o) => o[0]);
-      const zs = this.offsets.map((o) => o[1]);
+      const xs = world.map((w) => w.x);
+      const zs = world.map((w) => w.z);
       wholePiece.position.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...zs) + Math.max(...zs)) / 2);
       this.blocks.add(wholePiece);
     }
-    for (const [ox, oz] of this.offsets) {
+    for (const w of world) {
       if (!wholePiece) {
         const b = blockout ? this.factory.preview(piece.terrain) : cellPart(this.blockGeo, this.blockMat);
-        b.position.set(ox, 0, oz);
+        b.position.set(w.x, 0, w.z);
         if (!blockout) b.children[0].castShadow = true;
         this.blocks.add(b);
       }
       const f = cellPart(this.footGeo, this.footMat);
-      f.position.set(ox, 0.015, oz);
+      f.position.set(w.x, 0.015, w.z);
       this.feet.add(f);
     }
   }
@@ -254,8 +247,9 @@ export class Placement {
     });
     this.tinted = ok;
 
-    this.feet.position.set(cell[0], 0, cell[1]);
-    goal.set(cell[0], HOVER_Y + Math.sin(time * 3) * 0.05, cell[1]);
+    const at = hexToWorld(cell[0], cell[1]);
+    this.feet.position.set(at.x, 0, at.z);
+    goal.set(at.x, HOVER_Y + Math.sin(time * 3) * 0.05, at.z);
     if (wasHidden) this.base.copy(goal);
     else this.base.lerp(goal, 1 - Math.exp(-22 * dt));
     this.blocks.position.copy(this.base);

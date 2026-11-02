@@ -6,6 +6,8 @@ import { buildLabourCamp } from './labourCampMesh.js';
 import { copySeam } from './seamlessGround.js';
 import { SCALE } from './scalingConfig.js';
 import { L } from './i18n.js';
+import { hexToWorld, hexRound, hexDistance, hexesAround } from './grid.js';
+import { hexPrism } from './hexGeometry.js';
 
 /**
  * Desert dieselpunk tile set. Flat colours only for now, detail comes later.
@@ -83,8 +85,8 @@ export const TERRAINS = {
     category: 'building',
     buildable: false,
     weight: 1,
-    rule: '0.5× oil per adjacent station',
-    stats: { manpower: -1, oilMultiplierPerAdjacent: { station: 0.5 } },
+    rule: '1× oil per adjacent station',
+    stats: { manpower: -1, oilMultiplierPerAdjacent: { station: 1 } },
   },
 
   // ---- wasteland (4 cosmetic variants, share one draw weight: 4 × 1.34 ≈ 30% of draws) ----
@@ -96,7 +98,7 @@ export const TERRAINS = {
     category: 'junk',
     buildable: false,
     weight: 1.34,
-    rule: '3×3 Blocks have a chance to spawn Bandit Camps',
+    rule: 'A cluster of 7 (one and all 6 around it) may draw Bandit Camps',
     stats: {},
   },
   wasteland2: {
@@ -107,7 +109,7 @@ export const TERRAINS = {
     category: 'junk',
     buildable: false,
     weight: 1.34,
-    rule: '3×3 Blocks have a chance to spawn Bandit Camps',
+    rule: 'A cluster of 7 (one and all 6 around it) may draw Bandit Camps',
     stats: {},
   },
   wasteland3: {
@@ -118,7 +120,7 @@ export const TERRAINS = {
     category: 'junk',
     buildable: false,
     weight: 1.34,
-    rule: '3×3 Blocks have a chance to spawn Bandit Camps',
+    rule: 'A cluster of 7 (one and all 6 around it) may draw Bandit Camps',
     stats: {},
   },
   wasteland4: {
@@ -129,7 +131,7 @@ export const TERRAINS = {
     category: 'junk',
     buildable: false,
     weight: 1.34,
-    rule: '3×3 Blocks have a chance to spawn Bandit Camps',
+    rule: 'A cluster of 7 (one and all 6 around it) may draw Bandit Camps',
     stats: {},
   },
 
@@ -214,7 +216,7 @@ export const TERRAINS = {
     stats: { drain: 'slots' },
   },
 
-  // ---- bandit camps: settle in a full 3×3 block of Wasteland at the end of a season ----
+  // ---- bandit camps: settle in a full cluster of 7 Wasteland (one and its 6 neighbours) at the end of a season ----
   // Permanent: only "Send in the Militia" clears them (Demolish can't).
   bandit_raider: {
     name: 'Raider Hideout',
@@ -223,7 +225,7 @@ export const TERRAINS = {
     edge: 0x52261b,
     category: 'junk',
     buildable: false,
-    weight: 0, // only spawned in a 3×3 block of Wasteland
+    weight: 0, // only spawned in a full cluster of 7 Wasteland
     bandit: true,
     tent: 0x8c2f22,
     get rule() {
@@ -283,7 +285,7 @@ export const ACTIONS = {
     symbol: '✶',
     range: 1,
     weight: 0.4, // small chance in random draws (≈3%)
-    rule: 'Trigger tiles in a 3×3 area',
+    rule: 'Trigger a tile and the 6 around it',
   },
   demolish: {
     name: 'Demolish',
@@ -303,9 +305,9 @@ export const ACTIONS = {
     edge: 0x7a2c1e,
     category: 'action',
     symbol: '⊠',
-    size: 2, // a 2×2 square, the hovered cell is its corner (instead of a range around it)
+    size: 2, // a diamond of 4 cells, the hovered cell at its top (instead of a range around it)
     weight: 0.4,
-    rule: 'Remove up to 4 tiles in a 2×2 square',
+    rule: 'Remove up to 4 tiles in a diamond',
   },
   militia: {
     name: 'Send in the Militia',
@@ -321,7 +323,7 @@ export const ACTIONS = {
 };
 
 const TRIGGER_ZH = { Passive: '被动', 'On trigger': '触发时', Junk: '废料', 'On play': '打出时' };
-const WASTELAND_ZH = { name: '荒地', rule: '3×3 荒地区域有几率出现匪营' };
+const WASTELAND_ZH = { name: '荒地', rule: '7 格荒地群（一格及其周围 6 格）可能引来匪营' };
 
 /** Chinese name and rule for each card; a function rule reads the live SCALE values like the English getter. */
 const ZH = {
@@ -330,7 +332,7 @@ const ZH = {
   farm: { name: '水培农场', rule: '+2 食物' },
   pump: { name: '水泵站', rule: '相邻农场 +2 食物' },
   station: { name: '采油站', rule: '+2 石油' },
-  refinery: { name: '炼油厂', rule: '每个相邻采油站 0.5× 石油' },
+  refinery: { name: '炼油厂', rule: '每个相邻采油站 1× 石油' },
   wasteland1: WASTELAND_ZH,
   wasteland2: WASTELAND_ZH,
   wasteland3: WASTELAND_ZH,
@@ -348,9 +350,9 @@ const ZH = {
   bandit_raider: { name: '掠夺者巢穴', rule: () => `-${SCALE.banditSlots} 人力` },
   bandit_siphon: { name: '窃油者营地', rule: () => `-${SCALE.banditOil} 石油` },
   bandit_scav: { name: '拾荒者营地', rule: () => `-${SCALE.banditFood} 食物` },
-  spark: { name: '火花', rule: '触发 3×3 范围内的地块' },
+  spark: { name: '火花', rule: '触发一个地块及其周围 6 个地块' },
   demolish: { name: '拆除', rule: '移除一个地块' },
-  demolish2: { name: '拆迁队', rule: '移除 2×2 范围内至多 4 个地块' },
+  demolish2: { name: '拆迁队', rule: '移除菱形范围内至多 4 个地块' },
   militia: { name: '派遣民兵', rule: '清除一个匪营或叛军营地' },
 };
 
@@ -397,26 +399,50 @@ export const cardText = (t) =>
   t.rule.split(' · ').map((l) => `<div>${iconize(l)}</div>`).join('');
 
 /**
- * A piece shape on the card's LED panel (top right): every square of the 3×3 grid is drawn, and the ones the
- * piece covers light up in the card colour (--top from the card). The 4-long I piece gets a 4×4 grid.
+ * The card's LED panel (top right): a little hexagon board, a flower of 7 hexes (19 for pieces that don't fit in it),
+ * where `lit` cells light up: class 'on' in the card colour (--top from the card), 'area' in yellow.
+ * lit: [[x, z, cls], ...] in hex cells (see grid.js); they're centred on the panel.
+ */
+function hexPanelHTML(lit) {
+  // Centre: the cell nearest the middle of the lit cells.
+  const world = lit.map(([x, z]) => hexToWorld(x, z));
+  const mx = world.reduce((s, w) => s + w.x, 0) / lit.length;
+  const mz = world.reduce((s, w) => s + w.z, 0) / lit.length;
+  const fz = mz / (Math.sqrt(3) / 2);
+  const [cx, cz] = hexRound(mx - fz / 2, fz);
+  const radius = Math.max(1, ...lit.map(([x, z]) => hexDistance(x, z, cx, cz)));
+  const cls = new Map(lit.map(([x, z, c]) => [`${x - cx},${z - cz}`, c]));
+  // Pointy-top hexagons, a little smaller than their cell so the dark glass shows between them.
+  const r = (1 / Math.sqrt(3)) * 0.88;
+  const corners = Array.from({ length: 6 }, (_, i) => {
+    const a = -Math.PI / 2 + (i * Math.PI) / 3;
+    return [r * Math.cos(a), r * Math.sin(a)];
+  });
+  const half = radius + 0.5;
+  const halfH = radius * (Math.sqrt(3) / 2) + 1 / Math.sqrt(3);
+  const polys = hexesAround(0, 0, radius)
+    .map(([x, z]) => {
+      const w = hexToWorld(x, z);
+      const pts = corners.map(([px, pz]) => `${(w.x + px).toFixed(3)},${(w.z + pz).toFixed(3)}`).join(' ');
+      const c = cls.get(`${x},${z}`);
+      return `<polygon points="${pts}"${c ? ` class="${c}"` : ''}/>`;
+    })
+    .join('');
+  return `<div class="shape hex"><svg viewBox="${-half} ${-halfH} ${2 * half} ${2 * halfH}" aria-hidden="true">${polys}</svg></div>`;
+}
+
+/**
+ * A piece shape on the card's LED panel: the cells the piece covers light up in the card colour.
  * cells: [[x, z], ...] already rotated, starting at 0,0.
  */
 export function shapeGridHTML(cells) {
-  const w = Math.max(...cells.map((c) => c[0])) + 1;
-  const h = Math.max(...cells.map((c) => c[1])) + 1;
-  const n = Math.max(3, w, h);
-  const ox = Math.floor((n - w) / 2);
-  const oz = Math.floor((n - h) / 2);
-  const lit = new Set(cells.map(([x, z]) => `${x + ox},${z + oz}`));
-  let squares = '';
-  for (let z = 0; z < n; z++) for (let x = 0; x < n; x++) squares += lit.has(`${x},${z}`) ? '<i class="on"></i>' : '<i></i>';
-  return `<div class="shape" style="grid-template-columns:repeat(${n},1fr)">${squares}</div>`;
+  return hexPanelHTML(cells.map(([x, z]) => [x, z, 'on']));
 }
 
 /**
  * Tiles that affect other tiles show their reach on the LED panel instead of their size:
  * the tile itself lit in its card colour, the cells it affects lit yellow.
- * 'plus' = the 4 sides (adjacency), 'square' = the full 3×3 around it.
+ * 'plus' = the 6 around it (adjacency), 'square' = the tile and the 6 around it, 'block2' = a diamond of 4.
  */
 export const AREAS = {
   capital: 'plus',
@@ -431,15 +457,8 @@ export const AREAS = {
 };
 
 export function areaGridHTML(area) {
-  if (area === 'block2') return `<div class="shape area-grid" style="grid-template-columns:repeat(2,1fr)">${'<i class="area"></i>'.repeat(4)}</div>`;
-  let squares = '';
-  for (let z = 0; z < 3; z++)
-    for (let x = 0; x < 3; x++) {
-      const centre = x === 1 && z === 1;
-      const hit = area === 'square' || x === 1 || z === 1;
-      squares += centre && area !== 'square' ? '<i class="on"></i>' : hit ? '<i class="area"></i>' : '<i></i>';
-    }
-  return `<div class="shape area-grid" style="grid-template-columns:repeat(3,1fr)">${squares}</div>`;
+  if (area === 'block2') return hexPanelHTML([[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, z]) => [x, z, 'area']));
+  return hexPanelHTML(hexesAround(0, 0, 1).map(([x, z]) => [x, z, x === 0 && z === 0 && area !== 'square' ? 'on' : 'area']));
 }
 
 /** LED panel contents for a card: its area of effect if it has one, else its shape (nothing for other action cards). */
@@ -549,16 +568,16 @@ export class TileFactory {
   piecesReady;
 
   constructor() {
-    const s = 1;
-    this.capGeo = new THREE.BoxGeometry(s, TILE.capH, s).translate(0, -TILE.capH / 2, 0);
-    this.soilGeo = new THREE.BoxGeometry(s, TILE.soilH, s).translate(0, -TILE.capH - TILE.soilH / 2, 0);
+    // Hexagonal blocks, like the cells (see grid.js): the coloured cap with its top at y = 0, the soil under it.
+    this.capGeo = hexPrism(TILE.capH).translate(0, -TILE.capH, 0);
+    this.soilGeo = hexPrism(TILE.soilH).translate(0, -TILE.capH - TILE.soilH, 0);
     this.soilMat = new THREE.MeshStandardMaterial({ color: 0x4a3b2c, roughness: 1 });
     this.capMats = {};
     for (const [k, t] of Object.entries(TERRAINS)) {
       const top = new THREE.MeshStandardMaterial({ color: t.top, roughness: 0.95 });
       const edge = new THREE.MeshStandardMaterial({ color: t.edge, roughness: 0.95 });
-      // BoxGeometry face order: +x, -x, +y (top), -y, +z, -z
-      this.capMats[k] = [edge, edge, top, edge, edge, edge];
+      // Hexagonal prism (CylinderGeometry) groups: sides, top, bottom.
+      this.capMats[k] = [edge, top, edge];
     }
     // Loading phases: the core models gate the game start; the Wasteland pieces, then the other buildings and
     // tiles, load in the background. Until a model arrives its tiles show stand-ins, upgraded in place when it
@@ -696,7 +715,7 @@ export class TileFactory {
     const group = new THREE.Group();
     const model = cloneModel(source);
     group.add(model);
-    group.rotation.y = (-rot * Math.PI) / 2;
+    group.rotation.y = (-rot * Math.PI) / 3; // rot sixths of a turn, clockwise on screen
     if (model.animations.length) this.#animate(model);
     return applyTileGap(group);
   }

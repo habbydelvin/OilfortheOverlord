@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { hexToWorld } from './grid.js';
 import { ICONS } from './tiles.js';
 import { L } from './i18n.js';
 
@@ -210,7 +211,8 @@ export class Payout {
             ? lerp(0.2, 1, easeOutBack(a / pt)) * c.labelPop
             : lerp(c.labelPop, 1, Math.min((a - pt) / 0.2, 1));
         const rise = c.labelStartY + c.labelRise * easeOut(p);
-        this.v.set(it.tile.x, rise, it.tile.z).project(this.camera);
+        const pos = hexToWorld(it.tile.x, it.tile.z); // not `w`: that is the screen width used just below
+        this.v.set(pos.x, rise, pos.z).project(this.camera);
         const px = (this.v.x * 0.5 + 0.5) * w;
         const py = (-this.v.y * 0.5 + 0.5) * h;
         const wobTime = pt * 1.8;

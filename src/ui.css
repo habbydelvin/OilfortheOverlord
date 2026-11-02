@@ -501,6 +501,7 @@ body {
 #floaters {
   position: absolute;
   inset: 0;
+  z-index: -2; /* in the world: under the CRT screen's texture, over its contrast (#crt) */
   overflow: hidden;
   pointer-events: none;
 }
@@ -1408,6 +1409,7 @@ body.striking .ruin-btn {
 #ruinBtns {
   position: absolute;
   inset: 0;
+  z-index: -2; /* in the world: under the CRT screen's texture, over its contrast (#crt) */
   overflow: hidden;
   pointer-events: none;
 }
@@ -1846,7 +1848,7 @@ body.dialogue #inspect {
 #mapIcons {
   position: absolute;
   inset: 0;
-  z-index: -1; /* under every other piece of UI (it comes later in the page than the panels) */
+  z-index: -2; /* under every other piece of UI (it comes later in the page than the panels); under the CRT screen's texture, over its contrast */
   overflow: hidden;
   pointer-events: none;
   --map-ico: 26px;
@@ -2629,4 +2631,145 @@ body.rival-view #btnMissile,
 body.rival-view #btnReplayTutorial {
   visibility: hidden;
   pointer-events: none;
+
+/* ---------- the CRT monitor the world is seen through (crt.js) ---------- */
+/*
+ * Over the 3D view and the in-world HTML (map icons, payout numbers, ruin buttons: z-index -2), under every HUD panel
+ * (it's the first child of #ui, so they all paint over it). The contrast boost (-3) sits under that in-world HTML, so
+ * the icons keep their own colours; the texture (-1) goes over it. Never takes a click. The screen ends at the side panel,
+ * and widens to the whole view while the panel is away (shop, missile strike, conversations).
+ */
+#crt {
+  position: absolute;
+  inset: 0 var(--panel-w) 0 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: right 0.45s cubic-bezier(0.5, 0, 0.2, 1);
 }
+body.shopping #crt,
+body.striking #crt,
+body.dialogue #crt {
+  right: 0;
+}
+body.crt-off #crt {
+  display: none;
+}
+/* With the CRT shader (crtPass.js) the picture's contrast, grille, scanlines, grain, band and edges are drawn there:
+   only the dirt, glare and bezel stay here. */
+body.crt-shader .crt-tone,
+body.crt-shader .crt-grille,
+body.crt-shader .crt-scan,
+body.crt-shader .crt-noise,
+body.crt-shader .crt-roll,
+body.crt-shader .crt-vignette {
+  display: none;
+}
+#crt > * {
+  position: absolute;
+  inset: 0;
+  z-index: -1; /* the screen's texture: over the in-world icons (z-index -2) */
+}
+/* The screen's texture (grille, scanlines, grain, smears) is fainter in the middle and full at the edges. */
+#crt {
+  --crt-clear-middle: radial-gradient(ellipse 60% 56% at 50% 48%, rgba(0, 0, 0, 0.35) 25%, #000 90%);
+}
+.crt-grille,
+.crt-scan,
+.crt-noise,
+.crt-smear {
+  -webkit-mask: var(--crt-clear-middle);
+  mask: var(--crt-clear-middle);
+}
+/* More contrast on the 3D view behind the glass (its colours stay as they are). Under the in-world icons, which
+   keep their own colours. */
+.crt-tone {
+  z-index: -3 !important;
+  backdrop-filter: contrast(2.6) brightness(0.97);
+}
+/* Aperture grille: fine vertical phosphor stripes, red / green / blue, 3 px a triad. */
+.crt-grille {
+  background:
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.18) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(90deg, rgba(255, 90, 80, 0.5) 0 1px, rgba(90, 255, 120, 0.5) 1px 2px, rgba(90, 120, 255, 0.5) 2px 3px);
+  mix-blend-mode: multiply;
+  opacity: 0.14;
+}
+.crt-scan {
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.08) 0 1px, transparent 1px 3px);
+}
+/* Grain that flickers: an oversized noise layer jumping between offsets (compositor-only, no repaints). */
+.crt-noise {
+  inset: -160px !important;
+  background-size: 160px 160px;
+  mix-blend-mode: overlay;
+  opacity: 0.05;
+  animation: crt-noise 0.5s steps(1) infinite;
+}
+@keyframes crt-noise {
+  0% { transform: translate(0, 0); }
+  20% { transform: translate(-57px, 31px); }
+  40% { transform: translate(23px, -89px); }
+  60% { transform: translate(-103px, -12px); }
+  80% { transform: translate(71px, 64px); }
+}
+/* A faint brighter band rolling slowly down the screen. */
+.crt-roll {
+  inset: auto 0 auto 0 !important;
+  top: 0;
+  height: 22%;
+  background: linear-gradient(180deg, transparent, rgba(255, 240, 210, 0.035) 50%, transparent);
+  animation: crt-roll 11s linear infinite;
+}
+@keyframes crt-roll {
+  from { transform: translateY(-110%); }
+  to { transform: translateY(560%); }
+}
+/* Dirt: grime and dust darken, gathered toward the rim (the middle stays clean); greasy smudges haze a little. */
+.crt-grime {
+  background-size: 100% 100%;
+  mix-blend-mode: multiply;
+  -webkit-mask: radial-gradient(ellipse 62% 58% at 50% 50%, transparent 40%, #000 92%);
+  mask: radial-gradient(ellipse 62% 58% at 50% 50%, transparent 40%, #000 92%);
+}
+.crt-smear {
+  background-size: 100% 100%;
+  mix-blend-mode: screen;
+  opacity: 0.4;
+}
+/* Darker towards the curved edges, with a slight flicker. */
+.crt-vignette {
+  background: radial-gradient(ellipse 68% 64% at 50% 48%, transparent 50%, rgba(4, 5, 4, 0.78) 100%);
+  box-shadow: inset 0 0 140px rgba(0, 0, 0, 0.7);
+  animation: crt-flicker 4.3s steps(1) infinite;
+}
+@keyframes crt-flicker {
+  0%, 100% { opacity: 1; }
+  37% { opacity: 0.94; }
+  39% { opacity: 1; }
+  71% { opacity: 0.97; }
+  73% { opacity: 1; }
+}
+/* The curved glass catching a soft light from the top left. */
+.crt-glare {
+  background:
+    radial-gradient(ellipse 55% 38% at 28% 16%, rgba(255, 248, 230, 0.04), transparent 70%),
+    radial-gradient(ellipse 90% 60% at 50% 0%, rgba(255, 248, 230, 0.015), transparent 70%);
+  mix-blend-mode: screen;
+}
+/* The bezel: black around the picture tube's outline, with a dark rim where the glass curves into it. */
+.crt-bezel {
+  width: 100%;
+  height: 100%;
+  fill: #0b0a09;
+}
+.crt-rim {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.85);
+  stroke-width: 26;
+}
+@media (prefers-reduced-motion: reduce) {
+  .crt-noise,
+  .crt-roll,
+  .crt-vignette {
+    animation: none;
+  }

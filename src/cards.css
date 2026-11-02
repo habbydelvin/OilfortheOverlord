@@ -139,6 +139,40 @@ body.dragging-card * {
     0 0 calc(var(--w) * 0.05) color-mix(in srgb, var(--led) 70%, transparent);
 }
 
+/* The hexagon version (shapeGridHTML / areaGridHTML in tiles.js): a little hex board drawn as SVG. */
+.card .shape.hex,
+#inspect .card-big .shape.hex {
+  display: grid;
+  place-items: center;
+}
+.card .shape.hex svg,
+#inspect .card-big .shape.hex svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+/* An unlit LED: dark glass. */
+.card .shape.hex polygon,
+#inspect .card-big .shape.hex polygon {
+  fill: #0d0d0c;
+  stroke: rgba(255, 255, 255, 0.07);
+  stroke-width: 0.03;
+}
+/* A lit LED in the card colour, with a soft glow. */
+.card .shape.hex polygon.on,
+#inspect .card-big .shape.hex polygon.on {
+  fill: color-mix(in srgb, var(--top) 80%, white);
+  stroke: rgba(255, 255, 255, 0.45);
+  filter: drop-shadow(0 0 calc(var(--w) * 0.012) color-mix(in srgb, var(--top) 60%, white));
+}
+/* Area of effect: yellow. */
+.card .shape.hex polygon.area,
+#inspect .card-big .shape.hex polygon.area {
+  fill: #ffd95a;
+  stroke: rgba(255, 255, 255, 0.45);
+  filter: drop-shadow(0 0 calc(var(--w) * 0.012) #ffe27a);
+}
+
 /* Picture slot at the top of the centre panel: a tile snapshot later, the symbol on action cards. */
 .card .snap,
 #inspect .card-big .snap {

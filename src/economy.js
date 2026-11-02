@@ -14,8 +14,8 @@ export const WORKERS = { farm: 1, station: 1, refinery: 1 };
  *     Worker buildings (farms, stations, refineries) are staffed in placement order; past the cap the
  *     newest go idle and produce nothing.
  *  2. Food: staffed farms grow, capital/settlements eat. Not enough food -> fed < 1.
- *  3. Oil: (crude from staffed stations + refinery oil) × fed. A staffed refinery makes 0.5× the crude of each
- *     staffed station next to it.
+ *  3. Oil: (crude from staffed stations + refinery oil) × fed. A staffed refinery makes 1× the crude of each
+ *     staffed station next to it (TERRAINS.refinery.stats.oilMultiplierPerAdjacent).
  *  4. Food store: spare food is banked (up to FOOD_PER_CAPITAL per Capital, the rest is wasted);
  *     a shortfall is covered from the store before `fed` drops.
  *
@@ -58,16 +58,15 @@ export function computeEconomy(grid, state = {}) {
   const bonus = { labourCamps: 0, ruins: 0, pumpFarms: 0, oasisFarms: 0, tarpitStations: 0, capitalFood: 0, capitalCrude: 0 };
   // What each tile contributes, for the end-of-turn payout animation.
   const perCell = [];
-  // What each booster (Water Pump, Oasis, Tar Pit, Refinery) adds this season, for its map icon: cell key ->
-  // amount (food for Pump / Oasis, crude for Tar Pit, oil for Refinery). A bonus doesn't stack, so a building
-  // next to two of the same booster credits only the first one found.
-  const boosts = new Map();
-  const credit = (x, z, booster, amount) => {
+  // What each booster (Water Pump, Oasis, Tar Pit) adds to the building next to it: worked out as a share of that
+  // building's output, then turned into whole food / oil once the final numbers are known (see `shares` below).
+  // A bonus doesn't stack, so a building next to two of the same booster credits only the first one found.
+  const credits = []; // { from: building's perCell entry, to: booster cell key, res: 'food' | 'oil', amount (raw) }
+  const credit = (from, booster, res, amount) => {
     for (const [dx, dz] of DIRS) {
-      const n = grid.get(x + dx, z + dz);
+      const n = grid.get(from.x + dx, from.z + dz);
       if (n?.terrain !== booster) continue;
-      const k = `${n.x},${n.z}`;
-      boosts.set(k, (boosts.get(k) ?? 0) + amount);
+      credits.push({ from, to: `${n.x},${n.z}`, res, amount });
       return;
     }
   };
@@ -148,8 +147,8 @@ export function computeEconomy(grid, state = {}) {
       else {
         if (pump) bonus.pumpFarms++;
         if (oasis) bonus.oasisFarms++;
-        if (pump) credit(cell.x, cell.z, 'pump', 2 * twice);
-        if (oasis) credit(cell.x, cell.z, 'oasis', 3 * twice);
+        if (pump) credit(per, 'pump', 'food', 2 * twice);
+        if (oasis) credit(per, 'oasis', 'food', 3 * twice);
       }
       per.rawFood = 2 + (mods.drought ? 0 : water);
       // A Capital next door triggers the farm twice: double output (doesn't stack with more Capitals).
@@ -162,7 +161,7 @@ export function computeEconomy(grid, state = {}) {
     } else if (t === 'station') {
       const tarpit = near.includes('tarpit');
       if (tarpit) bonus.tarpitStations++;
-      if (tarpit) credit(cell.x, cell.z, 'tarpit', 2 * (near.includes('capital') ? 2 : 1));
+      if (tarpit) credit(per, 'tarpit', 'oil', 2 * (near.includes('capital') ? 2 : 1));
       per.rawCrude = 2 + (tarpit ? 2 : 0);
       if (near.includes('capital')) {
         bonus.capitalCrude += per.rawCrude;
@@ -177,6 +176,12 @@ export function computeEconomy(grid, state = {}) {
       craterFood += victims;
       per.food -= victims;
     }
+  }
+
+  // Each credit as a share of its building's output (events, hunger and rounding scale both alike).
+  for (const c of credits) {
+    const raw = c.res === 'food' ? c.from.rawFood : c.from.rawCrude;
+    c.ratio = raw > 0 ? c.amount / raw : 0;
   }
 
   // Year events: a share of all farm food / station crude, spread over the tiles in proportion.
@@ -227,8 +232,6 @@ export function computeEconomy(grid, state = {}) {
   const storeAfter = Math.min(foodCap, rawStore);
   const foodWasted = rawStore - storeAfter;
 
-  // Each refinery's map icon: the oil it makes itself (its share of its stations' crude), after hunger like all oil.
-  for (const per of refineries) if (per.rawCrude) boosts.set(`${per.x},${per.z}`, per.rawCrude * fed);
   // Taxed settlements pay oil straight into the season's yield.
   const taxOil = (mods.settlementOil ?? 0) * (counts.settlement ?? 0);
   const oilMade = Math.round(crude * fed) + taxOil;
@@ -245,6 +248,24 @@ export function computeEconomy(grid, state = {}) {
   // Grown food (after upkeep was already counted) rounded so the tiles add up to the shown balance.
   const upkeep = perCell.reduce((s, p) => s + p.food, 0);
   shareOut(perCell, 'rawFood', 'food', Math.round(foodBalance) - upkeep);
+
+  // What each booster adds this season, in whole food / oil: its share of the building it boosts (never more
+  // than that building made). The payout shows it over the booster instead of the building (`shares`), and the
+  // map icons show the same number (`boosts`). A refinery's is simply the oil it makes itself.
+  const shares = []; // { from: building cell key, to: booster cell key, food?, oil? }
+  const boosts = new Map(); // booster cell key -> amount
+  const left = new Map(); // building's perCell entry -> output not yet given to a booster
+  for (const c of credits) {
+    const total = Math.max(0, c.from[c.res]);
+    const rest = left.get(c.from) ?? total;
+    const n = Math.min(rest, Math.round(total * c.ratio));
+    left.set(c.from, rest - n);
+    if (n <= 0) continue;
+    shares.push({ from: `${c.from.x},${c.from.z}`, to: c.to, [c.res]: n });
+    boosts.set(c.to, (boosts.get(c.to) ?? 0) + n);
+  }
+  for (const per of refineries) if (per.oil > 0) boosts.set(`${per.x},${per.z}`, per.oil);
+
   for (const per of perCell) {
     delete per.rawFood;
     delete per.rawCrude;
@@ -252,6 +273,7 @@ export function computeEconomy(grid, state = {}) {
 
   return {
     perCell,
+    shares,
     boosts,
     cap,
     used,

@@ -1,4 +1,4 @@
-import { pieceOf, randomPiece, rotateCells, shapeFits, SHAPES } from './pieces.js';
+import { pieceOf, randomPiece, rotateCells, shapeFits, SHAPES, ROTATIONS } from './pieces.js';
 import { ACTIONS, ICONS, TERRAINS, cardDef, cardText, hex, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
 import { WORKERS } from './economy.js';
 import { bindCardHover, chirp, deal as dealSfx, tick } from './sfx.js';
@@ -220,7 +220,7 @@ export class Hand {
     const p = this.piece;
     if (!p) return;
     if (this.guard && !this.guard('rotate', p)) return;
-    p.rot = (p.rot + dir + 4) % 4;
+    p.rot = (p.rot + dir + ROTATIONS) % ROTATIONS;
     this.render();
     this.onChange?.(p);
     chirp();
