@@ -33,58 +33,184 @@ const BG = 0x07090a;
 const TILE = new THREE.Color('#ffffff'); // multiplies the sand texture: white = the sand as on the board
 const CORE = 0x2b241b;
 
+/**
+ * Tileable value noise on the wrapping plane: lattice cells wrap every `cells` steps across one period, so the
+ * pattern repeats exactly with the planet and never shows a seam. fbm doubles the cell count per octave.
+ */
+const PERIODIC_NOISE = /* glsl */ `
+float pnHash(vec2 i) {
+  return fract(sin(dot(i, vec2(127.1, 311.7))) * 43758.5453);
+}
+float pnoise(vec2 q, vec2 cells) {
+  vec2 i = floor(q);
+  vec2 f = fract(q);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  float a = pnHash(mod(i, cells));
+  float b = pnHash(mod(i + vec2(1.0, 0.0), cells));
+  float c = pnHash(mod(i + vec2(0.0, 1.0), cells));
+  float d = pnHash(mod(i + vec2(1.0, 1.0), cells));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+// t: plane position / period (0..1 per wrap). base: lattice cells across one period on the first octave.
+float pfbm(vec2 t, float base, vec2 seed) {
+  float sum = 0.0;
+  float amp = 0.5;
+  float n = base;
+  for (int o = 0; o < 5; o++) {
+    sum += amp * pnoise((t + seed) * n, vec2(n));
+    n *= 2.0;
+    amp *= 0.5;
+  }
+  return sum / 0.96875;
+}
+// Domain-warped fbm: warps with two more periodic fields first, so regions get organic, swirled edges.
+float pwarp(vec2 t, float base, vec2 seed) {
+  vec2 w = vec2(pfbm(t, base, seed + 3.1), pfbm(t, base, seed + 7.7)) - 0.5;
+  return pfbm(t + w * (0.9 / base), base, seed);
+}
+`;
+
 const easeOut = (t) => 1 - (1 - t) ** 3;
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
 
-/** Pointy-top hexagon tile: a 2-ring cap (so it can curve) plus a short skirt; flat-shaded via explicit normals. */
+/**
+ * Pointy-top hexagon tile: a finely subdivided cap (the shader carves terrain into it and bends it onto the ball)
+ * plus a deep skirt. Indexed, so the cap's shared vertices are shaded once. Cap normals come from the shader.
+ */
+const HEX_SUB = 8; // cap subdivisions per edge
+const HEX_TOP = 0.93; // cap corner radius (× HEX); the shader scales it out to close the grid gaps
 function hexGeometry() {
-  const top = 0.93 * HEX;
-  const mid = 0.5 * HEX;
+  const top = HEX_TOP * HEX;
   const foot = 0.97 * HEX;
-  const depth = -0.3;
-  const corner = (i, r, y = 0) => {
+  const depth = -0.75; // deep enough to stay under the deepest crater
+  const R = HEX_SUB;
+  const corner = (i, rad) => {
     const a = THREE.MathUtils.degToRad(60 * i - 30);
-    return new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r);
+    return new THREE.Vector2(Math.cos(a) * rad, Math.sin(a) * rad);
   };
   const pos = [];
   const nrm = [];
   const col = [];
-  const tri = (a, b, c, n, ca, cb, cc) => {
-    const face = new THREE.Vector3().crossVectors(b.clone().sub(a), c.clone().sub(a));
-    if (face.dot(n) < 0) [b, c, cb, cc] = [c, b, cc, cb];
-    for (const [p, k] of [
-      [a, ca],
-      [b, cb],
-      [c, cc],
-    ]) {
-      pos.push(p.x, p.y, p.z);
-      nrm.push(n.x, n.y, n.z);
-      col.push(k, k, k);
-    }
+  const idx = [];
+  const capIndex = new Map();
+  const capVertex = (x, z) => {
+    const key = `${x.toFixed(4)},${z.toFixed(4)}`;
+    if (capIndex.has(key)) return capIndex.get(key);
+    const r = Math.hypot(x, z) / top;
+    const k = 1 - 0.1 * THREE.MathUtils.smoothstep(r, 0.7, 1); // soft bevel toward the rim
+    pos.push(x, 0, z);
+    nrm.push(0, 1, 0);
+    col.push(k, k, k);
+    capIndex.set(key, pos.length / 3 - 1);
+    return pos.length / 3 - 1;
   };
-  const up = new THREE.Vector3(0, 1, 0);
-  const o = new THREE.Vector3();
   for (let i = 0; i < 6; i++) {
-    const m0 = corner(i, mid);
-    const m1 = corner(i + 1, mid);
-    const t0 = corner(i, top);
-    const t1 = corner(i + 1, top);
-    const f0 = corner(i, foot, depth);
-    const f1 = corner(i + 1, foot, depth);
-    tri(o, m0, m1, up, 1, 0.98, 0.98);
-    tri(m0, t0, t1, up, 0.98, 0.86, 0.86);
-    tri(m0, t1, m1, up, 0.98, 0.86, 0.98);
-    const side = t0.clone().add(t1).setY(0).normalize();
-    tri(t0, f0, f1, side, 0.7, 0.45, 0.45);
-    tri(t0, f1, t1, side, 0.7, 0.45, 0.7);
+    const A = corner(i, top);
+    const B = corner(i + 1, top);
+    const P = (a, b) => capVertex((A.x * a + B.x * b) / R, (A.y * a + B.y * b) / R);
+    for (let a = 0; a < R; a++) {
+      for (let b = 0; b < R - a; b++) {
+        idx.push(P(a, b), P(a, b + 1), P(a + 1, b));
+        if (a + b < R - 1) idx.push(P(a + 1, b), P(a, b + 1), P(a + 1, b + 1));
+      }
+    }
+    // Skirt: same edge subdivisions as the cap, so the carved rim and the wall meet without cracks.
+    const side = A.clone().add(B).normalize();
+    for (let k = 0; k < R; k++) {
+      const t0 = A.clone().lerp(B, k / R);
+      const t1 = A.clone().lerp(B, (k + 1) / R);
+      const base = pos.length / 3;
+      for (const [p, y, c] of [
+        [t0, 0, 0.7],
+        [t1, 0, 0.7],
+        [t0.clone().multiplyScalar(foot / top), depth, 0.45],
+        [t1.clone().multiplyScalar(foot / top), depth, 0.45],
+      ]) {
+        pos.push(p.x, y, p.y);
+        nrm.push(side.x, 0, side.y);
+        col.push(c, c, c);
+      }
+      idx.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+    }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array((pos.length / 3) * 2), 2)); // replaced in the shader
+  g.setIndex(idx);
   return g;
 }
+
+/**
+ * Terrain carved into the tiles (vertex shader). Heights are a function of
+ * the plane position, so neighbouring hexes agree along their shared edge and formations run across the grid.
+ */
+const MAX_CITIES = 8;
+const HEIGHT_RES = 1024; // baked height map texels across one wrap of the plane
+// Reading the baked height map: Terrain depth, the crater-floor clamp, and the per-pixel slope normal.
+const HEIGHT_READ_GLSL = /* glsl */ `
+uniform sampler2D uHeightMap;
+uniform float uTerrainDepth;
+float heightAt(vec2 t) { return max(texture2D(uHeightMap, t).r * uTerrainDepth, -0.6); }
+`;
+const TERRAIN_GLSL = /* glsl */ `
+uniform float uTerrainScale, uCraters, uRegionScale;
+uniform vec2 uCities[${MAX_CITIES}];
+uniform int uCityCount;
+vec2 tWrap(vec2 d) { return d - uGlobePeriod * floor(d / uGlobePeriod + 0.5); }
+float cityDist(vec2 p) {
+  float m = 1e3;
+  for (int i = 0; i < ${MAX_CITIES}; i++) {
+    if (i >= uCityCount) break;
+    m = min(m, length(tWrap(p - uCities[i])));
+  }
+  return m;
+}
+// Craters: at most one per lattice cell (n cells per period, so they wrap), a bowl with a raised rim.
+float craters(vec2 t, float n) {
+  vec2 q = t * n;
+  vec2 i = floor(q);
+  vec2 f = fract(q);
+  float h = 0.0;
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      vec2 c = mod(i + vec2(x, y), vec2(n));
+      if (pnHash(c + 17.3) > uCraters) continue;
+      vec2 o = vec2(pnHash(c + 3.1), pnHash(c + 9.7));
+      float r = 0.14 + 0.26 * pnHash(c + 5.5);
+      float d = length(vec2(x, y) + o - f) / r;
+      float bowl = d < 1.0 ? (d * d - 1.0) * 0.55 : 0.0;
+      float rim = exp(-pow((d - 1.0) * 3.0, 2.0)) * 0.3;
+      h += (bowl + rim) * (0.6 + r);
+    }
+  }
+  return h;
+}
+// Noise only tiles across the wrap with a whole number of cells per period.
+float wrapN(float n) { return max(1.0, floor(n + 0.5)); }
+float terrainHeight(vec2 p) {
+  vec2 t = p / uGlobePeriod;
+  float s = uTerrainScale;
+  // Ridged ranges on the pale highlands (same field as the ground colour, so peaks sit on light rock).
+  float high = smoothstep(0.5, 0.68, pwarp(t, uRegionScale, vec2(0.13, 0.71)));
+  float rn = pfbm(t, wrapN(5.0 * s), vec2(0.21, 0.67));
+  float ridge = 1.0 - abs(rn * 2.0 - 1.0);
+  float h = ridge * ridge * ridge * high * 0.9;
+  // Winding canyons through the lowlands.
+  float cn = pfbm(t, wrapN(3.0 * s), vec2(0.77, 0.19));
+  float low = 1.0 - smoothstep(0.35, 0.5, pwarp(t, uRegionScale, vec2(0.13, 0.71)));
+  h -= (1.0 - smoothstep(0.0, 0.03, abs(cn - 0.5))) * 0.4 * (0.35 + 0.65 * low);
+  // Rolling ground everywhere, and craters.
+  h += (pfbm(t, wrapN(14.0 * s), vec2(0.5, 0.5)) - 0.5) * 0.3;
+  h += craters(t, wrapN(14.0 * s));
+  // Cities stand on level ground.
+  h *= smoothstep(0.75, 1.7, cityDist(p));
+  return h; // unscaled: Terrain depth is applied where the baked map is read
+
+}
+`;
+
 
 function cellCenter(c, r, out = new THREE.Vector2()) {
   return out.set(SQ3 * HEX * (c + 0.5 * (r & 1)) - PERIOD.x / 2, 1.5 * HEX * r - PERIOD.y / 2);
@@ -97,23 +223,39 @@ export const GLOBE = {
   hoverLift: 0.12, // how far the hovered city rises off its hex
   labelNorth: 0, // name label: this far toward the top of the screen from the city...
   labelHeight: 1.6, // ...and this high over the hex
-  orbitRadius: 1.6, // moon orbit, × planet radius (ends sit just outside the limbs)
+  orbitRadius: 2.86, // moon orbit, × planet radius
   orbitTilt: 15, // degrees the near side drops below the equator (0 = a flat line across the face)
   orbitRoll: 8, // degrees the ellipse is turned on screen (positive lifts the right limb)
   orbitSpeed: 0.06, // radians per second, moon only
   sunSize: 0.7, // sun disc radius (plane units)
   sunGlow: 8, // sun glow sprite size
-  moonSize: 0.38,
+  moonSize: 0.9,
   moonGlow: 3,
+  moonSpin: 0.15, // moon's own spin, radians per second
   spread: 27, // plane units per 100 war-table units (the planet is ~42 around)
   minGap: 8, // cities are pushed apart until at least this far from each other (plane units)
   gridLine: 0.005, // hex grid line thickness: share of a hex's width left open between tiles (0 = none)
-  sandScale: 4, // plane units per sand texture repeat (the board: 4 units per repeat; a hex is ~1.7 across)
-  fog: 'On', // debug: 'Off' hides the planet's fog of war
-  fogPerHex: 2, // billows over each hidden hex (more = thicker, costlier)
-  fogBillowSize: 2, // billow size (plane units; a hex is ~1.7 across)
-  fogOpacity: 0.95,
-  fogHeight: 0.5, // how far the banks float above the tiles
+  terrainDepth: 0.68, // how deep the craters and canyons cut and how high the ridges rise (0 = flat tiles)
+  terrainScale: 1.55, // formation size (bigger = more, smaller formations)
+  craters: 0, // share of the lattice with a crater
+  regionStrength: 0.95, // large light / dark / grey regions over the sand (0 = plain sand)
+  regionScale: 3, // region size: lattice cells around the planet (smaller = bigger regions)
+  clouds: 'On',
+  cloudOpacity: 0.5,
+  cloudCover: 0.55, // share of the sky with cloud
+  cloudScale: 5, // cloud size (smaller = bigger banks)
+  cloudSpeed: 0.004, // drift, planet wraps per second
+  cloudHeight: 0.3, // above the tiles
+  atmoColor: '#6fc3e6', // thin rim of air round the planet
+  atmoThickness: 0.06, // × planet radius
+  atmoStrength: 1.2,
+  nebula: 0.9, // reddish nebula behind the stars (0 = none)
+  sandScale: 2.3, // plane units per sand texture repeat (the board: 4 units per repeat; a hex is ~1.7 across)
+  fog: 'Off', // debug: 'Off' hides the planet's fog of war
+  fogPerHex: 4, // billows over each hidden hex (more = thicker, costlier)
+  fogBillowSize: 2.9, // billow size (plane units; a hex is ~1.7 across)
+  fogOpacity: 0.13,
+  fogHeight: 0.13, // how far the banks float above the tiles
   fogCityClear: 0, // extra rings of hexes uncovered around each city (0 = only the city's own hex)
 };
 export const GLOBE_PARAMS = [
@@ -126,23 +268,40 @@ export const GLOBE_PARAMS = [
   { key: 'spread', label: 'City spread', min: 8, max: 60, step: 1, layout: true, hint: 'how far apart the war-table positions land' },
   { key: 'minGap', label: 'Min gap between cities', min: 0, max: 20, step: 0.5, layout: true, hint: 'plane units; ~21 is the far side of the planet' },
   { group: 'Globe · sun & moon' },
-  { key: 'orbitRadius', label: 'Orbit radius (× planet)', min: 1.02, max: 3.5, step: 0.02 },
+  { key: 'orbitRadius', label: 'Moon distance (× planet)', min: 1.02, max: 8, step: 0.02, hint: 'how far the moon orbits from the planet' },
   { key: 'orbitTilt', label: 'Near-side drop (°)', min: 0, max: 80, step: 1, hint: 'how far the front of the orbit sags below the middle. 0 is a flat line across the face' },
   { key: 'orbitRoll', label: 'Orbit roll (°)', min: -90, max: 90, step: 1, hint: 'positive lifts the right side of the path' },
   { key: 'orbitSpeed', label: 'Orbit speed', min: 0, max: 0.5, step: 0.005 },
   { key: 'sunSize', label: 'Sun size', min: 0.1, max: 3, step: 0.05 },
   { key: 'sunGlow', label: 'Sun glow size', min: 0, max: 20, step: 0.1 },
   { key: 'moonSize', label: 'Moon size', min: 0.1, max: 2, step: 0.05 },
+  { key: 'moonSpin', label: 'Moon spin speed', min: 0, max: 1, step: 0.01, hint: 'radians per second' },
   { key: 'moonGlow', label: 'Moon glow size', min: 0, max: 10, step: 0.1 },
   { group: 'Globe · ground & fog' },
   { key: 'fog', label: 'Planet fog', type: 'select', options: ['On', 'Off'], hint: 'debug: hide the fog of war on the planet map' },
   { key: 'gridLine', label: 'Hex grid line thickness', min: 0, max: 0.2, step: 0.005, hint: 'gap between hex tiles; 0 = no lines' },
   { key: 'sandScale', label: 'Sand texture scale', min: 0.5, max: 16, step: 0.1, hint: 'plane units per texture repeat' },
+  { key: 'terrainDepth', label: 'Terrain depth', min: 0, max: 1, step: 0.01, hint: 'craters, canyons and ridges carved into the tiles; 0 = flat' },
+  { key: 'terrainScale', label: 'Terrain detail', min: 0.4, max: 3, step: 0.05, hint: 'bigger = more, smaller formations' },
+  { key: 'craters', label: 'Crater amount', min: 0, max: 1, step: 0.01 },
+  { key: 'regionStrength', label: 'Ground region contrast', min: 0, max: 2, step: 0.05, hint: 'light highlands, dark lowlands, grey flats' },
+  { key: 'regionScale', label: 'Ground region size', min: 1, max: 8, step: 1, hint: 'smaller = bigger regions' },
   { key: 'fogPerHex', label: 'Billows per hidden hex', min: 0, max: 5, step: 1, layout: true, hint: '0 = no fog' },
   { key: 'fogBillowSize', label: 'Billow size', min: 0.5, max: 6, step: 0.05 },
   { key: 'fogOpacity', label: 'Fog opacity', min: 0, max: 1, step: 0.01 },
   { key: 'fogHeight', label: 'Fog height', min: 0, max: 3, step: 0.05 },
   { key: 'fogCityClear', label: 'Uncovered rings around cities', min: 0, max: 4, step: 1, layout: true, hint: '0 = only the city hex' },
+  { group: 'Globe · clouds & sky' },
+  { key: 'clouds', label: 'Clouds', type: 'select', options: ['On', 'Off'] },
+  { key: 'cloudOpacity', label: 'Cloud opacity', min: 0, max: 1, step: 0.01 },
+  { key: 'cloudCover', label: 'Cloud cover', min: 0, max: 1, step: 0.01 },
+  { key: 'cloudScale', label: 'Cloud size', min: 1, max: 10, step: 1, hint: 'smaller = bigger banks' },
+  { key: 'cloudSpeed', label: 'Cloud drift', min: 0, max: 0.03, step: 0.0005 },
+  { key: 'cloudHeight', label: 'Cloud height', min: 0.1, max: 3, step: 0.05 },
+  { key: 'atmoColor', label: 'Atmosphere colour', type: 'color' },
+  { key: 'atmoThickness', label: 'Atmosphere thickness (× planet)', min: 0.01, max: 0.3, step: 0.005 },
+  { key: 'atmoStrength', label: 'Atmosphere brightness', min: 0, max: 3, step: 0.05 },
+  { key: 'nebula', label: 'Nebula brightness', min: 0, max: 2, step: 0.05, hint: '0 = plain black space' },
 ];
 export const GLOBE_DEFAULTS = { ...GLOBE };
 const GLOBE_STORAGE_KEY = 'oto.globeConfig';
@@ -199,38 +358,88 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
     scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xbfb7a4, size: 0.7, transparent: true, opacity: 0.55, depthWrite: false })));
   }
 
+  // Nebula: dim reddish dust on a huge sphere behind the stars (3D value noise on the view direction).
+  const nebulaMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    uniforms: { uStrength: { value: GLOBE.nebula }, uBg: { value: new THREE.Color(BG) } },
+    vertexShader: /* glsl */ `
+      varying vec3 vDir;
+      void main() {
+        vDir = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform float uStrength;
+      uniform vec3 uBg;
+      varying vec3 vDir;
+      float h3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+      float n3(vec3 p) {
+        vec3 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(mix(h3(i), h3(i + vec3(1, 0, 0)), u.x), mix(h3(i + vec3(0, 1, 0)), h3(i + vec3(1, 1, 0)), u.x), u.y),
+                   mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), u.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), u.x), u.y), u.z);
+      }
+      float f3(vec3 p) {
+        float s = 0.0, a = 0.5;
+        for (int o = 0; o < 5; o++) { s += a * n3(p); p *= 2.03; a *= 0.5; }
+        return s;
+      }
+      void main() {
+        vec3 d = vDir * 2.2;
+        float warp = f3(d + 5.3);
+        float n = f3(d + warp * 1.6);
+        float dust = smoothstep(0.42, 0.85, n);
+        float dark = smoothstep(0.55, 0.8, f3(d * 2.0 + 11.0)); // darker lanes through the glow
+        vec3 col = mix(vec3(0.16, 0.05, 0.03), vec3(0.42, 0.17, 0.09), smoothstep(0.6, 0.95, n));
+        col *= dust * (1.0 - 0.6 * dark);
+        gl_FragColor = vec4(uBg + col * uStrength, 1.0);
+      }`,
+  });
+  const nebula = new THREE.Mesh(new THREE.SphereGeometry(300, 48, 24), nebulaMat);
+  nebula.renderOrder = -10;
+  scene.add(nebula);
+
   // Opaque core: shows through the gaps as the hex lines, and hides the folded far side of the plane.
-  const core = new THREE.Mesh(new THREE.SphereGeometry(RADIUS - 0.05, 64, 48), new THREE.MeshStandardMaterial({ color: CORE, roughness: 1 }));
+  const core = new THREE.Mesh(new THREE.SphereGeometry(RADIUS - 0.7, 64, 48), new THREE.MeshStandardMaterial({ color: CORE, roughness: 1 }));
   scene.add(core);
 
-  // Atmosphere rim.
-  const atmo = new THREE.Mesh(
-    new THREE.SphereGeometry(RADIUS * 1.13, 64, 48),
-    new THREE.ShaderMaterial({
-      side: THREE.BackSide,
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      uniforms: { uColor: { value: new THREE.Color(0xe8bf68) } },
-      vertexShader: /* glsl */ `
-        varying vec3 vN;
-        varying vec3 vV;
-        void main() {
-          vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          vN = normalize(normalMatrix * normal);
-          vV = normalize(-mv.xyz);
-          gl_Position = projectionMatrix * mv;
-        }`,
-      fragmentShader: /* glsl */ `
-        uniform vec3 uColor;
-        varying vec3 vN;
-        varying vec3 vV;
-        void main() {
-          float rim = pow(clamp(0.78 + dot(vN, vV), 0.0, 1.0), 3.0);
-          gl_FragColor = vec4(uColor * rim * 1.4, rim);
-        }`,
-    }),
-  );
+  // Atmosphere: a thin, crisp rim of air just outside the planet. Unit sphere, scaled live (atmoThickness).
+  const atmoMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    uniforms: {
+      uColor: { value: new THREE.Color(GLOBE.atmoColor) },
+      uStrength: { value: GLOBE.atmoStrength },
+      uInner: { value: 1 / (1 + GLOBE.atmoThickness) }, // planet radius / shell radius
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vWorld;
+      void main() {
+        vec4 w = modelMatrix * vec4(position, 1.0);
+        vWorld = w.xyz;
+        gl_Position = projectionMatrix * viewMatrix * w;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uColor;
+      uniform float uStrength, uInner;
+      varying vec3 vWorld;
+      void main() {
+        // How close the view ray passes to the planet's centre, as a share of the shell radius: 1 at the outer
+        // edge, uInner where it grazes the ground. Light builds up from the outside in and peaks at the limb.
+        vec3 rd = normalize(vWorld - cameraPosition);
+        float shellR = length(vWorld);
+        float tc = -dot(cameraPosition, rd);
+        float miss = length(cameraPosition + rd * tc) / shellR;
+        float k = clamp((1.0 - miss) / (1.0 - uInner), 0.0, 1.0);
+        float glow = miss > uInner ? pow(k, 1.6) : 0.12 + 0.5 * pow(miss / uInner, 8.0); // over the face: faint haze
+        float lit = 0.55 + 0.45 * clamp(dot(normalize(vWorld), normalize(vec3(-0.55, 0.6, 1.0))) + 0.4, 0.0, 1.0);
+        gl_FragColor = vec4(uColor * glow * lit * uStrength, 1.0);
+      }`,
+  });
+  const atmo = new THREE.Mesh(new THREE.SphereGeometry(1, 96, 64), atmoMat);
+  atmo.renderOrder = 4;
   scene.add(atmo);
 
   // ---------- sun and moon ----------
@@ -259,43 +468,16 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
   sun.add(sunGlow);
   const moon = new THREE.Group();
   {
-    // Pale cratered disc: a few darker blotches baked into a small texture.
-    const n = 128;
-    const c = document.createElement('canvas');
-    c.width = c.height = n;
-    const g = c.getContext('2d');
-    g.fillStyle = '#d9dde2';
-    g.fillRect(0, 0, n, n);
-    let sd = 5;
-    const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647);
-    for (let i = 0; i < 26; i++) {
-      g.fillStyle = `rgba(120,128,140,${0.15 + rnd() * 0.3})`;
-      g.beginPath();
-      g.arc(rnd() * n, rnd() * n, 3 + rnd() * 12, 0, Math.PI * 2);
-      g.fill();
-    }
-    const map = new THREE.CanvasTexture(c);
+    // NASA moon colour map (via the three.js examples), wrapped round the sphere.
+    const map = new THREE.TextureLoader().load('/textures/moon.jpg');
     map.colorSpace = THREE.SRGBColorSpace;
-    moon.add(new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), new THREE.MeshStandardMaterial({ map, emissive: 0x9aa6b8, emissiveMap: map, emissiveIntensity: 0.55, roughness: 1 })));
+    map.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    moon.add(new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), new THREE.MeshStandardMaterial({ map, emissive: 0xffffff, emissiveMap: map, emissiveIntensity: 0.35, roughness: 1 })));
   }
   const moonGlow = new THREE.Sprite(glowMat(glowTexture([[0, 'rgba(210,225,255,0.7)'], [0.3, 'rgba(170,190,235,0.25)'], [1, 'rgba(140,160,220,0)']])));
   moon.add(moonGlow);
   scene.add(sun, moon);
   let orbitAngle = 1.15; // starts on the near arc, right of center and below the middle
-  const moonLocal = new THREE.Vector3();
-  const moonPlane = new THREE.Vector2();
-  // Inverse of bend() at scroll 0: the moon's place on the planet, so later scrolls carry it along.
-  const planetPlane = (point, out) => {
-    const len = point.length() || 1;
-    const nx = point.x / len;
-    const ny = point.y / len;
-    const nz = point.z / len;
-    const th = Math.acos(THREE.MathUtils.clamp(nz, -1, 1));
-    const s = Math.sin(th);
-    const arc = th * RADIUS;
-    if (s < 1e-5) return out.set(0, 0);
-    return out.set((nx / s) * arc, (-ny / s) * arc);
-  };
   // Camera sits on +Z looking toward the origin, so screen right is +X and screen up is +Y.
   // angle 0 is the right limb. angle π/2 is the near side (+Z, toward the camera) and sits low.
   // Check, roll 0: angle π/2 → (0, -r sin tilt, +r cos tilt). angle 0, roll > 0 → y = r sin roll (right limb lifts).
@@ -314,18 +496,14 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
     orbitAngle += dt * GLOBE.orbitSpeed;
     // Behind the planet (camera is on +Z), up and to the side so the disc sits in the sky past the limb.
     sun.position.set(-RADIUS * 1.6, RADIUS * 1.15, -RADIUS * 1.4);
-    orbitPos(orbitAngle, moonLocal);
-    // Dragging scrolls the planet under a fixed camera. The moon is pinned to that same scroll,
-    // so it swings with the surface. At scroll 0 this is the identity. A quarter-turn of scroll.x
-    // (scroll.x = +RADIUS * π/2) carries a front moon to world -X, the same way a city at the
-    // front of the planet moves.
-    planetPlane(moonLocal, moonPlane);
-    bend.project(moonPlane.x, moonPlane.y, moonLocal.length() - RADIUS, moon.position);
+    // The moon circles the view centre: dragging scrolls the planet under the fixed camera, but the
+    // orbit stays put around the middle of the screen, however the globe is turned.
+    orbitPos(orbitAngle, moon.position);
     sun.children[0].scale.setScalar(GLOBE.sunSize);
     sunGlow.scale.setScalar(Math.max(1e-3, GLOBE.sunGlow));
     moon.children[0].scale.setScalar(GLOBE.moonSize);
     moonGlow.scale.setScalar(Math.max(1e-3, GLOBE.moonGlow));
-    moon.children[0].rotation.y += dt * 0.05;
+    moon.children[0].rotation.y += dt * GLOBE.moonSpin;
   }
 
   // ---------- hex tiles ----------
@@ -335,6 +513,71 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
   // and scrolls with the planet. Vertex colours keep the bevel shading; instance colours tint the city hexes.
   const sand = sandTexture();
   sand.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  // ---------- baked terrain height ----------
+  // terrainHeight() is rendered once into a tileable texture (one wrap of the plane), then read by the tiles:
+  // the vertices for the shape, every pixel for the slope lighting, so detail stays crisp at any Terrain detail.
+  const heightRT = new THREE.WebGLRenderTarget(HEIGHT_RES, HEIGHT_RES, {
+    type: THREE.HalfFloatType,
+    wrapS: THREE.RepeatWrapping,
+    wrapT: THREE.RepeatWrapping,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: false,
+    generateMipmaps: false,
+  });
+  const terrainUniforms = {
+    uHeightMap: { value: heightRT.texture },
+    uTerrainDepth: { value: GLOBE.terrainDepth },
+    uTerrainScale: { value: GLOBE.terrainScale },
+    uCraters: { value: GLOBE.craters },
+    uCities: { value: Array.from({ length: MAX_CITIES }, () => new THREE.Vector2()) },
+    uCityCount: { value: 0 },
+  };
+  const bakeMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uGlobePeriod: { value: PERIOD.clone() },
+      uRegionScale: { value: Math.round(GLOBE.regionScale) },
+      ...terrainUniforms,
+    },
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec2 uGlobePeriod;
+      varying vec2 vUv;
+      ${PERIODIC_NOISE}
+      ${TERRAIN_GLSL}
+      void main() {
+        gl_FragColor = vec4(terrainHeight(vUv * uGlobePeriod), 0.0, 0.0, 1.0);
+      }`,
+    depthTest: false,
+    depthWrite: false,
+  });
+  bakeMat.userData.flat = true; // never the board's map-shape bend
+  const bakeScene = new THREE.Scene();
+  const bakeQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), bakeMat);
+  bakeQuad.frustumCulled = false;
+  bakeScene.add(bakeQuad);
+  const bakeCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  let bakedKey = '';
+  /** Re-bake the height map when a terrain setting or a city moved. */
+  function bakeTerrain() {
+    const u = terrainUniforms;
+    const key = [GLOBE.terrainScale, GLOBE.craters, Math.round(GLOBE.regionScale), u.uCityCount.value, ...u.uCities.value.flatMap((c) => [c.x, c.y])].join();
+    if (key === bakedKey) return;
+    bakedKey = key;
+    u.uTerrainScale.value = GLOBE.terrainScale;
+    u.uCraters.value = GLOBE.craters;
+    bakeMat.uniforms.uRegionScale.value = Math.round(GLOBE.regionScale);
+    const prev = renderer.getRenderTarget();
+    renderer.setRenderTarget(heightRT);
+    renderer.render(bakeScene, bakeCam);
+    renderer.setRenderTarget(prev);
+  }
+
   const tileMat = bend.patch(
     new THREE.MeshStandardMaterial({ map: sand, color: SAND.tint, vertexColors: true, roughness: SAND.roughness, metalness: 0 }),
   );
@@ -344,11 +587,72 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
       bendCompile(shader);
       shader.uniforms.uSandRepeat = { value: GLOBE.sandScale };
       shader.uniforms.uHexScale = { value: (1 - GLOBE.gridLine) / 0.93 };
+      shader.uniforms.uRegionStrength = { value: GLOBE.regionStrength };
+      shader.uniforms.uRegionScale = { value: Math.round(GLOBE.regionScale) };
+      Object.assign(shader.uniforms, terrainUniforms);
       tileMat.userData.shader = shader;
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nuniform float uSandRepeat;\nuniform float uHexScale;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed.xz *= uHexScale;')
-        .replace('#include <fog_vertex>', '#include <fog_vertex>\nvMapUv = globePlane.xz / uSandRepeat;');
+        .replace('void main() {', `${HEIGHT_READ_GLSL}\nvarying vec3 vTuV, vTvV, vUpV;\nvarying float vCap;\nvoid main() {\n  float tH = 0.0;`)
+        // Height and slope normal of the carved cap (the skirt's top edge follows the rim's height).
+        .replace(
+          '#include <beginnormal_vertex>',
+          `#include <beginnormal_vertex>
+          if (position.y > -0.01) {
+            mat4 tm = modelMatrix;
+            #ifdef USE_INSTANCING
+              tm = modelMatrix * instanceMatrix;
+            #endif
+            vec2 pp = (tm * vec4(position.x * uHexScale, 0.0, position.z * uHexScale, 1.0)).xz;
+            tH = heightAt(pp / uGlobePeriod);
+          }`,
+        )
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed.xz *= uHexScale;\ntransformed.y += tH;')
+        // The bent tangent frame in view space, for the per-pixel slope normal (cap only; the skirt keeps its own).
+        .replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+          vTuV = normalize(mat3(viewMatrix) * globeTu);
+          vTvV = normalize(mat3(viewMatrix) * globeTv);
+          vUpV = normalize(mat3(viewMatrix) * globeUp);
+          vCap = objectNormal.y > 0.5 ? 1.0 : 0.0;`,
+        )
+        .replace('#include <common>', '#include <common>\nvarying vec2 vRegion;')
+        .replace('#include <fog_vertex>', '#include <fog_vertex>\nvMapUv = globePlane.xz / uSandRepeat;\nvRegion = globePlane.xz / uGlobePeriod;');
+      // Large regions across the planet: pale dusty highlands, dark rust lowlands, greyish salt flats.
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>\nvarying vec2 vRegion;\nvarying vec3 vTuV, vTvV, vUpV;\nvarying float vCap;\nuniform float uRegionStrength, uRegionScale;\nuniform vec2 uGlobePeriod;\n${PERIODIC_NOISE}\n${HEIGHT_READ_GLSL}`)
+        .replace(
+          '#include <normal_fragment_begin>',
+          `#include <normal_fragment_begin>
+          if (vCap > 0.5 && uTerrainDepth > 0.0) {
+            // Slope from the neighbouring texels, in height per plane unit; lit steeper than it is so relief reads.
+            vec2 px = vec2(1.0 / ${HEIGHT_RES}.0);
+            float gx = (heightAt(vRegion + vec2(px.x, 0.0)) - heightAt(vRegion - vec2(px.x, 0.0))) / (2.0 * px.x * uGlobePeriod.x);
+            float gz = (heightAt(vRegion + vec2(0.0, px.y)) - heightAt(vRegion - vec2(0.0, px.y))) / (2.0 * px.y * uGlobePeriod.y);
+            normal = normalize(vUpV - 2.2 * (gx * vTuV + gz * vTvV));
+          }`,
+        )
+
+        .replace(
+          '#include <map_fragment>',
+          `#include <map_fragment>
+          {
+            float land = pwarp(vRegion, uRegionScale, vec2(0.13, 0.71));
+            float salt = pwarp(vRegion, uRegionScale * 2.0, vec2(0.57, 0.29));
+            vec3 tint = mix(vec3(0.36, 0.27, 0.23), vec3(0.95, 0.9, 0.86), smoothstep(0.38, 0.54, land));
+            tint = mix(tint, vec3(1.25, 1.17, 1.05), smoothstep(0.56, 0.7, land));
+            vec3 c = diffuseColor.rgb * tint;
+            float lum = dot(c, vec3(0.299, 0.587, 0.114));
+            c = mix(c, vec3(lum) * vec3(1.02, 1.02, 1.05) * 1.12, smoothstep(0.58, 0.68, salt) * 0.8);
+            diffuseColor.rgb = mix(diffuseColor.rgb, c, uRegionStrength);
+            // Crater floors and canyon beds a shade darker, ridge tops a little lighter.
+            if (uTerrainDepth > 0.0) {
+              float hn = heightAt(vRegion) / uTerrainDepth;
+              diffuseColor.rgb *= mix(0.78, 1.1, smoothstep(-0.3, 0.3, hn));
+            }
+          }`,
+        );
     };
     tileMat.customProgramCacheKey = () => 'globe-bend-sand';
   }
@@ -368,6 +672,64 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
     });
   }
   scene.add(tiles);
+
+  // ---------- clouds ----------
+  // Thin drifting wisps on a shell just above the tiles. Each pixel is unbent back to its place on the wrapping
+  // plane, so the clouds scroll with the planet; the pattern is tileable, so they wrap without a seam.
+  const cloudMat = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    uniforms: {
+      ...bend.uniforms,
+      uTime: { value: 0 },
+      uOpacity: { value: GLOBE.cloudOpacity },
+      uCover: { value: GLOBE.cloudCover },
+      uScale: { value: GLOBE.cloudScale },
+      uSpeed: { value: GLOBE.cloudSpeed },
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vWorld;
+      void main() {
+        vec4 w = modelMatrix * vec4(position, 1.0);
+        vWorld = w.xyz;
+        gl_Position = projectionMatrix * viewMatrix * w;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform float uGlobeRadius;
+      uniform vec2 uGlobeScroll, uGlobePeriod;
+      uniform float uTime, uOpacity, uCover, uScale, uSpeed;
+      varying vec3 vWorld;
+      ${PERIODIC_NOISE}
+      void main() {
+        vec3 n = normalize(vWorld);
+        float th = acos(clamp(n.z, -1.0, 1.0));
+        float s = sin(th);
+        vec2 dir = s > 1e-4 ? vec2(n.x, -n.y) / s : vec2(0.0);
+        vec2 plane = uGlobeScroll + dir * th * uGlobeRadius;
+        vec2 t = plane / uGlobePeriod + vec2(1.0, 0.35) * uTime * uSpeed;
+        // Streaky banks plus finer wisps, cut out by the cover share.
+        float c = pwarp(t, uScale, vec2(0.41, 0.83));
+        float wisp = pfbm(t, uScale * 4.0, vec2(0.9, 0.2));
+        // c is ~0.5 on average; cover 0 leaves clear sky, cover 1 a full overcast.
+        float edge = mix(0.85, 0.3, uCover);
+        float a = smoothstep(edge, edge + 0.2, c * 0.7 + wisp * 0.3) * (0.55 + 0.45 * wisp);
+        // Lit from the key light; the shaded side goes grey-brown.
+        float lit = clamp(dot(n, normalize(vec3(-0.55, 0.6, 1.0))) * 0.6 + 0.55, 0.25, 1.0);
+        vec3 col = mix(vec3(0.42, 0.36, 0.3), vec3(0.98, 0.93, 0.85), lit);
+        // Fade toward the limb, where the shell would pile up into a solid band.
+        float facing = dot(n, normalize(cameraPosition - vWorld));
+        // Nothing past the planet's own outline: clouds there would float off the edge of the ball.
+        vec3 rd = normalize(vWorld - cameraPosition);
+        float miss = length(cameraPosition - rd * dot(cameraPosition, rd)) / uGlobeRadius;
+        a *= uOpacity * smoothstep(0.05, 0.35, facing) * smoothstep(1.0, 0.97, miss);
+        if (a < 0.003) discard;
+        gl_FragColor = vec4(col, a);
+        #include <colorspace_fragment>
+      }`,
+  });
+  const clouds = new THREE.Mesh(new THREE.SphereGeometry(1, 128, 96), cloudMat);
+  clouds.renderOrder = 3; // over the fog billows
+  scene.add(clouds);
 
   // ---------- fog of war ----------
   // The board's fog-of-war billows (same shading and colour, fogOfWar.js) blanketing every hex but the cities'.
@@ -564,6 +926,10 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
       nodes.push({ id: def.id, color, cell, p, group, lift: 0, el, rival: def.rival });
     }
     tiles.instanceColor.needsUpdate = true;
+    // City positions, so the terrain stays level under them.
+    const cityU = terrainUniforms.uCities.value;
+    terrainUniforms.uCityCount.value = Math.min(nodes.length, MAX_CITIES);
+    nodes.slice(0, MAX_CITIES).forEach((n, i) => cityU[i].copy(n.p));
     buildFog(nodes.map((n) => n.p));
     renderLabels();
   }
@@ -824,8 +1190,28 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
     if (sandShader) {
       sandShader.uniforms.uSandRepeat.value = GLOBE.sandScale;
       sandShader.uniforms.uHexScale.value = (1 - GLOBE.gridLine) / 0.93; // tile tops are 0.93 of a hex
+      sandShader.uniforms.uRegionStrength.value = GLOBE.regionStrength;
+      sandShader.uniforms.uRegionScale.value = Math.round(GLOBE.regionScale);
+    }
+    {
+      terrainUniforms.uTerrainDepth.value = GLOBE.terrainDepth;
+      bakeTerrain(); // only re-renders when a setting or a city changed
     }
     if (fogMesh) fogMesh.visible = GLOBE.fog !== 'Off';
+    clouds.visible = GLOBE.clouds !== 'Off' && GLOBE.cloudOpacity > 0;
+    clouds.scale.setScalar(RADIUS + GLOBE.cloudHeight);
+    const cu = cloudMat.uniforms;
+    cu.uTime.value = performance.now() / 1000;
+    cu.uOpacity.value = GLOBE.cloudOpacity;
+    cu.uCover.value = GLOBE.cloudCover;
+    cu.uScale.value = Math.round(GLOBE.cloudScale);
+    cu.uSpeed.value = GLOBE.cloudSpeed;
+    atmo.scale.setScalar(RADIUS * (1 + GLOBE.atmoThickness));
+    atmoMat.uniforms.uColor.value.set(GLOBE.atmoColor);
+    atmoMat.uniforms.uStrength.value = GLOBE.atmoStrength;
+    atmoMat.uniforms.uInner.value = 1 / (1 + GLOBE.atmoThickness);
+    nebulaMat.uniforms.uStrength.value = GLOBE.nebula;
+    nebula.visible = GLOBE.nebula > 0;
     const fu = fogMat.uniforms;
     fu.uTime.value = performance.now() / 1000;
     fu.uSize.value = GLOBE.fogBillowSize;
