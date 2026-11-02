@@ -242,8 +242,10 @@ export const GLOBE = {
   regionScale: 3, // region size: lattice cells around the planet (smaller = bigger regions)
   clouds: 'On',
   cloudOpacity: 0.5,
-  cloudCover: 0.55, // share of the sky with cloud
+  cloudCover: 0.45, // share of the sky with cloud
   cloudScale: 5, // cloud size (smaller = bigger banks)
+  cloudPuff: 1, // self-shadowing on the cloud puffs (0 = flat)
+  cloudCityClear: 1.6, // clouds part this far round each city (plane units; a hex is ~1.7 across; 0 = off)
   cloudSpeed: 0.004, // drift, planet wraps per second
   cloudHeight: 0.3, // above the tiles
   atmoColor: '#6fc3e6', // thin rim of air round the planet
@@ -296,6 +298,8 @@ export const GLOBE_PARAMS = [
   { key: 'cloudOpacity', label: 'Cloud opacity', min: 0, max: 1, step: 0.01 },
   { key: 'cloudCover', label: 'Cloud cover', min: 0, max: 1, step: 0.01 },
   { key: 'cloudScale', label: 'Cloud size', min: 1, max: 10, step: 1, hint: 'smaller = bigger banks' },
+  { key: 'cloudPuff', label: 'Cloud fluffiness', min: 0, max: 2, step: 0.05, hint: 'shading on the puffs; 0 = flat' },
+  { key: 'cloudCityClear', label: 'Clear sky round cities', min: 0, max: 5, step: 0.1, hint: 'clouds part round each city; 0 = off' },
   { key: 'cloudSpeed', label: 'Cloud drift', min: 0, max: 0.03, step: 0.0005 },
   { key: 'cloudHeight', label: 'Cloud height', min: 0.1, max: 3, step: 0.05 },
   { key: 'atmoColor', label: 'Atmosphere colour', type: 'color' },
@@ -686,6 +690,10 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
       uCover: { value: GLOBE.cloudCover },
       uScale: { value: GLOBE.cloudScale },
       uSpeed: { value: GLOBE.cloudSpeed },
+      uPuff: { value: GLOBE.cloudPuff },
+      uClear: { value: GLOBE.cloudCityClear },
+      uCities: terrainUniforms.uCities, // shared: the same city positions as the terrain
+      uCityCount: terrainUniforms.uCityCount,
     },
     vertexShader: /* glsl */ `
       varying vec3 vWorld;
@@ -699,7 +707,29 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
       uniform vec2 uGlobeScroll, uGlobePeriod;
       uniform float uTime, uOpacity, uCover, uScale, uSpeed;
       varying vec3 vWorld;
+      uniform float uPuff, uClear;
+      uniform vec2 uCities[${MAX_CITIES}];
+      uniform int uCityCount;
       ${PERIODIC_NOISE}
+      // Distance (plane units, wrapped) to the nearest city.
+      float cloudCityDist(vec2 p) {
+        float m = 1e3;
+        for (int i = 0; i < ${MAX_CITIES}; i++) {
+          if (i >= uCityCount) break;
+          vec2 d = p - uCities[i];
+          d -= uGlobePeriod * floor(d / uGlobePeriod + 0.5);
+          m = min(m, length(d));
+        }
+        return m;
+      }
+      float cloudDensity(vec2 t, float edge) {
+        float bank = pwarp(t, uScale, vec2(0.41, 0.83));
+        // Billow noise (|2n-1|) folds into rounded lumps; centred on 0 so it scallops edges without adding cover.
+        float p1 = abs(pfbm(t, uScale * 3.0, vec2(0.9, 0.2)) * 2.0 - 1.0);
+        float p2 = abs(pfbm(t, uScale * 8.0, vec2(0.3, 0.6)) * 2.0 - 1.0);
+        float puffs = (p1 * 0.6 + p2 * 0.4) - 0.3;
+        return clamp((bank + puffs * 0.45 - edge) * 4.0, 0.0, 1.0);
+      }
       void main() {
         vec3 n = normalize(vWorld);
         float th = acos(clamp(n.z, -1.0, 1.0));
@@ -707,21 +737,33 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
         vec2 dir = s > 1e-4 ? vec2(n.x, -n.y) / s : vec2(0.0);
         vec2 plane = uGlobeScroll + dir * th * uGlobeRadius;
         vec2 t = plane / uGlobePeriod + vec2(1.0, 0.35) * uTime * uSpeed;
-        // Streaky banks plus finer wisps, cut out by the cover share.
-        float c = pwarp(t, uScale, vec2(0.41, 0.83));
-        float wisp = pfbm(t, uScale * 4.0, vec2(0.9, 0.2));
-        // c is ~0.5 on average; cover 0 leaves clear sky, cover 1 a full overcast.
-        float edge = mix(0.85, 0.3, uCover);
-        float a = smoothstep(edge, edge + 0.2, c * 0.7 + wisp * 0.3) * (0.55 + 0.45 * wisp);
-        // Lit from the key light; the shaded side goes grey-brown.
+        // Billowy density: large warped banks, then puffs (billow noise: rounded lumps) scalloping their edges.
+        float edge = mix(0.72, 0.36, uCover); // cover 0 leaves clear sky, cover 1 a full overcast
+        float dens = cloudDensity(t, edge);
+        // Part round the cities so their towers stay in view; a ragged edge from the puff noise.
+        if (uClear > 0.0) {
+          float cd = cloudCityDist(plane) + (pfbm(t, uScale * 8.0, vec2(0.6, 0.1)) - 0.5) * uClear * 0.6;
+          dens *= smoothstep(uClear * 0.6, uClear * 1.3, cd);
+        }
+        // Self-shadow: step toward the sun across the plane. Puffs facing it catch light, the far sides go grey.
+        vec2 sunStep = normalize(vec2(-0.55, -0.6)) * (0.02 / uScale);
+        float toward = cloudDensity(t + sunStep, edge) + 0.6 * cloudDensity(t + sunStep * 2.5, edge);
+        float shade = clamp(0.75 - (toward / 1.6 - dens) * uPuff * 2.2, 0.0, 1.0); // > dens toward the sun: in shadow
         float lit = clamp(dot(n, normalize(vec3(-0.55, 0.6, 1.0))) * 0.6 + 0.55, 0.25, 1.0);
-        vec3 col = mix(vec3(0.42, 0.36, 0.3), vec3(0.98, 0.93, 0.85), lit);
+        vec3 dark = vec3(0.55, 0.5, 0.46);
+        vec3 bright = vec3(1.0, 0.96, 0.9);
+        vec3 col = mix(dark, bright, shade) * mix(0.55, 1.0, lit);
+        // Thin edges glow a little (light passing through), thick centres stay solid.
+        col += vec3(0.08, 0.06, 0.04) * (1.0 - smoothstep(0.0, 0.5, dens)) * lit;
+        float a = smoothstep(0.0, 0.5, dens);
         // Fade toward the limb, where the shell would pile up into a solid band.
         float facing = dot(n, normalize(cameraPosition - vWorld));
         // Nothing past the planet's own outline: clouds there would float off the edge of the ball.
         vec3 rd = normalize(vWorld - cameraPosition);
         float miss = length(cameraPosition - rd * dot(cameraPosition, rd)) / uGlobeRadius;
-        a *= uOpacity * smoothstep(0.05, 0.35, facing) * smoothstep(1.0, 0.97, miss);
+        // Only the near half of the shell, solid right up to the limb (no fade that lets the ground show through).
+        if (facing <= 0.0) discard;
+        a *= uOpacity * smoothstep(1.0, 0.985, miss);
         if (a < 0.003) discard;
         gl_FragColor = vec4(col, a);
         #include <colorspace_fragment>
@@ -1206,6 +1248,8 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
     cu.uCover.value = GLOBE.cloudCover;
     cu.uScale.value = Math.round(GLOBE.cloudScale);
     cu.uSpeed.value = GLOBE.cloudSpeed;
+    cu.uPuff.value = GLOBE.cloudPuff;
+    cu.uClear.value = GLOBE.cloudCityClear;
     atmo.scale.setScalar(RADIUS * (1 + GLOBE.atmoThickness));
     atmoMat.uniforms.uColor.value.set(GLOBE.atmoColor);
     atmoMat.uniforms.uStrength.value = GLOBE.atmoStrength;
