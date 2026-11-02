@@ -4,7 +4,7 @@
  * When the season changes the bolt pulls back, the hand swings forward (a little wind-up and overshoot, the gear
  * spinning), and the bolt snaps into the next notch with a clunk. The season the tribute is due in has a red mark.
  */
-const R = 44; // dial radius (viewBox -50..50)
+const R = 44; // dial radius (the viewBox hugs it: -45.5..45.5)
 
 // Each season is a small upright scene filling its quarter of the dial (drawn in dial units, clipped to the quarter):
 // Spring top, Summer right, Autumn bottom, Winter left.
@@ -74,7 +74,7 @@ export class SeasonClock {
     this.onLock = onLock;
     const sides = [0, 1, 2, 3];
     el.innerHTML = `
-      <svg viewBox="-50 -50 100 100" aria-hidden="true">
+      <svg viewBox="-45.5 -45.5 91 91" aria-hidden="true">
         <defs>${sides.map((i) => `<clipPath id="sc-clip-${i}"><path d="${sector(i * 90, 36)}"/></clipPath>`).join('')}</defs>
         <circle class="sc-face" r="${R}"/>
         ${sides.map((i) => `<g class="sc-scene" data-i="${i}" clip-path="url(#sc-clip-${i})">${SCENES[i]}</g>`).join('')}

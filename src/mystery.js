@@ -182,6 +182,8 @@ export class Mysteries {
     this.pools = new THREE.InstancedMesh(poolGeo, this.poolMat, BEAM.max);
     this.shafts.renderOrder = 11;
     this.pools.renderOrder = 10;
+    // On the small planet they fade out over the horizon instead of shining up from behind it (curvature.js).
+    this.shaftMat.userData.horizon = this.poolMat.userData.horizon = true;
     for (const m of [this.shafts, this.pools]) {
       m.count = 0;
       m.frustumCulled = false; // spread over the whole world; the GPU clips what's off screen

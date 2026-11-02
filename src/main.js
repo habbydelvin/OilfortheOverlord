@@ -1,4 +1,5 @@
 import { RELEASE } from './release.js'; // first: clears dev tuning before any settings load
+import { updateCurve, intersectGround } from './curvature.js'; // early: bends every material made after it (small planet)
 import './ui.css';
 import './theme.css';
 import './themeShine.js';
@@ -2488,7 +2489,6 @@ onLangChange(() => {
 const pointer = new THREE.Vector2();
 let pointerInside = false;
 const raycaster = new THREE.Raycaster();
-const boardPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const hit = new THREE.Vector3();
 
 renderer.domElement.addEventListener('pointermove', (e) => {
@@ -2530,7 +2530,7 @@ hand.onDrop = (x, y) => {
 function hoveredCell() {
   if (!pointerInside) return null;
   raycaster.setFromCamera(pointer, camera);
-  if (!raycaster.ray.intersectPlane(boardPlane, hit)) return null;
+  if (!intersectGround(raycaster.ray, hit)) return null; // on the bent (small-planet) ground
   return [Math.round(hit.x), Math.round(hit.z)];
 }
 
@@ -3244,6 +3244,7 @@ function frame(now) {
 
   perf.begin('render (cpu)');
   perf.gpuBegin();
+  updateCurve(camera, rig.target); // the small-planet bend, around where the camera looks
   fog.render(camera); // offscreen fog pass (High/Medium/Low on high-DPI screens)
   renderer.render(scene, camera);
   renderGhost();

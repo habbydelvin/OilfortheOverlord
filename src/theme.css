@@ -284,7 +284,7 @@
   position: absolute;
   top: 0;
   left: calc(100% + 14px);
-  padding: 8px 9px 14px;
+  padding: 3px 2px 5px; /* the dial almost touches the plate's edges (110 × 114, as before) */
   background:
     var(--dp-rivet) left 6px top 6px / 8px 8px no-repeat,
     var(--dp-rivet) right 6px top 6px / 8px 8px no-repeat,
@@ -305,8 +305,8 @@
 }
 .top-clock svg {
   display: block;
-  width: 92px;
-  height: 92px;
+  width: 106px;
+  height: 106px;
 }
 .sc-face {
   fill: #120c08;

@@ -1,17 +1,21 @@
 import { FOG_QUALITY_NAMES } from './fogOfWar.js';
 import { TILE, applyTileGap } from './tiles.js';
+import { CURVE } from './curvature.js';
 
 /**
  * Graphics settings (Game Debug panel → Graphics), saved to localStorage.
  *   fogQuality: Low / Medium / High / Ultra (see FOG_QUALITY)
  *   resolution: render pixel ratio cap. "Auto" = device pixel ratio, capped at 2.
  *   shadows: shadow map quality.
+ *   mapShape: Planet (the small-planet bend, curvature.js) or Flat (the map as before); planetRadius: its radius.
  */
 export const GFX = {
   fogQuality: 'Medium',
   resolution: '1',
   shadows: 'Low',
   tileGap: 0, // seam between tiles; 0 = seamless world
+  mapShape: 'Planet',
+  planetRadius: 40,
 };
 
 export const GFX_PARAMS = [
@@ -20,6 +24,8 @@ export const GFX_PARAMS = [
   { key: 'resolution', label: 'Resolution', type: 'select', options: ['Auto', '2', '1.5', '1', '0.75'], hint: 'pixel ratio; 1 is much cheaper on Retina screens' },
   { key: 'shadows', label: 'Shadows', type: 'select', options: ['High', 'Low', 'Off'], hint: 'High = 2048² shadow map, Low = 1024²' },
   { key: 'tileGap', label: 'Tile gap', min: 0, max: 0.08, step: 0.005, hint: '0 = seamless world; 0.03 = the old seam between tiles' },
+  { key: 'mapShape', label: 'Map shape', type: 'select', options: ['Planet', 'Flat'], hint: 'Planet: the world bends like a small planet; Flat: the map as before' },
+  { key: 'planetRadius', label: 'Planet curve (radius)', min: 5, max: 150, step: 5, hint: 'in cells: smaller = rounder (Map shape: Planet)' },
 ];
 
 export const GFX_DEFAULTS = { ...GFX };
@@ -49,6 +55,7 @@ export function pixelRatioFor(resolution) {
 /** Apply every graphics setting. `sun` is the shadow-casting light. */
 export function applyGfx(cfg, { renderer, scene, sun, fog }) {
   fog.setQuality(cfg.fogQuality);
+  CURVE.radius = cfg.mapShape === 'Planet' ? cfg.planetRadius : 0;
 
   if (TILE.gap !== cfg.tileGap) {
     TILE.gap = cfg.tileGap;

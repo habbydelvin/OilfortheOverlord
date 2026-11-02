@@ -131,7 +131,8 @@ function createFadeTexture() {
 function createGround(renderer) {
   sandTexture().anisotropy = renderer.capabilities.getMaxAnisotropy();
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(GROUND.size, GROUND.size).rotateX(-Math.PI / 2),
+    // Subdivided (one piece per 2 cells) so it can bend with the small-planet look (curvature.js).
+    new THREE.PlaneGeometry(GROUND.size, GROUND.size, GROUND.size / 2, GROUND.size / 2).rotateX(-Math.PI / 2),
     useDesertSand(
       new THREE.MeshStandardMaterial({
         alphaMap: createFadeTexture(),

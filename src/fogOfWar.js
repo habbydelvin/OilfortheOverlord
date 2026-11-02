@@ -457,7 +457,8 @@ export class FogOfWar {
       fog: true,
     });
     // Unit plane, scaled every frame to just cover the visible fade radius.
-    this.veil = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), veilMat);
+    // (Subdivided so it can bend with the small-planet look, curvature.js.)
+    this.veil = new THREE.Mesh(new THREE.PlaneGeometry(1, 1, 48, 48).rotateX(-Math.PI / 2), veilMat);
     this.veil.position.y = 0.02;
     this.veil.renderOrder = 1;
     this.veil.frustumCulled = false;
@@ -557,6 +558,7 @@ export class FogOfWar {
       }),
     );
     this.composite.name = 'fogComposite';
+    this.composite.material.userData.flat = true; // a screen-space quad: not bent with the world (curvature.js)
     this.composite.frustumCulled = false;
     this.composite.renderOrder = 1;
     this.composite.visible = false;
