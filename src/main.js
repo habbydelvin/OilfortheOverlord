@@ -571,7 +571,7 @@ function strikeCamera(targets) {
  * mushroom cloud (unless `convert` is off: a dry-run preview). The caller owns `eventOpen` afterwards.
  * Returns the names of the tiles destroyed.
  */
-async function playMissileStrike(targets, { convert = true, restoreCamera = true, follow = false, prelude = null } = {}) {
+async function playMissileStrike(targets, { convert = true, restoreCamera = true, follow = false, prelude = null, onCover = null, holdAfter = null, skipLead = false, trackCamera = true } = {}) {
   const run = runId;
   const lost = [];
   const interceptUsed = new Set();
@@ -592,7 +592,7 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
     if (run !== runId) return lost;
     await prelude?.();
     if (run !== runId) return lost;
-  } else {
+  } else if (!skipLead) {
     strikeCamera(targets);
     await wait(missileCfg.camLead);
     if (run !== runId) return lost;
@@ -622,7 +622,9 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
   const tracked = targets.map((t) => (t.from || t.flight ? t : { ...t, flight: missileCfg.followFlight }));
   const original = new Map(tracked.map((t, i) => [t, targets[i]]));
   await missiles.fire(tracked, {
-    onMove: (pos, t, u) => track(pos, original.get(t), u),
+    onMove: (pos, t, u) => {
+      if (trackCamera) track(pos, original.get(t), u);
+    },
     onImpact: (hit) => {
       if (run !== runId) return;
       flying.delete(original.get(hit));
@@ -634,14 +636,19 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
       camShake.add(missileCfg.shake);
     },
     onCover: ({ x, z }) => {
-      if (!convert || run !== runId) return;
+      if (run !== runId) return;
+      if (onCover) {
+        onCover({ x, z });
+        return;
+      }
+      if (!convert) return;
       if (tryIntercept(x, z, interceptUsed)) return;
       const name = craterAt(x, z);
       if (name) lost.push(name);
     },
   });
   if (run !== runId) return lost;
-  await wait(missileCfg.holdAfter);
+  await wait(holdAfter ?? missileCfg.holdAfter);
   if (run !== runId) return lost;
   document.body.classList.remove('striking');
   if (restoreCamera) {
@@ -2888,6 +2895,7 @@ function tryPlace() {
       return;
     }
     const played = piece.terrain;
+    const fromHand = isPlayerMissile(played) ? worldFromHandCard() : null;
     hand.consume();
     if (isPlayerMissile(played)) {
       const i = turn.missileHeld.indexOf(played);
@@ -2895,7 +2903,7 @@ function tryPlace() {
     }
     if (played === 'spark') spark(cells);
     else if (played === 'militia') militia(...cells[0]);
-    else if (played === 'missile' || played === 'missile2') firePlayerMissile(cells);
+    else if (played === 'missile' || played === 'missile2') firePlayerMissile(cells, fromHand);
     else if (played === 'overtime') workOvertime(...cells[0]);
     else if (piece.terrain === 'demolish2') {
       const targets = placement.demolishable(cells);
@@ -2927,12 +2935,41 @@ function tryPlace() {
  * with the resource icon, in the payout label style. Nothing for tiles that cost nothing.
  */
 const costV = new THREE.Vector3();
-function firePlayerMissile(cells) {
-  const targets = placement.missileable(cells);
-  targets.forEach(([x, z]) => demolish(x, z, true));
-  boom();
+/** World point under the selected hand card, so a missile can launch out of the card. */
+function worldFromHandCard() {
+  const el = document.querySelector('#hand .card.selected') ?? document.querySelector('#hand .card');
+  const r = el?.getBoundingClientRect();
+  const sx = r ? r.left + r.width / 2 : window.innerWidth * 0.38;
+  const sy = r ? r.top + r.height * 0.38 : window.innerHeight * 0.82;
+  flyV.set((sx / window.innerWidth) * 2 - 1, -(sy / window.innerHeight) * 2 + 1, 0.32);
+  flyV.unproject(camera);
+  return { x: flyV.x, y: flyV.y, z: flyV.z };
+}
+
+async function firePlayerMissile(cells, fromHand = null) {
+  const hits = placement.missileable(cells);
+  if (!hits.length) return;
+  const aim = {
+    x: Math.round(hits.reduce((s, [x]) => s + x, 0) / hits.length),
+    z: Math.round(hits.reduce((s, [, z]) => s + z, 0) / hits.length),
+    from: fromHand ?? worldFromHandCard(),
+    flight: 1.55,
+    accel: 1.25,
+  };
+  const run = runId;
+  await playMissileStrike([aim], {
+    convert: false,
+    follow: false,
+    skipLead: true,
+    trackCamera: false,
+    holdAfter: 0.9,
+    onCover: () => {
+      hits.forEach(([x, z]) => demolish(x, z, true));
+    },
+  });
+  if (run !== runId) return;
   toast(
-    L(`Missile destroyed ${targets.length} building${targets.length === 1 ? '' : 's'}`, `导弹摧毁了 ${targets.length} 座建筑`),
+    L(`Missile destroyed ${hits.length} building${hits.length === 1 ? '' : 's'}`, `导弹摧毁了 ${hits.length} 座建筑`),
     'good',
   );
   updateHUD();
