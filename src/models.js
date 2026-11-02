@@ -39,7 +39,7 @@ export const BLOCKOUTS = {
  * keeps orbiting traffic and rising smoke out of the footprint measurement.
  */
 const FINISHED = {
-  capital: { yaw: 0, fit: 'Capital_HiveCity' },
+  capital: { yaw: 0, fit: 'Capital_HexBase_Slab' }, // its hexagonal base: a few towers lean a little past it
   refinery: { yaw: 0, fit: 'Refinery_HiveCity' },
   station: { yaw: 0, fit: 'OilStation_HiveCity' },
   farm: { yaw: 0, fit: 'HydroFarm_HiveCity' },
@@ -47,8 +47,8 @@ const FINISHED = {
   pump: { yaw: 0, fit: 'PumpStation_HiveCity' },
   oasis: { yaw: 0, fit: 'WasteOasis_HiveCity' },
   labourcamp: { yaw: 0, fit: 'LaborCamp_HiveCity' },
-  // Cliff and Ruins have no _HiveCity group: their 12 × 12 ground plate is the footprint.
-  cliffs: { yaw: 0, fit: 'SandCliffs_Ground' },
+  // Ruins has no _HiveCity group: its 12 × 12 ground plate is the footprint.
+  cliffs: { yaw: 0, fit: 'SandCliffs_HiveCity' },
   ruins: { yaw: 0, fit: 'WasteRuins_Ground' },
   crater: { yaw: 0, fit: 'ToxicCrater_HiveCity' },
   raider: { yaw: 0, fit: 'RaiderCampBrown_HiveCity' },
@@ -67,7 +67,7 @@ const USE_FBX = typeof location !== 'undefined' && new URLSearchParams(location.
 const MODEL_URL = USE_FBX ? '/art/models/' : '/models/glb/';
 const TEX_URL = '/models/tex/';
 // Bump after re-running the conversion (or re-exporting a model under the same name), so browsers drop cached copies.
-const MODEL_VERSION = '20261029-1430';
+const MODEL_VERSION = '20261102-2000';
 const ATLAS_URL = '/models/Atlas.jpg?v=20261026-1640';
 // Footprints measure about 96 × 97 cm. One board cell is 1 unit across.
 const CELL = 1; // full cell: the seam between tiles is TILE.gap, applied live by applyTileGap (tiles.js)
@@ -79,7 +79,9 @@ export function hasBlockout(terrain) {
 // Default camera sits on +z. Negative yaw turns the Maya blockouts toward screen-left.
 // ground: the model's own ground height. Blender scenes stand on y = 0, and parts sunk below it
 // (an oil stain, a well shaft) must not lift the tile. Without it, the lowest point goes on the cell.
-function fitToCell(root, { yaw = -Math.PI / 2, fit = null, ground = null } = {}) {
+// width: scale by the footprint's x width alone. The Blender tiles are pointy-top hexagons like the cells (flat sides
+// on x, 12 units flat to flat; corners on z, 13.86 apart), so the x width is the cell width.
+function fitToCell(root, { yaw = -Math.PI / 2, fit = null, ground = null, width = false } = {}) {
   root.rotation.y = yaw;
   root.scale.set(1, 1, 1);
   root.position.set(0, 0, 0);
@@ -87,7 +89,7 @@ function fitToCell(root, { yaw = -Math.PI / 2, fit = null, ground = null } = {})
   const box = footprintBox(root) ?? new THREE.Box3().setFromObject((fit && root.getObjectByName(fit)) || root);
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
-  const span = Math.max(size.x, size.z, 1e-4);
+  const span = width ? Math.max(size.x, 1e-4) : Math.max(size.x, size.z, 1e-4);
   const scale = CELL / span;
   root.scale.setScalar(scale);
   root.userData.fit = { sx: scale, sz: scale, cx: center.x, cz: center.z, w: 1, h: 1 };
@@ -399,6 +401,8 @@ export const WASTE_PIECES = {
   j: 'J',
 };
 const BLENDER_CELL = 12;
+/** A one-cell footprint deeper than wide (hexagon: depth / width = 2 / √3). */
+const isHexFootprint = (size, w = 1, h = 1) => w * h === 1 && size.z > size.x * 1.08;
 
 /** Scale a piece model to its cells (keeping the seam at its outer edge) and centre its footprint on the origin. */
 function fitPiece(raw, base) {
@@ -412,7 +416,8 @@ function fitPiece(raw, base) {
   const w = Math.max(1, Math.round(size.x / BLENDER_CELL));
   const h = Math.max(1, Math.round(size.z / BLENDER_CELL));
   const sx = w / size.x;
-  const sz = h / size.z;
+  // A one-cell piece is a pointy-top hexagon (12 wide, 13.86 deep): same scale both ways, like the finished tiles.
+  const sz = isHexFootprint(size, w, h) ? sx : h / size.z;
   raw.userData.fit = { sx, sz, cx: center.x, cz: center.z, w, h };
   raw.scale.set(sx, (sx + sz) / 2, sz);
   // Blender ground is y = 0 (pits and the worm sink below it and must not lift the piece).
@@ -464,10 +469,11 @@ function removeDust(raw, name) {
 }
 
 /**
- * Most tiles have a thin dark frame (<Name>_SandTrim) around the edge of their ground. Side by side on the board
- * it outlines every cell, so it's removed: the tiles' ground meets its neighbours directly.
+ * Most tiles have a thin dark frame (<Name>_SandTrim, the Settlement's <Name>_Pad02_GroundTrim) around the edge of
+ * their ground. Side by side on the board it outlines every cell, so it's removed: the tiles' ground meets its
+ * neighbours directly.
  */
-const TRIM_NAME = /_SandTrim$/;
+const TRIM_NAME = /_(Sand|Ground)Trim$/;
 function removeTrim(raw) {
   const isTrim = (m) => TRIM_NAME.test(m?.name ?? '');
   const meshes = [];
@@ -676,7 +682,9 @@ function storeFootprint(root, baseName, piece) {
   else root.rotation.y = 0;
   root.updateMatrixWorld(true);
   const base = (baseName && root.getObjectByName(baseName)) || root;
-  const box = new THREE.Box3().setFromObject(base);
+  // precise: from the vertices. The hexagonal tiles are turned 30° on their nodes, and turned bounding boxes
+  // (the quick measure) would make the footprint wider than the hexagon and the tile too small for its cell.
+  const box = new THREE.Box3().setFromObject(base, true);
   root.userData.footprint = { min: box.min.toArray(), max: box.max.toArray() };
 }
 
@@ -1202,6 +1210,194 @@ function batchAnimatedParts(root) {
   return saved;
 }
 
+/**
+ * Hex cut, for the tiles still exported as 12 × 12 squares (the Wasteland ones; the others come from hexagonal
+ * versions, see HEX in tools/convert-models.mjs): the board cells are pointy-top hexagons (flat sides on x, corners
+ * on z). Done once per model, in the state storeFootprint measured it in:
+ * - the ground parts (painted ground, sand, Settlement pad) are stretched outward in z near the edge, so they
+ *   reach the hexagon's front and back corners;
+ * - every static part is cut to the hexagon: a piece (connected part) whose centre is outside goes, one crossing
+ *   the edge is clipped along it. Animated parts (smoke, ships, rigs) stay as they are.
+ * The footprint becomes the hexagon's box, which the cell fit (by its x width) and the seamless ground follow.
+ */
+const HEX_GROUND = /(Ground|_Sand|_Pad\d*)$/;
+const SQRT3_2 = Math.sqrt(3) / 2;
+
+function hexCut(root) {
+  const fp = footprintBox(root);
+  if (!fp) return 0;
+  const a = (fp.max.x - fp.min.x) / 2; // apothem: the square's half width
+  if (Math.abs((fp.max.z - fp.min.z) / 2 - a) > a * 0.05) return 0; // not a square tile (already a hexagon)
+  const hex = { cx: (fp.min.x + fp.max.x) / 2, cz: (fp.min.z + fp.max.z) / 2, a, R: a / SQRT3_2 };
+  root.updateMatrixWorld(true);
+  const animated = animatedNames(root);
+  const moving = (o) => {
+    for (let p = o; p && p !== root; p = p.parent) if (animated.has(p.name)) return true;
+    return false;
+  };
+  const meshes = [];
+  root.traverse((o) => o.isMesh && !o.isSkinnedMesh && !moving(o) && meshes.push(o));
+  const box = new THREE.Box3();
+  let cut = 0;
+  for (const o of meshes) {
+    const g = o.geometry;
+    if (!g.attributes.position || Object.keys(g.morphAttributes).length || (Array.isArray(o.material) && g.groups.length > 1)) continue;
+    box.setFromObject(o);
+    const name = [o.material].flat()[0]?.name ?? '';
+    const stretch = HEX_GROUND.test(name) && box.max.x - box.min.x > 1.9 * a && box.max.z - box.min.z > 1.9 * a;
+    const out = clipToHex(g, o.matrixWorld, hex, stretch);
+    if (!out) continue;
+    o.geometry = out; // the old geometry may be shared with another part: left for the GC
+    if (!out.attributes.position.count) o.visible = false;
+    cut++;
+  }
+  root.userData.footprint = { min: [fp.min.x, fp.min.y, hex.cz - hex.R], max: [fp.max.x, fp.max.y, hex.cz + hex.R] };
+  return cut;
+}
+
+/** How far (x, z) is outside the hexagon (negative inside). */
+const hexExcess = (h, x, z) => {
+  const dx = Math.abs(x - h.cx);
+  return Math.max(dx - h.a, dx / 2 + Math.abs(z - h.cz) * SQRT3_2 - h.a);
+};
+
+/** A copy of geometry g (drawn with world matrix m) cut to the hexagon, or null when nothing changes. */
+function clipToHex(g, m, h, stretch) {
+  const pos = g.attributes.position;
+  const count = pos.count;
+  const world = new Float32Array(count * 3);
+  const v = new THREE.Vector3();
+  const inner = h.a * (2 / 3); // stretch only the outer third: the middle of the tile keeps its exact shape
+  const k = (h.R - inner) / (h.a - inner);
+  let outside = false;
+  for (let i = 0; i < count; i++) {
+    v.fromBufferAttribute(pos, i).applyMatrix4(m);
+    if (stretch) {
+      const dz = v.z - h.cz;
+      const s = Math.abs(dz);
+      if (s > inner) v.z = h.cz + Math.sign(dz) * (inner + (s - inner) * k);
+    }
+    world[i * 3] = v.x;
+    world[i * 3 + 1] = v.y;
+    world[i * 3 + 2] = v.z;
+    if (hexExcess(h, v.x, v.z) > 1e-4) outside = true;
+  }
+  if (!outside && !stretch) return null;
+
+  const index = g.index?.array;
+  const tris = (index ? index.length : count) / 3;
+  const vert = (t, j) => (index ? index[t * 3 + j] : t * 3 + j);
+
+  // Connected parts (vertices welded by position: flat-shaded parts repeat their corners).
+  const weld = new Map();
+  const parent = new Int32Array(count);
+  for (let i = 0; i < count; i++) {
+    const key = `${Math.round(world[i * 3] * 1e3)},${Math.round(world[i * 3 + 1] * 1e3)},${Math.round(world[i * 3 + 2] * 1e3)}`;
+    parent[i] = weld.has(key) ? weld.get(key) : (weld.set(key, i), i);
+  }
+  const find = (i) => {
+    while (parent[i] !== i) i = parent[i] = parent[parent[i]];
+    return i;
+  };
+  for (let t = 0; t < tris; t++) {
+    const r0 = find(vert(t, 0));
+    for (let j = 1; j < 3; j++) {
+      const r = find(vert(t, j));
+      if (r !== r0) parent[r] = r0;
+    }
+  }
+  const sums = new Map(); // part root -> [x, z, n]
+  for (let t = 0; t < tris; t++) {
+    const r = find(vert(t, 0));
+    if (!sums.has(r)) sums.set(r, [0, 0, 0]);
+    const s = sums.get(r);
+    for (let j = 0; j < 3; j++) {
+      const i = vert(t, j);
+      s[0] += world[i * 3];
+      s[1] += world[i * 3 + 2];
+      s[2]++;
+    }
+  }
+  const dropped = new Set();
+  for (const [r, [x, z, n]] of sums) if (hexExcess(h, x / n, z / n) > 0) dropped.add(r);
+
+  // Every attribute as floats per vertex; position goes in as world space and comes back out as local space.
+  const names = Object.keys(g.attributes).filter((n) => !/^skin/.test(n));
+  const attrs = names.map((n) => {
+    const at = g.attributes[n];
+    const size = at.itemSize;
+    const data = n === 'position' ? world : new Float32Array(count * size);
+    if (n !== 'position') {
+      for (let i = 0; i < count; i++) {
+        data[i * size] = at.getX(i);
+        if (size > 1) data[i * size + 1] = at.getY(i);
+        if (size > 2) data[i * size + 2] = at.getZ(i);
+        if (size > 3) data[i * size + 3] = at.getW(i);
+      }
+    }
+    return { n, size, data, out: [] };
+  });
+  const planes = [0, 60, 120, 180, 240, 300].map((deg) => [Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180)]);
+  const read = (i) => attrs.map(({ size, data }) => data.slice(i * size, i * size + size));
+  const lerp = (p, q, f) => p.map((pa, ai) => pa.map((x, ci) => x + (q[ai][ci] - x) * f)); // every attribute of p -> q
+  const P = names.indexOf('position');
+  const emit = (vx) => attrs.forEach((at, ai) => at.out.push(...vx[ai]));
+  const inside = new Uint8Array(count);
+  for (let i = 0; i < count; i++) inside[i] = hexExcess(h, world[i * 3], world[i * 3 + 2]) <= 1e-4 ? 1 : 0;
+  for (let t = 0; t < tris; t++) {
+    if (dropped.has(find(vert(t, 0)))) continue;
+    const i0 = vert(t, 0), i1 = vert(t, 1), i2 = vert(t, 2);
+    if (inside[i0] && inside[i1] && inside[i2]) {
+      for (const at of attrs) {
+        const { size, data, out } = at;
+        for (const i of [i0, i1, i2]) for (let c = 0; c < size; c++) out.push(data[i * size + c]);
+      }
+      continue;
+    }
+    let poly = [i0, i1, i2].map(read);
+    for (const [nx, nz] of planes) {
+      const d = (p) => (p[P][0] - h.cx) * nx + (p[P][2] - h.cz) * nz - h.a; // > 0 = outside this side
+      const next = [];
+      for (let i = 0; i < poly.length; i++) {
+        const p = poly[i];
+        const q = poly[(i + 1) % poly.length];
+        const dp = d(p);
+        const dq = d(q);
+        if (dp <= 0) next.push(p);
+        if ((dp <= 0) !== (dq <= 0)) next.push(lerp(p, q, dp / (dp - dq)));
+      }
+      poly = next;
+      if (poly.length < 3) break;
+    }
+    for (let i = 1; i + 1 < poly.length; i++) [poly[0], poly[i], poly[i + 1]].forEach(emit);
+  }
+
+  const inv = new THREE.Matrix4().copy(m).invert();
+  const out = new THREE.BufferGeometry();
+  for (const at of attrs) {
+    const data = new Float32Array(at.out);
+    if (at.n === 'position') {
+      for (let i = 0; i < data.length; i += 3) {
+        v.set(data[i], data[i + 1], data[i + 2]).applyMatrix4(inv);
+        data[i] = v.x;
+        data[i + 1] = v.y;
+        data[i + 2] = v.z;
+      }
+    } else if (at.n === 'normal') {
+      for (let i = 0; i < data.length; i += 3) {
+        v.set(data[i], data[i + 1], data[i + 2]).normalize();
+        data[i] = v.x;
+        data[i + 1] = v.y;
+        data[i + 2] = v.z;
+      }
+    }
+    out.setAttribute(at.n, new THREE.BufferAttribute(data, at.size));
+  }
+  out.computeBoundingBox();
+  out.computeBoundingSphere();
+  return out;
+}
+
 /** Every ship is drawn a little bigger than modelled, so it reads at game zoom. */
 export const SHIP_SCALE = 1.35;
 
@@ -1245,6 +1441,12 @@ function finishModel(root, spec) {
     if (!o.isMesh) return;
     for (const m of [o.material].flat()) for (const k of ['map', 'normalMap', 'emissiveMap']) if (m[k]) m[k].anisotropy = 8;
   });
+  // One-cell tiles become hexagons like the board cells (multi-cell Wasteland pieces stay as they are).
+  if (!spec.piece || spec.shape === 'mono') {
+    const t0 = performance.now();
+    const cut = hexCut(root);
+    if (cut) console.info(`[models] ${spec.key}: ${cut} parts cut to the hexagon (${Math.round(performance.now() - t0)} ms)`);
+  }
   const flat = skipFlatShadows(root);
   const batched = batchAnimatedParts(root);
   if (flat || batched) console.info(`[models] ${spec.key}: ${flat} flat parts skip shadows, ${batched} animated draws batched`);
@@ -1259,7 +1461,7 @@ function finishModel(root, spec) {
     fitPiece(root, root);
     root.name = `waste-${spec.shape}`;
   } else {
-    fitToCell(root, { ground: 0, ...spec.finished });
+    fitToCell(root, { ground: 0, width: true, ...spec.finished });
     root.name = spec.key;
   }
   // Pits sunk below the board's sand plane (the crater, the Wasteland worm holes) must still show.

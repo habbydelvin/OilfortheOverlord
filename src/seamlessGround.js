@@ -126,6 +126,12 @@ uniform float uSeamRepeat;
   }
   // 0 on the piece's outer edge, 1 from uSeamBlend cells inside it.
   float seamEdge() {
+  #ifdef SEAM_HEX
+    // One pointy-top hexagon: vSeamCell spans its 1-cell width (x) and its 2/√3-cell depth (z).
+    vec2 p = abs( vSeamCell - 0.5 );
+    p.y *= 1.1547005;
+    return smoothstep( 0.0, uSeamBlend, max( 0.5 - max( p.x, 0.5 * p.x + 0.8660254 * p.y ), 0.0 ) );
+  #else
     vec2 c = clamp( floor( vSeamCell ), vec2( 0.0 ), uSeamGrid - 1.0 );
     vec2 f = vSeamCell - c;
     float d = 1.0;
@@ -139,6 +145,7 @@ uniform float uSeamRepeat;
     if ( ! seamOcc( c + vec2( -1.0, 1.0 ) ) ) d = min( d, length( vec2( f.x, 1.0 - f.y ) ) );
     if ( ! seamOcc( c + vec2( 1.0, 1.0 ) ) ) d = min( d, length( 1.0 - f ) );
     return smoothstep( 0.0, uSeamBlend, max( d, 0.0 ) );
+  #endif
   }
 #endif
 `;
@@ -192,12 +199,21 @@ const GROUND_NORMAL = /* glsl */ `
 #endif
 `;
 
-/** mode: 'sand' (plain desert sand), 'ground' (painted ground, fades out at the tile edge), 'decal' (painted, no fade). */
-function patch(material, { mode, mask = 1, grid = [1, 1] }) {
-  patches.set(material, { mode, mask, grid });
+/**
+ * mode: 'sand' (plain desert sand), 'ground' (painted ground, fades out at the tile edge), 'decal' (painted, no fade).
+ * hex: the tile is one pointy-top hexagon, so the fade follows its 6 sides.
+ */
+function patch(material, { mode, mask = 1, grid = [1, 1], hex = false }) {
+  patches.set(material, { mode, mask, grid, hex });
   const ground = mode !== 'sand';
-  material.defines = { ...material.defines, ...(ground ? { SEAM_GROUND: '' } : {}), ...(mode === 'ground' ? { SEAM_EDGE: '' } : {}) };
-  material.customProgramCacheKey = () => `seam-${mode}`;
+  const edge = mode === 'ground';
+  material.defines = {
+    ...material.defines,
+    ...(ground ? { SEAM_GROUND: '' } : {}),
+    ...(edge ? { SEAM_EDGE: '' } : {}),
+    ...(edge && hex ? { SEAM_HEX: '' } : {}),
+  };
+  material.customProgramCacheKey = () => `seam-${mode}${edge && hex ? '-hex' : ''}`;
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uSeamRepeat = { value: 1 / SAND.tile };
     if (ground) {
@@ -237,6 +253,8 @@ function patch(material, { mode, mask = 1, grid = [1, 1] }) {
 export function makeSeamless(root, footprint, grid = [1, 1]) {
   root.updateMatrixWorld(true);
   const [w, h] = grid;
+  // One-cell tiles are pointy-top hexagons (12 wide, 13.86 deep); the old square tiles are as deep as wide.
+  const hex = w * h === 1 && footprint.max.z - footprint.min.z > (footprint.max.x - footprint.min.x) * 1.08;
   const done = new Set();
   const grounds = [];
   root.traverse((o) => {
@@ -244,7 +262,7 @@ export function makeSeamless(root, footprint, grid = [1, 1]) {
     const name = o.material.name ?? '';
     if (SAND_NAME.test(name)) {
       useDesertSand(o.material);
-      dropBorderWalls(o, cellCoords(o, footprint, w, h));
+      dropBorderWalls(o, cellCoords(o, footprint, w, h), hex);
       done.add(o.material);
     } else if (DECAL_NAME.test(name)) {
       paintSand(o.material.map);
@@ -263,14 +281,14 @@ export function makeSeamless(root, footprint, grid = [1, 1]) {
   let mask = w * h === 1 ? 1 : 0;
   for (const o of grounds) {
     const cells = cellCoords(o, footprint, w, h);
-    dropBorderWalls(o, cells);
+    dropBorderWalls(o, cells, hex);
     o.geometry.setAttribute('seamCell', new THREE.BufferAttribute(cells, 2));
     if (mask !== full) mask = coverMask(o.geometry, cells, w, h, mask, full);
   }
   for (const o of grounds) {
     if (done.has(o.material)) continue;
     paintSand(o.material.map); // measured now, while loading, rather than on the first frame it's drawn
-    patch(o.material, { mode: 'ground', mask, grid });
+    patch(o.material, { mode: 'ground', mask, grid, hex });
     done.add(o.material);
   }
   return done.size;
@@ -322,18 +340,35 @@ function coverMask(g, cells, w, h, mask, full) {
 /**
  * The ground parts are thin slabs. Where a tile borders open desert, the slab's side wall shows from the board
  * camera as a dark line along the tile's edge. Remove the walls standing on a cell border (every corner on the
- * same cell line); the desert sits just below, so nothing opens up behind them.
+ * same cell line; on a hexagonal tile, every corner on its outline and not all at one height, so the flat top
+ * stays); the desert sits just below, so nothing opens up behind them.
  */
-function dropBorderWalls(o, cells) {
+function dropBorderWalls(o, cells, hex = false) {
   const g = o.geometry;
   const count = g.attributes.position.count;
   const src = g.index?.array;
   const n = src ? src.length : count;
   const eps = 0.01;
-  const onLine = (a, b, c, k) => {
+  const onSquareLine = (a, b, c, k) => {
     const v = cells[a * 2 + k];
     return Math.abs(v - Math.round(v)) < eps && Math.abs(cells[b * 2 + k] - v) < eps && Math.abs(cells[c * 2 + k] - v) < eps;
   };
+  const pos = g.attributes.position;
+  const e = o.matrixWorld.elements;
+  const height = (i) => e[1] * pos.getX(i) + e[5] * pos.getY(i) + e[9] * pos.getZ(i) + e[13];
+  const onOutline = (i) => {
+    const x = Math.abs(cells[i * 2] - 0.5);
+    const z = Math.abs(cells[i * 2 + 1] - 0.5) * 1.1547005;
+    return Math.abs(0.5 - Math.max(x, 0.5 * x + 0.8660254 * z)) < eps / 2;
+  };
+  const onLine = hex
+    ? (a, b, c, k) =>
+        k === 0 &&
+        onOutline(a) &&
+        onOutline(b) &&
+        onOutline(c) &&
+        Math.max(height(a), height(b), height(c)) - Math.min(height(a), height(b), height(c)) > 1e-3
+    : onSquareLine;
   const kept = count > 65535 ? new Uint32Array(n) : new Uint16Array(n);
   let k = 0;
   for (let i = 0; i + 2 < n; i += 3) {
