@@ -272,6 +272,25 @@ export function boom() {
   });
 }
 
+/** Demolish / Wrecking Crew: a crunch and thump, metal hammer clanks, then rubble trickling down. `heavy` is the 2×2 crew. */
+export function demolition(heavy = false) {
+  begin(heavy ? 0.9 : 0.7, (t, nodes) => {
+    noise(nodes, t, 0.26, heavy ? 0.42 : 0.34, 320, 0.7, 110);
+    tone(nodes, t, 'sine', heavy ? 95 : 120, 0.3, heavy ? 0.4 : 0.32, 45);
+    const clanks = heavy ? [0.06, 0.15, 0.22, 0.33] : [0.07, 0.18, 0.3];
+    clanks.forEach((d, i) => {
+      const f = [1450, 1150, 1700, 1300][i];
+      tone(nodes, t + d, 'triangle', f, 0.07, 0.1);
+      tone(nodes, t + d, 'square', f * 2.7, 0.035, 0.03);
+    });
+    const bits = heavy ? 9 : 6;
+    for (let i = 0; i < bits; i++) {
+      const at = t + 0.2 + Math.random() * (heavy ? 0.6 : 0.45);
+      noise(nodes, at, 0.04 + Math.random() * 0.05, 0.06 + Math.random() * 0.06, 1800 + Math.random() * 2200, 1.2);
+    }
+  });
+}
+
 /** The run ends. */
 export function doom() {
   begin(0.55, (t, nodes) => {

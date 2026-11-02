@@ -5,7 +5,7 @@ import './themeShine.js';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
-import { bindCardHover, boom, buzz, confirm, coin, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning } from './sfx.js';
+import { bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning } from './sfx.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, key as plotKey } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
@@ -2554,8 +2554,12 @@ function tryPlace() {
     else if (piece.terrain === 'demolish2') {
       const targets = placement.demolishable(cells);
       targets.forEach(([x, z]) => demolish(x, z, true));
+      demolition(true);
       toast(L(`Demolished ${targets.length} tile${targets.length === 1 ? '' : 's'}`, `拆除了 ${targets.length} 个地块`));
-    } else demolish(...cells[0]);
+    } else {
+      demolish(...cells[0]);
+      demolition();
+    }
     return;
   }
   const idleBefore = economyNow().idle;
