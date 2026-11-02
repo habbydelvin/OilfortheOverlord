@@ -130,6 +130,17 @@ export const TERRAINS = {
     rule: 'Spend 3 oil to stop one hit on an adjacent building',
     stats: {},
   },
+  magazine: {
+    name: 'Missile Magazine',
+    trigger: 'Passive',
+    top: 0x4a5238,
+    edge: 0x2c3220,
+    category: 'building',
+    buildable: false,
+    weight: 0.5,
+    rule: 'Missile capacity +1',
+    stats: { manpower: -2, missileCap: 1 },
+  },
 
   // ---- wasteland (4 cosmetic variants, share one draw weight: 4 × 1.34 ≈ 30% of draws) ----
   wasteland1: {
@@ -439,6 +450,7 @@ const ZH = {
   missilelab: { name: '导弹配方改良所', rule: '相邻军事工厂生产导弹数量 +1' },
   warhead: { name: '弹头研究所', rule: '相邻工厂产出的导弹摧毁 2×2' },
   intercept: { name: '拦截网络', rule: '花费 3 石油，阻止相邻建筑被攻击一次' },
+  magazine: { name: '储弹仓', rule: '导弹容量 +1' },
   missile: { name: '导弹', rule: '摧毁 1 格建筑' },
   missile2: { name: '导弹', rule: '摧毁 2×2 范围内的建筑' },
   overtime: { name: '熬夜加班', rule: '花费 2 石油：一座军事工厂生产进度 +1 季' },
@@ -585,6 +597,7 @@ export const SHOP_ITEMS = [
   ['missilelab', 4],
   ['warhead', 4],
   ['intercept', 4],
+  ['magazine', 4],
   ['overtime', 3],
 ];
 
@@ -595,6 +608,7 @@ export const BASIC_SHOP = new Set(['station', 'farm', 'settlement']);
 export const SHOP_REQUIRES = {
   missilelab: 'milfactory',
   warhead: 'milfactory',
+  magazine: 'milfactory',
   overtime: 'milfactory',
 };
 

@@ -174,6 +174,27 @@ export class Hand {
     dealSfx();
   }
 
+  /** Slide the current hand away and deal these pieces in (strike mode / restore). */
+  replaceHand(pieces) {
+    this.cards = pieces.map((p) => {
+      const n = { ...pieceOf(p.terrain) };
+      if (p.pinned) n.pinned = true;
+      if (p.rot != null) n.rot = p.rot;
+      if (p.shape) n.shape = p.shape;
+      return n;
+    });
+    this.selected = -1;
+    this.leaveAs = 'discard';
+    this.fresh = new Set(this.cards.map((_, i) => i));
+    this.render();
+    this.onChange?.(null);
+    dealSfx();
+  }
+
+  snapshot() {
+    return this.cards.map((p) => ({ terrain: p.terrain, pinned: p.pinned, rot: p.rot, shape: p.shape }));
+  }
+
   /** Empty the hand (the shop opens with an empty hand that fills as cards are bought). */
   clear() {
     this.cards = [];
@@ -349,6 +370,8 @@ export class Hand {
     const W = this.el.clientWidth || 1000;
     const spring = (x) => ({ x, v: 0 });
     const produced = Boolean(p.produced);
+    const park = produced ? this.#prodSlot(i, 165) : null;
+    const H = this.el.clientHeight || 320;
     return {
       el,
       html: '',
@@ -356,9 +379,9 @@ export class Hand {
       selected: false,
       wait: produced ? 0 : 0.06 + i * 0.07, // seconds before it is dealt
       phase: Math.random() * Math.PI * 2,
-      x: spring(produced ? W / 2 : W + 120),
-      y: spring(produced ? 40 : 180),
-      rot: spring(produced ? 0 : 28),
+      x: spring(produced ? park.x : W + 120),
+      y: spring(produced ? H - 165 * 1.82 + park.y : 180),
+      rot: spring(produced ? park.rot : 28),
       scale: spring(produced ? 1 : 0.85),
       tx: spring(0),
       ty: spring(0),
@@ -371,12 +394,21 @@ export class Hand {
     c.rot.v += (Math.random() < 0.5 ? -1 : 1) * 70 * wobble;
   }
 
-  /** Resting slot of card i in an n-card fan: x of its left edge, y offset, in-plane rotation (deg). */
-  #slot(i, n, W, cw) {
-    const mid = (n - 1) / 2;
+  /** Incoming missiles sit in a raised row on the left so they do not compress the draw fan. */
+  #prodSlot(i, cw) {
+    const spacing = Math.min(cw * 0.58, 100);
+    return { x: 12 + i * spacing, y: -Math.min(92, cw * 0.56), rot: (i - 1) * 2 };
+  }
+
+  /** Resting slot of card i. Produced missiles use the left row; the rest fan as if they were the whole hand. */
+  #slot(i, n, W, cw, nProd = 0) {
+    if (nProd && i < nProd) return this.#prodSlot(i, cw);
+    const i0 = i - nProd;
+    const n0 = Math.max(1, n - nProd);
+    const mid = (n0 - 1) / 2;
     const room = Math.max(cw, W - 60);
-    const spacing = n > 1 ? Math.min(cw + 8, (room - cw) / (n - 1)) : 0;
-    const d = i - mid;
+    const spacing = n0 > 1 ? Math.min(cw + 8, (room - cw) / (n0 - 1)) : 0;
+    const d = i0 - mid;
     return { x: W / 2 + d * spacing - cw / 2, y: d * d * 7, rot: d * 4 };
   }
 
@@ -386,6 +418,7 @@ export class Hand {
     const W = this.el.clientWidth;
     const H = this.el.clientHeight;
     const n = this.cards.length;
+    const nProd = this.cards.reduce((s, p) => s + (p.produced ? 1 : 0), 0);
     const first = this.#els.values().next().value;
     const cw = first?.el.offsetWidth || 165;
     const ch = first?.el.offsetHeight || 300;
@@ -397,7 +430,7 @@ export class Hand {
     if (m && !blocked && m.y < H + 20 && m.y > -60) {
       let best = Infinity;
       for (const c of this.#els.values()) {
-        const s = this.#slot(c.index, n, W, cw);
+        const s = this.#slot(c.index, n, W, cw, nProd);
         const top = H - ch + s.y - (c.selected ? 40 : 0);
         const cx = s.x + cw / 2;
         const dx = Math.abs(m.x - cx);
@@ -417,7 +450,7 @@ export class Hand {
         c.el.style.opacity = c.wait > 0 ? '0' : '';
         if (c.wait > 0) continue;
       }
-      const s = this.#slot(c.index, n, W, cw);
+      const s = this.#slot(c.index, n, W, cw, nProd);
       const hovered = c === hover;
       const lift = (c.selected ? 40 : 0) + (hovered ? 22 : 0);
       let tx = Math.sin(time * 0.9 + c.phase) * 3 * idle;
@@ -439,7 +472,7 @@ export class Hand {
       this.#spring(c.tx, tx, 160, 15, dt);
       this.#spring(c.ty, ty, 160, 15, dt);
       c.lift = lift;
-      c.el.style.zIndex = hovered ? 50 : c.selected ? 40 : 10 + c.index;
+      c.el.style.zIndex = hovered ? 50 : c.selected ? 40 : this.cards[c.index]?.produced ? 24 + c.index : 10 + c.index;
       this.#paint(c, hovered);
     }
 

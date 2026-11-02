@@ -111,11 +111,6 @@
           <div class="big" id="oilStock">0</div>
           <div class="label" data-zh="石油库存">oil stockpile</div>
         </div>
-        <div class="stat missile hidden" id="missileStat">
-          <div class="big" id="missileStock">0</div>
-          <div class="label" data-zh="导弹">missiles</div>
-        </div>
-
         <div class="section" data-zh="本季">This season</div>
         <div class="res food" data-tip="food">
           <div class="k">
@@ -149,6 +144,19 @@
             </svg><span data-zh="石油">Oil</span>
           </div>
           <div class="v"><span id="resOil">0</span><small id="resOilD">(0)</small></div>
+        </div>
+        <div class="res missile" data-tip="missile">
+          <div class="k">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+              <g transform="rotate(45 12 12)">
+                <path d="M12 1.6c2 1.6 3.1 4 3.1 6.6v7.6h-6.2V8.2c0-2.6 1.1-5 3.1-6.6z" fill="currentColor" />
+                <path d="M9.1 12.4l-3.2 3.6v2.4l3.2-1.5zM14.9 12.4l3.2 3.6v2.4l-3.2-1.5z" fill="#d0782a" />
+                <path d="M10.2 16.8h3.6l-.5 2.1h-2.6z" fill="currentColor" />
+                <path d="M10.9 19.8h2.2L12 22.4z" fill="#ff8a2a" />
+              </g>
+            </svg><span data-zh="导弹">Missiles</span>
+          </div>
+          <div class="v"><span id="resMissile">0</span><small id="resMissileD"></small></div>
         </div>
 
         <!-- Season log: still written by main.js, but not shown (the panel space goes to the tile card). -->
@@ -203,6 +211,15 @@
         </div>
         <div class="shop-foot"><button id="btnShopDone" class="btn gold" data-zh="继续">Continue</button></div>
       </div>
+      <div id="cityStrike" class="hidden">
+        <div class="cs-head">
+          <div class="title" data-zh="空袭">Air strike</div>
+          <p id="csHint" data-zh="抽出手中的导弹，点一座城发动攻击。">Draw missiles, then click a city to fire.</p>
+        </div>
+        <div class="cs-cities" id="csCities"></div>
+        <div class="cs-hand" id="csHand"></div>
+        <div class="cs-foot"><button id="btnCsLeave" class="btn gold" data-zh="返回蜂巢城">Return to the Hive</button></div>
+      </div>
       <div id="cardPick" class="hidden">
         <div class="shop-head">
           <div class="title" data-zh="霸主的赏赐">The Overlord's reward</div>
@@ -223,6 +240,7 @@
       <div id="mapIcons"></div>
       <div id="floaters"></div>
       <div id="ruinBtns"></div>
+      <div id="factoryBars"></div>
       <div id="dialogue" class="hidden"></div>
       <div id="toast"></div>
       <div id="hand"></div>

@@ -240,14 +240,6 @@ body {
   color: var(--gold);
 }
 
-#panel .stat.missile .big {
-  font-size: 28px;
-}
-
-#panel .stat.missile.hidden {
-  display: none;
-}
-
 #panel .big {
   font-size: 46px;
   font-weight: 600;
@@ -305,6 +297,9 @@ body {
 #panel .res.oil {
   --c: #d0782a;
 }
+#panel .res.missile {
+  --c: #c45a3a;
+}
 
 #panel .res .k {
   display: flex;
@@ -328,6 +323,9 @@ body {
 }
 #panel .res.oil .k .ico {
   --ico: #e08a3a;
+}
+#panel .res.missile .k .ico {
+  --ico: #e07a4a;
 }
 
 #panel .res .v {
@@ -1022,19 +1020,6 @@ body.paying #btnReroll {
   pointer-events: none;
 }
 
-/* Missile produced at a factory: GPU transform from the tile into the hand. */
-.flying-card {
-  position: fixed;
-  left: 0;
-  top: 0;
-  z-index: 90;
-  pointer-events: none;
-  margin: 0;
-  transition: none !important;
-  will-change: transform;
-  filter: drop-shadow(0 14px 20px rgba(0, 0, 0, 0.7));
-}
-
 /*
  * Sheen over the metal frame; its position follows the card's tilt. A broad, warm, soft glint, masked by
  * CardSpecMask.png (from tools/make-card-frame.py): only bright metal catches it, rust and grime stay dull,
@@ -1139,8 +1124,101 @@ body.paying #btnReroll {
 }
 
 #shop.hidden,
-#cardPick.hidden {
+#cardPick.hidden,
+#cityStrike.hidden {
   display: none;
+}
+
+#cityStrike {
+  position: absolute;
+  inset: 0;
+  z-index: 46;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  background: linear-gradient(180deg, rgba(16, 20, 22, 0.72) calc(100% - 340px), rgba(16, 20, 22, 0.2) calc(100% - 180px));
+}
+#cityStrike .cs-head {
+  flex: 0 0 auto;
+  padding: 36px 20px 12px;
+  text-align: center;
+}
+#cityStrike .title {
+  font-size: 15px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+#cityStrike .cs-head p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.cs-cities {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 28px;
+  padding: 12px 40px;
+}
+.cs-city {
+  width: 220px;
+  padding: 22px 18px 18px;
+  border: 2px solid #7a5a1e;
+  border-radius: 4px;
+  background: rgba(18, 14, 12, 0.88);
+  color: var(--ink);
+  text-align: center;
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+}
+.cs-city:hover {
+  filter: brightness(1.1);
+  border-color: var(--gold);
+}
+.cs-city.hit {
+  animation: pop 0.35s ease-out;
+}
+.cs-city .cs-name {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--gold);
+}
+.cs-city .cs-tag {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.cs-hand {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  padding: 8px 20px 0;
+  min-height: 300px;
+}
+.cs-hand .card {
+  cursor: pointer;
+}
+.cs-hand .card.selected {
+  outline: 2px solid var(--gold);
+  transform: translateY(-18px);
+}
+.cs-hand .cs-empty {
+  align-self: center;
+  color: var(--muted);
+  font-size: 15px;
+}
+.cs-foot {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  padding: 20px 20px 36px;
+}
+body.city-strike #hand {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 #shop .shop-head,
@@ -1440,6 +1518,65 @@ body.striking .ruin-btn {
 }
 body.paying .ruin-btn,
 body.shopping .ruin-btn {
+  display: none;
+}
+
+/* Military Factory: one pip per season; a full row yields a missile. */
+#factoryBars {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.factory-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  gap: 3px;
+  padding: 3px 4px;
+  border: 2px solid #1c1c1c;
+  border-radius: 3px;
+  background: rgba(18, 14, 12, 0.82);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
+}
+.factory-bar i {
+  position: relative;
+  overflow: hidden;
+  width: 11px;
+  height: 8px;
+  border-radius: 1px;
+  border: 1px solid #1c1c1c;
+  background: #3a322c;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.factory-bar i::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, #c86820, #f0c060 55%, #ffe08a);
+  box-shadow: 0 0 5px rgba(240, 192, 96, 0.45);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 0.5s cubic-bezier(0.22, 0.9, 0.28, 1);
+}
+.factory-bar i.on::after {
+  transform: scaleX(1);
+}
+.factory-bar.snap i::after {
+  transition: none;
+}
+.factory-bar.waiting i:last-child::after {
+  animation: factory-wait 1.1s ease-in-out infinite;
+}
+@keyframes factory-wait {
+  50% {
+    filter: brightness(1.35);
+  }
+}
+body.shopping .factory-bar,
+body.dialogue .factory-bar,
+body.striking .factory-bar {
   display: none;
 }
 

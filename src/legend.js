@@ -29,6 +29,7 @@ function sections() {
         [badge(ICONS.food), L('Hydro-farm', '水培农场'), L('Grows 2 food each season. Needs 1 worker.', '每季产出 2 食物。需要 1 人力。')],
         [badge(ICONS.oil), L('Oil Station', '采油站'), L('Pumps 2 crude oil each season. Needs 1 worker.', '每季开采 2 原油。需要 1 人力。')],
         [badge(MAP_ICONS.missile), L('Military Factory', '军事工厂'), L('Spends 3 oil each season. After a year of work, produces 1 Missile.', '每季消耗 3 石油。工作一年后生产 1 枚导弹。')],
+        [badge(MAP_ICONS.crate), L('Missile Magazine', '储弹仓'), L('Needs 2 workers. Adds +1 missile capacity. The city starts with 2 slots.', '需要 2 人力。导弹容量 +1。开局自带 2 格弹库。')],
         [badge(ICONS.manpower), L('Settlement · Labour Camp', '定居点 · 劳工营'), L('Settlements house workers (+2 manpower, eat 2 food). A Labour Camp adds +2 manpower next to a Settlement.', '定居点提供人力（+2 人力，消耗 2 食物）。劳工营与定居点相邻时 +2 人力。')],
         [badge(MAP_ICONS.ruins), L('Pre-war Ruins', '战前遗迹'), L('Build next to it to clear it. Clearing refills your hand to 5 cards.', '在相邻处建造即可清理。清理后手牌补满 5 张。')],
       ],
@@ -63,7 +64,7 @@ function sections() {
       [
         [plain(ICONS.food), L('Food', '食物'), L('Feeds the Capital and Settlements. Spare food is banked in the food stores.', '供养首都和定居点。多余的食物存入粮仓。')],
         [plain(ICONS.oil), L('Oil', '石油'), L('The Overlord\'s tribute. The stockpile is taken after Winter.', '献给霸主的贡品。冬季过后石油库存会被收走。')],
-        [plain(ICONS.manpower), L('Manpower', '人力'), L('Workers to staff farms, Oil Stations, Refineries and missile labs.', '为农场、采油站、炼油厂和导弹研究所提供人手。')],
+        [plain(ICONS.manpower), L('Manpower', '人力'), L('Workers to staff farms, Oil Stations, Refineries, missile labs and Magazines.', '为农场、采油站、炼油厂、导弹研究所和储弹仓提供人手。')],
       ],
     ],
   ];

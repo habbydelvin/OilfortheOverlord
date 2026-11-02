@@ -8,6 +8,10 @@ export const OVERTIME_OIL = 2;
 export const INTERCEPT_OIL = 3;
 /** Seasons of paid work to finish one missile (a default year). */
 export const FACTORY_SEASONS = 4;
+/** Missile slots the city starts with (each staffed Magazine adds one more). */
+export const BASE_MISSILE_CAP = 2;
+/** Extra slots one staffed Magazine grants. */
+export const MAGAZINE_CAP = 1;
 
 const near = (grid, x, z) => DIRS.map(([dx, dz]) => grid.get(x + dx, z + dz)).filter(Boolean);
 
@@ -27,3 +31,15 @@ export function interceptorsBeside(grid, x, z) {
 }
 
 export const isPlayerMissile = (key) => key === 'missile' || key === 'missile2';
+
+/** How many missiles the city can hold: base slots plus each staffed Magazine. */
+export function missileCapacity(grid, idleKeys) {
+  let n = BASE_MISSILE_CAP;
+  if (!grid) return n;
+  for (const cell of grid.cells.values()) {
+    if (cell.terrain !== 'magazine') continue;
+    if (idleAt(idleKeys, cell)) continue;
+    n += MAGAZINE_CAP;
+  }
+  return n;
+}

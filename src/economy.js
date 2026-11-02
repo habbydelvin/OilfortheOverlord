@@ -5,7 +5,7 @@ import { L } from './i18n.js';
 import { FACTORY_OIL } from './arsenal.js';
 
 /** Workers each building needs to run. */
-export const WORKERS = { farm: 1, station: 1, refinery: 1, missilelab: 2, warhead: 2 };
+export const WORKERS = { farm: 1, station: 1, refinery: 1, missilelab: 2, warhead: 2, magazine: 2 };
 
 /**
  * Calculates one season of the economy from the current grid.

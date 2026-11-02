@@ -161,6 +161,7 @@ function statLines(stats) {
   if (stats.manpower > 0) lines.push(L(`Worker slots +${stats.manpower}`, `人力 +${stats.manpower}`));
   if (stats.manpower < 0) lines.push(L(`Needs ${-stats.manpower} worker`, `需要 ${-stats.manpower} 人力`));
   if (stats.oil) lines.push(L(`Oil ${signed(stats.oil)}`, `石油 ${signed(stats.oil)}`));
+  if (stats.missileCap) lines.push(L(`Missile capacity +${stats.missileCap}`, `导弹容量 +${stats.missileCap}`));
   if (stats.adjacentManpower) {
     for (const [n, v] of Object.entries(stats.adjacentManpower)) lines.push(L(`Next to ${tileName(n)}: Worker slots +${v}`, `紧邻${tileName(n)}：人力 +${v}`));
   }
