@@ -1,4 +1,8 @@
 import { ACTIONS, TERRAINS, TERRAIN_KEYS, cardDef } from './tiles.js';
+import { hexToWorld, rotateHex } from './grid.js';
+
+/** A piece turns in sixths: 6 rotations. */
+export const ROTATIONS = 6;
 
 // Tiles plus action cards with a draw weight.
 const DRAWABLE = [...TERRAIN_KEYS, ...Object.keys(ACTIONS)].filter((k) => (cardDef(k).weight ?? 0) > 0);
@@ -15,57 +19,63 @@ function randomTerrain(exclude = []) {
 }
 
 /**
- * Piece shapes as [x, z] cells (x = right, z = down on screen at default camera).
- * Weights bias the random draw toward tetrominoes.
+ * Piece shapes: every shape of 1 to 4 hexagons (as hex cells [x, z], see grid.js). Pieces only turn, they don't flip,
+ * so mirror images are shapes of their own. Weights bias the random draw toward the 4-hex shapes, as the old Tetris
+ * pieces did (singles 1, pairs 2, triples 4 in all, 4-hex shapes 21 in all).
  */
+const W3 = 4 / 3;
+const W4 = 2.1;
 export const SHAPES = {
   mono: { name: 'Single', weight: 1, cells: [[0, 0]] },
-  domino: { name: 'Pair', weight: 2, cells: [[0, 0], [1, 0]] },
-  i3: { name: 'Line 3', weight: 2, cells: [[0, 0], [1, 0], [2, 0]] },
-  v3: { name: 'Corner', weight: 2, cells: [[0, 0], [1, 0], [0, 1]] },
-  i4: { name: 'I-piece', weight: 3, cells: [[0, 0], [1, 0], [2, 0], [3, 0]] },
-  o: { name: 'O-piece', weight: 3, cells: [[0, 0], [1, 0], [0, 1], [1, 1]] },
-  t: { name: 'T-piece', weight: 3, cells: [[0, 0], [1, 0], [2, 0], [1, 1]] },
-  s: { name: 'S-piece', weight: 3, cells: [[1, 0], [2, 0], [0, 1], [1, 1]] },
-  z: { name: 'Z-piece', weight: 3, cells: [[0, 0], [1, 0], [1, 1], [2, 1]] },
-  l: { name: 'L-piece', weight: 3, cells: [[0, 0], [0, 1], [0, 2], [1, 2]] },
-  j: { name: 'J-piece', weight: 3, cells: [[1, 0], [1, 1], [1, 2], [0, 2]] },
+  pair: { name: 'Pair', weight: 2, cells: [[0, 0], [1, 0]] },
+  line3: { name: 'Line 3', weight: W3, cells: [[0, 0], [1, 0], [2, 0]] },
+  bend3: { name: 'Bend', weight: W3, cells: [[0, 0], [0, 1], [1, 1]] },
+  tri3: { name: 'Triangle', weight: W3, cells: [[0, 0], [1, 0], [0, 1]] },
+  bar: { name: 'Bar', weight: W4, cells: [[0, 0], [1, 0], [2, 0], [3, 0]] },
+  diamond: { name: 'Diamond', weight: W4, cells: [[0, 0], [1, 0], [0, 1], [1, 1]] },
+  propeller: { name: 'Propeller', weight: W4, cells: [[1, 0], [1, 1], [2, 1], [0, 2]] },
+  arch: { name: 'Arch', weight: W4, cells: [[0, 0], [1, 0], [1, 1], [0, 2]] },
+  pistol: { name: 'Pistol', weight: W4, cells: [[0, 0], [1, 0], [0, 1], [0, 2]] },
+  pistolM: { name: 'Pistol (mirrored)', weight: W4, cells: [[0, 0], [0, 1], [1, 1], [0, 2]] },
+  zigzag: { name: 'Zigzag', weight: W4, cells: [[0, 0], [1, 0], [1, 1], [2, 1]] },
+  zigzagM: { name: 'Zigzag (mirrored)', weight: W4, cells: [[0, 0], [0, 1], [1, 1], [1, 2]] },
+  hook: { name: 'Hook', weight: W4, cells: [[0, 0], [0, 1], [0, 2], [1, 2]] },
+  hookM: { name: 'Hook (mirrored)', weight: W4, cells: [[0, 0], [0, 1], [1, 1], [2, 1]] },
 };
 
 const SHAPE_KEYS = Object.keys(SHAPES);
 
+/** Shift cells so the smallest x and z are 0 (and drop -0). */
 function normalize(cells) {
   const minX = Math.min(...cells.map((c) => c[0]));
   const minZ = Math.min(...cells.map((c) => c[1]));
-  return cells.map(([x, z]) => [x - minX, z - minZ]);
+  return cells.map(([x, z]) => [x - minX + 0, z - minZ + 0]);
 }
 
-/** Rotate clockwise (as seen from above) `rot` quarter turns, normalized to start at 0,0. */
+/** Rotate clockwise (as seen from above) `rot` sixths of a turn, normalized to start at 0,0. */
 export function rotateCells(cells, rot) {
-  let out = cells.map(([x, z]) => [x, z]);
-  const turns = ((rot % 4) + 4) % 4;
-  for (let i = 0; i < turns; i++) out = out.map(([x, z]) => [-z, x]);
-  return normalize(out);
+  return normalize(cells.map((c) => rotateHex(c, rot)));
 }
 
 /**
- * Cell offsets relative to the pivot cell (the cell nearest the piece's centre),
+ * Cell offsets relative to the pivot cell (the cell nearest the piece's centre, measured on the board),
  * so the cursor sits in the middle of the piece and rotation doesn't jump around.
  */
 export function pieceOffsets(piece) {
   const cells = rotateCells(SHAPES[piece.shape].cells, piece.rot);
-  const cx = cells.reduce((s, c) => s + c[0], 0) / cells.length;
-  const cz = cells.reduce((s, c) => s + c[1], 0) / cells.length;
+  const world = cells.map(([x, z]) => hexToWorld(x, z));
+  const cx = world.reduce((s, w) => s + w.x, 0) / cells.length;
+  const cz = world.reduce((s, w) => s + w.z, 0) / cells.length;
   let pivot = cells[0];
   let best = Infinity;
-  for (const c of cells) {
-    const d = (c[0] - cx) ** 2 + (c[1] - cz) ** 2;
+  cells.forEach((c, i) => {
+    const d = (world[i].x - cx) ** 2 + (world[i].z - cz) ** 2;
     if (d < best - 1e-6) {
       best = d;
       pivot = c;
     }
-  }
-  return cells.map(([x, z]) => [x - pivot[0], z - pivot[1]]);
+  });
+  return cells.map(([x, z]) => [x - pivot[0] + 0, z - pivot[1] + 0]);
 }
 
 let nextId = 1;
@@ -87,7 +97,7 @@ function randomShape(fits) {
  */
 export function shapeFits(grid, shapeKey) {
   const free = (x, z) => !grid.has(x, z) && grid.allowed(x, z);
-  for (let rot = 0; rot < 4; rot++) {
+  for (let rot = 0; rot < ROTATIONS; rot++) {
     const cells = rotateCells(SHAPES[shapeKey].cells, rot);
     for (const k of grid.openKeys()) {
       const [ax, az] = k.split(',').map(Number);
@@ -113,5 +123,5 @@ export function pieceOf(terrain) {
 export function randomPiece(grid = null, exclude = []) {
   const terrain = randomTerrain(exclude);
   const shape = terrain.startsWith('wasteland') ? randomShape(grid && ((k) => shapeFits(grid, k))) : 'mono';
-  return { id: nextId++, shape, terrain, rot: Math.floor(Math.random() * 4) };
+  return { id: nextId++, shape, terrain, rot: Math.floor(Math.random() * ROTATIONS) };
 }

@@ -641,7 +641,9 @@ async function recolourInWorker(groundMap) {
 export const CORE_MODELS = ['capital', 'settlement', 'farm', 'station'];
 export const BUNDLES = {
   core: CORE_MODELS,
-  waste: Object.keys(WASTE_PIECES).map((shape) => `waste-${shape}`),
+  // The board is hexagonal now (grid.js): every Wasteland cell shows the single-cell model, until whole-piece hex
+  // models exist. The square piece models (WASTE_PIECES) aren't loaded.
+  waste: ['waste-mono'],
   extra: Object.keys(BLOCKOUTS).filter((k) => FINISHED[k] && !CORE_MODELS.includes(k)),
 };
 export const MAX_TEXTURE = 2048; // larger textures are never shown at full size at game zoom

@@ -7,7 +7,7 @@ const decimals = (step) => (String(step).split('.')[1] ?? '').length;
  * Each tuning section edits its `cfg` in place (read live) and saves to localStorage.
  * `fog` and `gfx` are optional extra sections: { params, defaults, cfg, save, clear, onChange(param) }.
  */
-export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog, gfx, missiles, icons, scaling, audio, preview, shake, onShake, onMissiles, onPerf, onResetTutorial }) {
+export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog, gfx, missiles, icons, scaling, audio, preview, shake, onShake, onMissiles, onPerf, onResetTutorial, crtOn, onCrt }) {
   const fmt = (p, v) => (p.type === 'select' || p.type === 'color' ? v : Number(v).toFixed(decimals(p.step)));
   const payout = { id: 'payout', params: PAYOUT_PARAMS, defaults: PAYOUT_DEFAULTS, cfg, save: savePayoutConfig, clear: clearPayoutConfig };
   const sections = [audio && { id: 'audio', ...audio }, gfx && { id: 'gfx', ...gfx }, preview && { id: 'preview', ...preview }, shake && { id: 'shake', ...shake }, missiles && { id: 'missiles', ...missiles }, payout, scaling && { id: 'scaling', ...scaling }, icons && { id: 'icons', ...icons }, fog && { id: 'fog', ...fog }].filter(Boolean);
@@ -56,6 +56,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
           <button data-act="resetTutorial" title="Forget that the tutorial and hints were seen, and start a new run with the guided Spring">Reset tutorial</button>
           <button data-act="shake" title="Play one missile-impact camera shake (settings under Missile camera shake)">Test shake</button>
           <button data-act="perf" title="Performance overlay: fps, ms per system, GPU time, A/B toggles (-)">Perf</button>
+          <button data-act="crt" title="The old CRT monitor effect over the world, on or off (Graphics → CRT screen)">CRT <small>(${crtOn?.() ? 'on' : 'off'})</small></button>
         </div>
         ${rows}
       </div>
@@ -102,6 +103,11 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
     else if (act === 'resetTutorial') status(onResetTutorial?.() ?? '');
     else if (act === 'missiles') status(onMissiles?.() ?? '');
     else if (act === 'shake') status(onShake?.() ?? '');
+    else if (act === 'crt') {
+      const msg = onCrt?.() ?? '';
+      render(); // the button's label and the Graphics → CRT screen option
+      status(msg);
+    }
     else if (act === 'reset') {
       for (const sec of sections) {
         Object.assign(sec.cfg, sec.defaults);

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { key } from './grid.js';
+import { key, hexToWorld } from './grid.js';
+import { hexPlane } from './hexGeometry.js';
 
 
 /** Translucent slots marking every empty cell next to your land (where pieces can attach). */
@@ -11,7 +12,7 @@ export class Frontier {
     this.cfg = cfg;
     this.group = new THREE.Group();
     scene.add(this.group);
-    this.geo = new THREE.PlaneGeometry(0.97, 0.97).rotateX(-Math.PI / 2);
+    this.geo = hexPlane(0.97);
     this.baseMat = new THREE.MeshBasicMaterial({
       color: 0xa9bac8,
       transparent: true,
@@ -33,7 +34,8 @@ export class Frontier {
       if (this.slots.has(k)) continue;
       const [x, z] = k.split(',').map(Number);
       const mesh = new THREE.Mesh(this.geo, this.baseMat.clone());
-      mesh.position.set(x, -0.04, z);
+      const w = hexToWorld(x, z);
+      mesh.position.set(w.x, -0.04, w.z);
       this.group.add(mesh);
       this.slots.set(k, { mesh, age: 0 });
     }

@@ -38,7 +38,7 @@ function sections() {
         [badge(MAP_ICONS.water, { boost: 'food' }), L('Water Pump', '水泵站'), L('Hydro-farms next to it grow +2 food.', '相邻的水培农场 +2 食物。')],
         [badge(MAP_ICONS.palm, { boost: 'food' }), L('Oasis', '绿洲'), L('Hydro-farms next to it grow +3 food.', '相邻的水培农场 +3 食物。')],
         [badge(MAP_ICONS.tar, { boost: 'oil' }), L('Tar Pit', '焦油坑'), L('Oil Stations next to it pump +2 oil.', '相邻的采油站 +2 石油。')],
-        [badge(MAP_ICONS.refinery, { boost: 'oil' }), L('Refinery', '炼油厂'), L('Makes its own oil: half the crude of each staffed Oil Station next to it. Needs 1 worker.', '自行产油：每座相邻且有人力的采油站原油的一半。需要 1 人力。')],
+        [badge(MAP_ICONS.refinery, { boost: 'oil' }), L('Refinery', '炼油厂'), L('Makes its own oil: as much crude as each staffed Oil Station next to it. Needs 1 worker.', '自行产油：与每座相邻且有人力的采油站原油等量。需要 1 人力。')],
       ],
     ],
     [

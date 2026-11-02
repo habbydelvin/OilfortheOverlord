@@ -2,10 +2,11 @@
  * Boost hints: while you hover a card in the hand, the free tiles where that building would be boosted glow faintly,
  * brighter while you place the card: the same glow as a boosted building's tile (neonGlow.js createGlow), in the
  * colour of the building that gets boosted. For a building, the free tiles next to its boosters; for a booster, the
- * free tiles next to the buildings it boosts. While placing a booster, its area (the 4 tiles around the one under the
+ * free tiles next to the buildings it boosts. While placing a booster, its area (the 6 tiles around the one under the
  * pointer) glows too and follows the pointer.
  */
 import { NEON, LIFT, GLOW_OPACITY, createGlow } from './neonGlow.js';
+import { DIRS, hexToWorld } from './grid.js';
 
 /** Card -> the tiles that make a free neighbouring cell a boosted spot for it, and the glow colour. */
 const HINTS = {
@@ -29,12 +30,6 @@ const AREA = {
 const HOVER = 0.45; // glow strength while hovering the card (share of a one-booster building's glow)
 const PLACING = 1; // while placing it
 const FADE = 8; // how quickly the glows follow (per second)
-const DIRS = [
-  [1, 0],
-  [-1, 0],
-  [0, 1],
-  [0, -1],
-];
 
 export class BoostHints {
   #key = ''; // what the current hints are for (card + board), to recount only when it changes
@@ -71,7 +66,7 @@ export class BoostHints {
     this.#updateArea(k, time, placing && cursor ? AREA[terrain] : null, cursor);
   }
 
-  /** The booster's area: 4 glows on the tiles around the pointer's, moved along with it. */
+  /** The booster's area: 6 glows on the tiles around the pointer's, moved along with it. */
   #updateArea(k, time, colour, cursor) {
     const area = this.#area;
     if (colour && colour !== area.colour) {
@@ -91,7 +86,10 @@ export class BoostHints {
     area.glows.forEach((glow, i) => {
       glow.group.visible = visible;
       if (!visible) return;
-      if (colour) glow.group.position.set(cursor[0] + DIRS[i][0], LIFT, cursor[1] + DIRS[i][1]);
+      if (colour) {
+        const w = hexToWorld(cursor[0] + DIRS[i][0], cursor[1] + DIRS[i][1]);
+        glow.group.position.set(w.x, LIFT, w.z);
+      }
       glow.paint(area.opacity * GLOW_OPACITY, time + i * 17);
     });
   }
@@ -122,7 +120,8 @@ export class BoostHints {
       const [x, z] = spot.split('|')[0].split(',').map(Number);
       const glow = createGlow(hint.colour, 'boost hint');
       glow.setLevel(1);
-      glow.group.position.set(x, LIFT, z);
+      const w = hexToWorld(x, z);
+      glow.group.position.set(w.x, LIFT, w.z);
       this.scene.add(glow.group);
       this.#glows.set(spot, { glow, live: true, opacity: 0, phase: Math.random() * 100 });
     }

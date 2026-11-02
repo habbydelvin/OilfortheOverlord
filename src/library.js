@@ -130,7 +130,7 @@ function availability(key, terrain) {
   if (key === 'capital') return L('Starting tile', '初始地块');
   if (key === 'crater') return L('Overlord only', '仅由霸主生成');
   if (key === 'raider') return L('Starvation only', '仅因饥荒出现');
-  if (terrain.bandit) return L('3×3 block of Wasteland, end of season', '3×3 荒地区域，季节结束时');
+  if (terrain.bandit) return L('A cluster of 7 Wasteland, end of season', '7 格荒地群，季节结束时');
   if (key === 'ruins') return L('Mystery site only', '仅来自神秘地点');
   if (terrain.weight <= 0) return L('Never', '从不');
   if (PRICE[key]) return L(`Locked until bought (${PRICE[key]} barrels) · then ${terrain.weight}`, `购买前锁定（${PRICE[key]} 桶）· 之后 ${terrain.weight}`);

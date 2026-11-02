@@ -1,4 +1,8 @@
 import * as THREE from 'three';
+import { hexToWorld } from './grid.js';
+import { hexCorners } from './hexGeometry.js';
+
+const EDGE = hexCorners(0.94); // just inside the tile's hexagon
 
 /**
  * Dust kicked up when a tile slams into the ground. Puffs start under the
@@ -58,24 +62,26 @@ export class Dust {
   }
 
   /**
-   * One impact at cell (x, z). `strength` scales count, spread, and size
+   * One impact at cell (x, z) (grid cell, see grid.js). `strength` scales count, spread, and size
    * (1 = a normal tile landing).
    */
   burst(x, z, strength = 1) {
+    ({ x, z } = hexToWorld(x, z));
     const count = Math.round(26 * strength);
-    const half = 0.47; // just inside the tile footprint
     for (let i = 0; i < count; i++) {
       const p = this.#free.pop();
       if (!p) return;
-      // Start on a random point of the footprint's edge and push outward from it.
-      const side = Math.floor(Math.random() * 4);
-      const along = rand(-half, half);
-      const nx = side === 0 ? 1 : side === 1 ? -1 : 0;
-      const nz = side === 2 ? 1 : side === 3 ? -1 : 0;
-      const sx = nx ? nx * half : along;
-      const sz = nz ? nz * half : along;
+      // Start on a random point of the hexagon's edge and push outward from it.
+      const side = Math.floor(Math.random() * 6);
+      const [ax, az] = EDGE[side];
+      const [bx, bz] = EDGE[(side + 1) % 6];
+      const t = Math.random();
+      const sx = ax + (bx - ax) * t;
+      const sz = az + (bz - az) * t;
+      const mx = (ax + bx) / 2;
+      const mz = (az + bz) / 2;
       // Blend the edge normal with the radial direction, so corners fan out instead of making a cross.
-      const dir = new THREE.Vector2(nx + sx * 0.9, nz + sz * 0.9).normalize();
+      const dir = new THREE.Vector2(mx * 2 + sx * 0.9, mz * 2 + sz * 0.9).normalize();
       const speed = rand(1.1, 2.4) * strength;
       // Most puffs hug the ground; about one in four billows up so the cloud reads over the tile's edges.
       const up = Math.random() < 0.25 ? rand(0.9, 1.5) : rand(0.25, 0.7);

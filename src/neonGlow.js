@@ -1,6 +1,6 @@
 /**
  * Neon tiles: the tile under a boosted building (one next to tiles that boost it, economy.js rules) lights up like
- * a ring of gas flame, kept square: a white-hot line along the tile's edges with a halo in the building's colour,
+ * a ring of gas flame, following the hexagon: a white-hot line along the tile's edges with a halo in the building's colour,
  * a curtain of light rising from the edges and fading upward in flickering streaks, and narrow flames shooting up
  * from the edges, all rippling around the tile: bands of light run along the ground's edges and a wave runs around the edge, lifting
  * the curtain and flames as it passes. Each boosting neighbour makes it glow more (brighter, a wider halo, a taller curtain and flames).
@@ -10,6 +10,8 @@
  *  - Settlement (orange): Labour Camp
  */
 import * as THREE from 'three';
+import { DIRS } from './grid.js';
+import { hexCorners } from './hexGeometry.js';
 
 export const NEON = {
   farm: 0x39ff6a,
@@ -32,15 +34,10 @@ const LEVELS = [
   { opacity: 0.9, reach: 0.075, halo: 0.75, fill: 0.07, height: 0.46, flame: 0.85 },
   { opacity: 1, reach: 0.095, halo: 0.85, fill: 0.09, height: 0.55, flame: 1 },
 ];
-const HALF = 0.49; // a hair inside the cell, so neighbouring glows don't overlap
+const HALF = 0.49; // centre to flat side: a hair inside the cell, so neighbouring glows don't overlap
+const SIDES = 6;
 export const LIFT = 0.006; // just above the tile's ground
 const FADE = 3; // how quickly the glow follows a change (per second)
-const DIRS = [
-  [1, 0],
-  [-1, 0],
-  [0, 1],
-  [0, -1],
-];
 
 /** Boosting neighbours of a building cell (0 for buildings without a neon colour). */
 export function neonLevel(grid, cell) {
@@ -58,11 +55,17 @@ export function neonLevel(grid, cell) {
 // ---------- shaders ----------
 const VERT = /* glsl */ `
   attribute float aSide;
+  attribute float aEdge;
+  attribute float aAlong;
   varying vec2 vUv;
   varying float vSide;
+  varying float vEdge;
+  varying float vAlong;
   void main() {
     vUv = uv;
     vSide = aSide;
+    vEdge = aEdge;
+    vAlong = aAlong;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }`;
 
@@ -85,6 +88,8 @@ const COMMON = /* glsl */ `
   uniform float uTime;
   varying vec2 vUv;
   varying float vSide;
+  varying float vEdge;
+  varying float vAlong;
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
   float noise(vec2 p) {
     vec2 i = floor(p);
@@ -101,17 +106,13 @@ const GROUND_FRAG = /* glsl */ `
   uniform float uHalo;
   uniform float uFill;
   void main() {
-    float d = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
+    // Distance to the hexagon's edge (in tile widths: 0.5 at the centre) and where along the edge this is (0-1
+    // around the tile, the same path as the curtain's wave), both laid out by groundGeometry.
+    float d = vEdge;
+    float along = vAlong;
     float core = 1.0 - smoothstep(0.004, 0.016, d);
-    float flicker = 0.88 + 0.12 * noise(vec2(d * 40.0 + uTime * 0.9, vUv.x * 9.0 + vUv.y * 7.0));
+    float flicker = 0.88 + 0.12 * noise(vec2(d * 40.0 + uTime * 0.9, along * 30.0));
     float halo = exp(-max(0.0, d - 0.012) / uReach) * uHalo * flicker;
-    // Where this point is around the tile's edge (0-1, the same path as the curtain's wave), from its nearest edge.
-    float along;
-    if (d == 1.0 - vUv.y) along = vUv.x;               // back edge
-    else if (d == 1.0 - vUv.x) along = 1.0 + (1.0 - vUv.y); // right edge
-    else if (d == vUv.y) along = 2.0 + (1.0 - vUv.x);  // front edge
-    else along = 3.0 + vUv.y;                           // left edge
-    along *= 0.25;
     float ripple = pow(0.5 + 0.5 * sin(6.2832 * (along * RIPPLE_BANDS + uTime * RIPPLE_SPEED)), 6.0) * exp(-d / 0.14);
     float a = clamp(max(core, halo) + uFill + ripple * uHalo * 1.1, 0.0, 1.0);
     gl_FragColor = vec4(mix(uColor, vec3(1.0), core * 0.75 + ripple * 0.3), a * uOpacity);
@@ -130,7 +131,7 @@ const CURTAIN_FRAG = /* glsl */ `
   }
   void main() {
     float h = vUv.y;
-    float along = (vSide + vUv.x) * 0.25; // 0-1 around the tile, unbroken at the corners
+    float along = (vSide + vUv.x) / 6.0; // 0-1 around the tile, unbroken at the corners
     float w0 = wave(along);
     // Streaks of light flowing sideways around the tile at a steady pace (rightward along the front edge), with a
     // little slow change in shape as they go.
@@ -153,28 +154,43 @@ const CURTAIN_FRAG = /* glsl */ `
     #include <colorspace_fragment>
   }`;
 
-/** Flat square on the tile (uv 0-1 across it). */
+/**
+ * Flat hexagon on the tile: one triangle per side, from the centre to that side. aEdge: distance to the edge in tile
+ * widths (0 on the edge, 0.5 at the centre: exact, since it falls off linearly toward each triangle's own side);
+ * aAlong: where around the edge (0-1, from the top corner clockwise, like the curtain).
+ */
 function groundGeometry() {
-  const g = new THREE.PlaneGeometry(HALF * 2, HALF * 2).rotateX(-Math.PI / 2);
-  g.setAttribute('aSide', new THREE.Float32BufferAttribute(new Array(g.attributes.position.count).fill(0), 1));
+  const corners = hexCorners(HALF * 2);
+  const position = [];
+  const edge = [];
+  const along = [];
+  for (let s = 0; s < SIDES; s++) {
+    const [x0, z0] = corners[s];
+    const [x1, z1] = corners[(s + 1) % SIDES];
+    // Clockwise on screen seen from above is counter-clockwise in three.js (y up): centre, next corner, corner.
+    position.push(0, 0, 0, x1, 0, z1, x0, 0, z0);
+    edge.push(0.5, 0, 0);
+    along.push((s + 0.5) / SIDES, (s + 1) / SIDES, s / SIDES);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
+  g.setAttribute('aEdge', new THREE.Float32BufferAttribute(edge, 1));
+  g.setAttribute('aAlong', new THREE.Float32BufferAttribute(along, 1));
+  g.setAttribute('aSide', new THREE.Float32BufferAttribute(new Array(position.length / 3).fill(0), 1));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((position.length / 3) * 2).fill(0), 2));
   return g;
 }
 
-/** Four 1-high walls standing on the square's edges (uv.x along the edge, uv.y up; aSide = which edge). */
+/** Six 1-high walls standing on the hexagon's edges (uv.x along the edge, uv.y up; aSide = which edge). */
 function curtainGeometry() {
-  const corners = [
-    [-HALF, -HALF],
-    [HALF, -HALF],
-    [HALF, HALF],
-    [-HALF, HALF],
-  ];
+  const corners = hexCorners(HALF * 2);
   const position = [];
   const uv = [];
   const side = [];
   const index = [];
-  for (let s = 0; s < 4; s++) {
+  for (let s = 0; s < SIDES; s++) {
     const [x0, z0] = corners[s];
-    const [x1, z1] = corners[(s + 1) % 4];
+    const [x1, z1] = corners[(s + 1) % SIDES];
     const base = s * 4;
     position.push(x0, 0, z0, x1, 0, z1, x1, 1, z1, x0, 1, z0);
     uv.push(0, 0, 1, 0, 1, 1, 0, 1);

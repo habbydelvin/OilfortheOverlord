@@ -48,7 +48,8 @@ vec4 curveClip(vec4 clip) {
 const bends = (m) => !m.isMeshDepthMaterial && !m.isMeshDistanceMaterial && !m.userData?.flat;
 
 function bend(material, shader) {
-  if (!bends(material)) return;
+  // Once only: a material whose callback wraps another material's (the idle grey copies) would bend it twice.
+  if (!bends(material) || shader.vertexShader.includes('curveClip(')) return;
   Object.assign(shader.uniforms, uniforms);
   const src = shader.vertexShader;
   const end = src.lastIndexOf('}'); // main() is the last function of every vertex shader here

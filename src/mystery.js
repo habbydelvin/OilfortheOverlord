@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PLOT, WORLD_HALF, key, plotOf, plotCenter } from './grid.js';
+import { PLOT, WORLD_HALF, key, plotOf, plotCells, plotDistance, hexDistance, hexToWorld } from './grid.js';
 
 /** What a mystery site can turn out to be, with relative odds. Tune freely. */
 export const MYSTERY_POOL = [
@@ -12,9 +12,9 @@ export const MYSTERY_POOL = [
 ];
 
 /**
- * Sites per distance band, filled from the inside out. A band covers plots whose Chebyshev distance
+ * Sites per distance band, filled from the inside out. A band covers plots (7-hex flowers, grid.js) whose distance
  * (in plots) from the start lies in [from, to]; each game rolls a random count in [min, max] for it.
- * Ring 19 is the last whose cells (up to ±58) fit inside the world (WORLD_HALF = 60, grid.js).
+ * Ring 19 is the last whose cells (up to 58 steps out) fit inside the world (WORLD_HALF = 60, grid.js).
  */
 const LAST_RING = Math.floor((WORLD_HALF - 1) / PLOT); // farthest plot ring whose cells all stay in the world
 const SITE_BANDS = [
@@ -24,7 +24,7 @@ const SITE_BANDS = [
   { from: 10, to: 14, min: 18, max: 28 },
   { from: 15, to: LAST_RING, min: 20, max: 32 },
 ];
-/** Two site plots must be at least this many plots apart (2 = never touching, even diagonally). */
+/** Two site plots must be at least this many plots apart (2 = never touching). */
 const MIN_PLOT_GAP = 2;
 const randInt = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
 
@@ -199,12 +199,15 @@ export class Mysteries {
   reset() {
     this.sites.clear();
     this.#dirty = true;
-    const ring = (px, pz) => Math.max(Math.abs(px), Math.abs(pz));
+    const ring = (px, pz) => plotDistance(px, pz);
     const chosen = [];
     for (const band of SITE_BANDS) {
       const plots = [];
       for (let px = -band.to; px <= band.to; px++)
-        for (let pz = -band.to; pz <= band.to; pz++) if (ring(px, pz) >= band.from) plots.push([px, pz]);
+        for (let pz = -band.to; pz <= band.to; pz++) {
+          const d = ring(px, pz);
+          if (d >= band.from && d <= band.to) plots.push([px, pz]);
+        }
       shuffle(plots);
       let left = randInt(band.min, band.max);
       for (const [px, pz] of plots) {
@@ -212,8 +215,8 @@ export class Mysteries {
         if (chosen.some(([cx, cz]) => ring(px - cx, pz - cz) < MIN_PLOT_GAP)) continue;
         chosen.push([px, pz]);
         left--;
-        const x = plotCenter(px) + Math.floor(Math.random() * PLOT) - 1;
-        const z = plotCenter(pz) + Math.floor(Math.random() * PLOT) - 1;
+        const cells = plotCells(px, pz);
+        const [x, z] = cells[Math.floor(Math.random() * cells.length)];
         this.#add(x, z);
       }
     }
@@ -243,7 +246,8 @@ export class Mysteries {
   reveal(px, pz) {
     const out = [];
     for (const [k, s] of this.sites) {
-      if (plotOf(s.x) !== px || plotOf(s.z) !== pz) continue;
+      const [a, b] = plotOf(s.x, s.z);
+      if (a !== px || b !== pz) continue;
       this.#dirty = true;
       this.sites.delete(k);
       out.push(this.#outcome(s));
@@ -255,7 +259,7 @@ export class Mysteries {
   revealAround(cells) {
     const out = [];
     for (const [k, s] of this.sites) {
-      if (!cells.some(([x, z]) => Math.abs(x - s.x) + Math.abs(z - s.z) === 1)) continue;
+      if (!cells.some(([x, z]) => hexDistance(x, z, s.x, s.z) === 1)) continue;
       this.#dirty = true;
       this.sites.delete(k);
       out.push(this.#outcome(s));
@@ -263,13 +267,13 @@ export class Mysteries {
     return out;
   }
 
-  /** Removes the site nearest to any of `cells` (Manhattan) and returns { x, z, terrain }, or null. */
+  /** Removes the site nearest to any of `cells` (in steps) and returns { x, z, terrain }, or null. */
   revealNearest(cells) {
     let best = null;
     let bestD = Infinity;
     for (const [k, s] of this.sites) {
       for (const [x, z] of cells) {
-        const d = Math.abs(x - s.x) + Math.abs(z - s.z);
+        const d = hexDistance(x, z, s.x, s.z);
         if (d < bestD) {
           bestD = d;
           best = [k, s];
@@ -299,7 +303,8 @@ export class Mysteries {
     let i = 0;
     for (const s of this.sites.values()) {
       if (i >= BEAM.max) break;
-      pos.set(s.x, 0.03, s.z);
+      const w = hexToWorld(s.x, s.z);
+      pos.set(w.x, 0.03, w.z);
       this.shafts.setMatrixAt(i, m.compose(pos, this.lean, one));
       this.pools.setMatrixAt(i, m.compose(pos, flat, one));
       i++;

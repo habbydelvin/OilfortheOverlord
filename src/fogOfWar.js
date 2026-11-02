@@ -1,12 +1,12 @@
 import * as THREE from 'three';
-import { PLOT, plotCenter } from './grid.js';
+import { plotCenter, plotCells, hexToWorld, hexesAround, hexDistance } from './grid.js';
 
 /**
  * Expansion-mode fog of war: a Civ V style cloud blanket over every locked plot.
  * When a plot is unlocked its clouds part outward from the middle.
  *
  * Ported from Wayberth's island mist (city-diorama-overview/src/island-mist.js), adapted for:
- *   - a square grid of 3×3 plots instead of island polygons,
+ *   - plots of 7 hexes (grid.js) instead of island polygons, with one mask texel per hex cell,
  *   - an unbounded map: one wrapping field of billows follows the camera,
  *   - a per-cell mask texture (R = locked, G = thickness) instead of per-island meshes.
  * No textures are needed; all cloud shapes come from the shaders.
@@ -120,8 +120,10 @@ export function clearFogConfig() {
 
 const GUSTS = 6; // simultaneous shockwaves (a 4-cell piece lands as 4)
 
-const MASK = 128; // texels per side, one per cell
+const MASK = 128; // texels per side, one per hex cell (axial x, z: see grid.js)
 const MASK_OFFSET = 64; // cell -64 maps to texel 0
+/** How far a plot's clouds part, from its centre (world units): a 7-hex flower reaches about 1.6. */
+const PART_RADIUS = 1.75;
 
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -139,7 +141,21 @@ uniform sampler2D uMask;
 uniform float uMaskSize;
 uniform float uMaskOffset;
 uniform float uMargin;
-vec2 maskAt(vec2 p) { return texture2D(uMask, (p + uMaskOffset + 0.5) / uMaskSize).rg; }
+// One texel per hex cell (axial x, z: see grid.js). A world point blends the 3 cells around it (the triangle of
+// cell centres it falls in): exact at each cell's centre, smooth in between, so the fog's edge follows the
+// hexagons the way the old square mask's bilinear filtering followed the squares.
+vec2 cellAt(vec2 c) { return texture2D(uMask, (c + uMaskOffset + 0.5) / uMaskSize).rg; }
+vec2 maskAt(vec2 p) {
+  float row = p.y / 0.8660254;
+  vec2 a = vec2(p.x - row * 0.5, row); // world -> fractional cell
+  vec2 b = floor(a);
+  vec2 f = a - b;
+  // The lower triangle (b, b + x, b + z) or the upper one (b + x + z, b + x, b + z), without branching.
+  float upper = step(1.0, f.x + f.y);
+  return cellAt(b + vec2(upper)) * abs(1.0 - f.x - f.y)
+    + cellAt(b + vec2(1.0, 0.0)) * mix(f.x, 1.0 - f.y, upper)
+    + cellAt(b + vec2(0.0, 1.0)) * mix(f.y, 1.0 - f.x, upper);
+}
 // Locked-ness that also needs every point within r to be locked: keeps fog back from open land.
 float lockedNear(vec2 p, float r) {
   float l = maskAt(p).r;
@@ -282,9 +298,9 @@ void main() {
   // Parting: inside the plot being unlocked, billows clear outward from its middle.
   if (uPart >= 0.0) {
     vec2 d = anchor - uPartOrigin;
-    float r = max(abs(d.x), abs(d.y)) / uPartHalf;
+    float r = length(d) / uPartHalf;
     if (r <= 1.0) {
-      // Jitter the clearing front per billow, so it isn't a hard square.
+      // Jitter the clearing front per billow, so it isn't a hard edge.
       float pf = smoothstep(uPart - 0.3, uPart, min(1.0, r + (seed - 0.5) * 0.25));
       // Ignore the footprint here (it may fall on the plot itself) but keep the soft open edge.
       fade = min(pf, smoothstep(0.55, 1.0, lockedNear(anchor, clear)));
@@ -386,8 +402,8 @@ void main() {
   float locked = smoothstep(edge0, 0.98, lockedNear(vWorld, uMargin * 0.5)); // wavy, soft edge at the territory border
   if (uPart >= 0.0) {
     vec2 d = vWorld - uPartOrigin;
-    float r = max(abs(d.x), abs(d.y)) / uPartHalf;
-    // Wavy clearing front rather than a hard square.
+    float r = length(d) / uPartHalf;
+    // Wavy clearing front rather than a hard edge.
     if (r <= 1.0) locked = min(locked, smoothstep(uPart - 0.3, uPart, min(1.0, r + 0.05 * n
       + 0.08 * sin(vWorld.x * 4.1 + vWorld.y * 1.3) * sin(vWorld.y * 3.7 - vWorld.x * 0.9))));
   }
@@ -435,7 +451,7 @@ export class FogOfWar {
       uCenter: { value: new THREE.Vector2() },
       uFadeRadius: { value: 20 },
       uPart: { value: -1 },
-      uPartHalf: { value: PLOT / 2 },
+      uPartHalf: { value: PART_RADIUS },
       uPartOrigin: { value: new THREE.Vector2() },
       uMargin: { value: settings.margin },
     };
@@ -675,13 +691,12 @@ export class FogOfWar {
     return j * MASK + i;
   }
 
+  /** The texels of plot `pk` (its 7 cells). */
   #plotCells(pk, fn) {
     const [px, pz] = typeof pk === 'string' ? pk.split(',').map(Number) : pk;
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dz = -1; dz <= 1; dz++) {
-        const idx = this.#index(plotCenter(px) + dx, plotCenter(pz) + dz);
-        if (idx >= 0) fn(idx);
-      }
+    for (const [x, z] of plotCells(px, pz)) {
+      const idx = this.#index(x, z);
+      if (idx >= 0) fn(idx);
     }
   }
 
@@ -749,37 +764,33 @@ export class FogOfWar {
    */
   disturb(x, z) {
     if (!this.group.visible) return;
-    this.gusts.push({ x, z, age: 0 });
+    const w = hexToWorld(x, z);
+    this.gusts.push({ x: w.x, z: w.z, age: 0 });
     if (this.gusts.length > GUSTS) this.gusts.shift();
     const { erodeNear, erodeFar, gustRadius } = this.s;
-    const r = Math.ceil(gustRadius);
-    for (let dx = -r; dx <= r; dx++) {
-      for (let dz = -r; dz <= r; dz++) {
-        const ring = Math.max(Math.abs(dx), Math.abs(dz));
-        if (ring === 0) continue;
-        const i = this.#index(x + dx, z + dz);
-        if (i < 0 || this.locked[i] === 0) continue;
-        // Match the shader: reach = 1 - smoothstep(0.3R, R, dist).
-        const reach = 1 - THREE.MathUtils.smoothstep(Math.hypot(dx, dz), 0.3 * gustRadius, gustRadius);
-        const eroded = this.wear[i] - (ring === 1 ? erodeNear : ring === 2 ? erodeFar : 0);
-        // Stored unclamped (down to 0); the floor is applied in #refreshThickness, so the
-        // 'Thinnest the fog gets' slider updates existing worn fog live.
-        this.wear[i] = Math.max(0, Math.min(eroded, 1 - reach));
-      }
+    for (const [cx, cz] of hexesAround(x, z, Math.ceil(gustRadius))) {
+      const ring = hexDistance(x, z, cx, cz);
+      const i = this.#index(cx, cz);
+      if (ring === 0 || i < 0 || this.locked[i] === 0) continue;
+      // Match the shader: reach = 1 - smoothstep(0.3R, R, dist), dist between the cells' centres.
+      const c = hexToWorld(cx, cz);
+      const reach = 1 - THREE.MathUtils.smoothstep(Math.hypot(c.x - w.x, c.z - w.z), 0.3 * gustRadius, gustRadius);
+      const eroded = this.wear[i] - (ring === 1 ? erodeNear : ring === 2 ? erodeFar : 0);
+      // Stored unclamped (down to 0); the floor is applied in #refreshThickness, so the
+      // 'Thinnest the fog gets' slider updates existing worn fog live.
+      this.wear[i] = Math.max(0, Math.min(eroded, 1 - reach));
     }
     this.#refreshThickness();
   }
 
   /**
-   * Free placement: uncover every cell within `radius` (Chebyshev) of cell (x, z). The fog eases
+   * Free placement: uncover every cell within `radius` steps of cell (x, z). The fog eases
    * away over `openDuration` seconds; uncovered land stays uncovered.
    */
   openAround(x, z, radius = 1) {
-    for (let dx = -radius; dx <= radius; dx++) {
-      for (let dz = -radius; dz <= radius; dz++) {
-        const i = this.#index(x + dx, z + dz);
-        if (i >= 0) this.lockedTarget[i] = 0;
-      }
+    for (const [cx, cz] of hexesAround(x, z, radius)) {
+      const i = this.#index(cx, cz);
+      if (i >= 0) this.lockedTarget[i] = 0;
     }
     this.lockedBusy = true;
   }
@@ -788,7 +799,8 @@ export class FogOfWar {
   revealPlot(px, pz) {
     if (this.reveal) this.#finishReveal();
     this.reveal = { px, pz, t: 0 };
-    this.uniforms.uPartOrigin.value.set(plotCenter(px), plotCenter(pz));
+    const c = hexToWorld(...plotCenter(px, pz));
+    this.uniforms.uPartOrigin.value.set(c.x, c.z);
     this.uniforms.uPart.value = 0;
     this.#refreshThickness();
     return this.s.revealDuration;

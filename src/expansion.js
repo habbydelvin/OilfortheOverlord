@@ -1,10 +1,12 @@
 import * as THREE from 'three';
-import { PLOT, key, plotOf, plotCenter } from './grid.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { key, plotOf, plotCenter, hexToWorld, hexesAround } from './grid.js';
+import { hexPlane, hexCorners } from './hexGeometry.js';
 
 const GOLD = 0xf2c14e;
 
 /**
- * When the territory is full, the locked 3×3 plots on its sides light up.
+ * When the territory is full, the locked plots (7-hex flowers, see grid.js) on its sides light up.
  * Clicking one unlocks it.
  */
 export class Expansion {
@@ -14,9 +16,10 @@ export class Expansion {
   constructor(scene) {
     this.group = new THREE.Group();
     scene.add(this.group);
-    const s = PLOT - 0.12;
-    this.fillGeo = new THREE.PlaneGeometry(s, s).rotateX(-Math.PI / 2);
-    this.edgeGeo = new THREE.EdgesGeometry(this.fillGeo);
+    // A plot is a flower of 7 hexes, centred on the origin: its fill, and the outline around it.
+    const flower = hexesAround(0, 0, 1).map(([x, z]) => hexToWorld(x, z));
+    this.fillGeo = mergeGeometries(flower.map((w) => hexPlane(0.97).translate(w.x, 0, w.z)));
+    this.edgeGeo = flowerOutline(flower);
     this.plusGeoA = new THREE.BoxGeometry(1.1, 0.06, 0.26);
     this.plusGeoB = new THREE.BoxGeometry(0.26, 0.06, 1.1);
   }
@@ -30,7 +33,8 @@ export class Expansion {
     for (const k of grid.expansionOptions()) {
       const [px, pz] = k.split(',').map(Number);
       const group = new THREE.Group();
-      group.position.set(plotCenter(px), 0, plotCenter(pz));
+      const centre = hexToWorld(...plotCenter(px, pz));
+      group.position.set(centre.x, 0, centre.z);
 
       const fill = new THREE.Mesh(
         this.fillGeo,
@@ -70,7 +74,7 @@ export class Expansion {
   /** The expansion option under a hovered cell, if any. */
   optionAt(cell) {
     if (!cell) return null;
-    return this.options.get(key(plotOf(cell[0]), plotOf(cell[1]))) ?? null;
+    return this.options.get(key(...plotOf(cell[0], cell[1]))) ?? null;
   }
 
   update(cell, dt, time) {
@@ -87,4 +91,21 @@ export class Expansion {
       o.plus.rotation.y += dt * (hot ? 2.5 : 0.6);
     }
   }
+}
+
+/** Line segments around a group of hexes (centres in world units): the edges no two of them share. */
+function flowerOutline(centres) {
+  const corners = hexCorners(1);
+  const seen = new Map(); // edge midpoint -> segment
+  for (const c of centres) {
+    for (let i = 0; i < 6; i++) {
+      const [ax, az] = corners[i];
+      const [bx, bz] = corners[(i + 1) % 6];
+      const k = `${(c.x + (ax + bx) / 2).toFixed(2)},${(c.z + (az + bz) / 2).toFixed(2)}`;
+      if (seen.has(k)) seen.set(k, null); // shared with a neighbour: inside the flower
+      else seen.set(k, [c.x + ax, 0, c.z + az, c.x + bx, 0, c.z + bz]);
+    }
+  }
+  const points = [...seen.values()].filter(Boolean).flat();
+  return new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
 }

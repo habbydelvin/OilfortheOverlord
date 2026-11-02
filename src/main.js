@@ -8,7 +8,7 @@ import { createScene } from './scene.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
 import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning } from './sfx.js';
 import { CameraRig } from './controls.js';
-import { Grid, DIRS, key as plotKey } from './grid.js';
+import { Grid, DIRS, key as plotKey, hexToWorld, worldToHex, hexDistance } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
 import { preloadCardArt } from './tiles.js';
 import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
@@ -20,6 +20,8 @@ import { copySeam } from './seamlessGround.js';
 import { NeonTiles } from './neonGlow.js';
 import { BarrelGauge, OilFlights } from './barrelGauge.js';
 import { SeasonClock } from './seasonClock.js';
+import { setupCrt } from './crt.js';
+import { CrtPass } from './crtPass.js';
 import { BoostHints } from './boostHints.js';
 import { setupLegend } from './legend.js';
 import { Mysteries } from './mystery.js';
@@ -50,6 +52,9 @@ const SEED_TERRAIN = 'capital';
 
 // ---------- setup ----------
 const { renderer, scene, camera, sun, followTarget } = createScene(document.getElementById('app'));
+// The CRT post-process (Graphics → CRT screen: Shader); the glass is #crt's area. HTML over the 3D view follows its bend.
+const crtPass = new CrtPass(renderer, document.getElementById('crt'));
+crtPass.hookProjection(camera);
 initMusic(); // background track downloads now; it starts with the game, once sound is allowed
 onMusicVolume((volume) => {
   audioCfg.music = volume;
@@ -82,9 +87,9 @@ const missiles = new MissileStrike(scene, camera, missileCfg);
 const shakeCfg = loadShakeConfig(); // Game Debug → Missile camera shake
 const camShake = new CameraShake(camera, shakeCfg); // missile strikes only; tiles etc. use the small `shake` jolt
 const gfxCfg = loadGfxConfig();
-const applyGraphics = () => applyGfx(gfxCfg, { renderer, scene, sun, fog });
+const applyGraphics = () => applyGfx(gfxCfg, { renderer, scene, sun, fog, crt: crtPass });
 applyGraphics();
-// Debug: territory expansion mode (the old fill-the-3×3-then-expand rules), saved across reloads.
+// Debug: territory expansion mode (the old fill-your-plot-then-expand rules), saved across reloads.
 const MODE_KEY = 'oftoMode';
 grid.expansionMode = localStorage.getItem(MODE_KEY) === 'expansion';
 placement.mysteries = mysteries; // "?" cells can't be built on, only next to (free-placement mode)
@@ -140,6 +145,13 @@ const debug = RELEASE
   onShake: () => {
     camShake.add(missileCfg.shake);
     return 'Shake: one missile impact';
+  },
+  crtOn: () => gfxCfg.crtScreen !== 'Off',
+  onCrt: () => {
+    gfxCfg.crtScreen = gfxCfg.crtScreen === 'Off' ? 'Shader' : 'Off';
+    saveGfxConfig(gfxCfg);
+    applyGraphics();
+    return `CRT effect: ${gfxCfg.crtScreen === 'Off' ? 'off' : 'on'}`;
   },
   preview: {
     params: PREVIEW_PARAMS,
@@ -204,6 +216,7 @@ const $ = (id) => document.getElementById(id);
 // The tribute gauge (barrels that fill with oil) and the oil flying into it at payout.
 const gauge = new BarrelGauge($('quotaBarrels'));
 const seasonClock = new SeasonClock($('seasonClock'), latch); // the four-season dial right of the tribute plate
+setupCrt($('crt')); // the old CRT monitor the world is seen through
 const oilFlights = new OilFlights(document.body, gauge, (value) => {
   if (value <= gauge.amount) return; // the season already settled (a skipped payout): nothing to add
   showOil(value, true);
@@ -357,7 +370,8 @@ function addTile(x, z, terrain, delay = 0, instant = false, { bare = false } = {
   if (old) removeMesh(old.mesh);
 
   const mesh = factory.create(terrain, { bare });
-  mesh.position.set(x, 0, z);
+  const w = hexToWorld(x, z);
+  mesh.position.set(w.x, 0, w.z);
   mesh.visible = instant;
   tiles.add(mesh);
   grid.set(x, z, { terrain, mesh, onRuins });
@@ -410,8 +424,9 @@ function addWastePiece(piece, cells) {
 /** Put a piece's model over its cells; `drop` makes it stomp in like a placed tile, with dust under every cell. */
 function placeWasteGroup(rec, group, drop) {
   const pts = rec.cells.map((k) => k.split(',').map(Number));
-  const xs = pts.map((p) => p[0]);
-  const zs = pts.map((p) => p[1]);
+  const world = pts.map(([x, z]) => hexToWorld(x, z));
+  const xs = world.map((w) => w.x);
+  const zs = world.map((w) => w.z);
   group.position.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...zs) + Math.max(...zs)) / 2);
   rec.group = group;
   tiles.add(group);
@@ -454,7 +469,14 @@ function adoptWastePieces() {
       if (rec.group || done.has(rec)) continue;
       done.add(rec);
       const group = factory.createPiece(rec.shape, rec.rot);
-      if (!group) continue;
+      if (!group) {
+        // No whole-piece model for this shape (hex pieces, until they're modelled): each cell gets the single one.
+        for (const k of rec.cells) {
+          const c = grid.cells.get(k);
+          if (c && !c.mesh.userData.blockout) factory.fillWaste(c.mesh, c.terrain);
+        }
+        continue;
+      }
       for (const k of rec.cells) grid.cells.get(k)?.mesh.clear();
       placeWasteGroup(rec, group, false);
     } else if (!cell.mesh.userData.blockout) factory.fillWaste(cell.mesh, cell.terrain);
@@ -494,7 +516,7 @@ const strikeCount = (strikes) => Math.max(1, Math.round(missileCfg[`count${Math.
 /** The Hive City the strike centres on: the Capital nearest the middle (a mystery can add more). */
 function mainCapital() {
   const caps = [...grid.cells.values()].filter((c) => c.terrain === 'capital');
-  return caps.sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z))[0] ?? null;
+  return caps.sort((a, b) => hexDistance(a.x, a.z) - hexDistance(b.x, b.z))[0] ?? null;
 }
 
 /** Random building cells (never Wasteland or other land). With `capital`, the main Capital is one of them, hit last. */
@@ -540,8 +562,12 @@ function listLost(names) {
 
 /** Camera for the strike: centred on the Capital, zoomed out to fit every target, easing slowly. */
 function strikeCamera(targets) {
-  const cap = mainCapital() ?? { x: 0, z: 0 };
-  const reach = Math.max(0, ...targets.map((t) => Math.hypot(t.x - cap.x, t.z - cap.z)));
+  const c = mainCapital() ?? { x: 0, z: 0 };
+  const cap = hexToWorld(c.x, c.z);
+  const reach = Math.max(0, ...targets.map((t) => {
+    const w = hexToWorld(t.x, t.z);
+    return Math.hypot(w.x - cap.x, w.z - cap.z);
+  }));
   const fit = (reach + 1.5) * 2.5 * missileCfg.camFit;
   const dist = THREE.MathUtils.clamp(Math.max(missileCfg.camMinDistance, fit), rig.minDistance, rig.maxDistance);
   rig.posRate = missileCfg.camRate;
@@ -576,7 +602,8 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
     // Ground launch: close up on the launch cell, then the camera rides along with the missile.
     const from = targets[0].from;
     followDist = FOLLOW_CLOSE;
-    followCamera(new THREE.Vector3(from.x, 0, from.z), FOLLOW_CLOSE, 5);
+    const f = hexToWorld(from.x, from.z);
+    followCamera(new THREE.Vector3(f.x, 0, f.z), FOLLOW_CLOSE, 5);
     await wait(0.6);
     if (run !== runId) return lost;
     await prelude?.();
@@ -600,15 +627,35 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
     if (targets.length === 1) {
       // Pull back as it climbs, and by the end far enough that the target is in the shot.
       // (Never zooms back in: the impact is seen from as far out as the flight got.)
-      const reach = Math.hypot(t.x - pos.x, t.z - pos.z);
+      const tw = hexToWorld(t.x, t.z);
+      const reach = Math.hypot(tw.x - pos.x, tw.z - pos.z);
       if (!follow) followDist = Math.max(followDist, missileCfg.camMinDistance * 0.6);
       followDist = Math.max(followDist, FOLLOW_CLOSE + pos.y * 1.1 + reach * 0.6 * u);
       followCamera(pos, followDist, missileCfg.camFollowRate);
-    } else frameStrike([...[...flying.values()].map((m) => m.pos), ...[...pending].map((p) => new THREE.Vector3(p.x, 0, p.z))]);
+    } else
+      frameStrike([
+        ...[...flying.values()].map((m) => m.pos),
+        ...[...pending].map((p) => {
+          const w = hexToWorld(p.x, p.z);
+          return new THREE.Vector3(w.x, 0, w.z);
+        }),
+      ]);
   };
   followDist = follow ? followDist : FOLLOW_CLOSE;
   // From the sky, the Overlord's missiles fly a little slower so the camera can keep up (ground launches set their own).
-  const tracked = targets.map((t) => (t.from || t.flight ? t : { ...t, flight: missileCfg.followFlight }));
+  // Missiles fly in world space: each target's cell (grid coordinates) becomes its world position for the flight,
+  // and rides along as `cell` for the crater, dust and fog.
+  const toWorld = (c) => {
+    const w = hexToWorld(c.x, c.z);
+    return { x: w.x, z: w.z };
+  };
+  const tracked = targets.map((t) => ({
+    ...t,
+    ...toWorld(t),
+    cell: { x: t.x, z: t.z },
+    from: t.from ? toWorld(t.from) : undefined,
+    flight: t.from || t.flight ? t.flight : missileCfg.followFlight,
+  }));
   const original = new Map(tracked.map((t, i) => [t, targets[i]]));
   await missiles.fire(tracked, {
     onMove: (pos, t, u) => track(pos, original.get(t), u),
@@ -616,13 +663,13 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
       if (run !== runId) return;
       flying.delete(original.get(hit));
       pending.delete(original.get(hit));
-      const { x, z } = hit;
+      const { x, z } = hit.cell;
       boom();
       dust.burst(x, z, 1.8);
       fog.disturb(x, z);
       camShake.add(missileCfg.shake);
     },
-    onCover: ({ x, z }) => {
+    onCover: ({ cell: { x, z } }) => {
       if (!convert || run !== runId) return;
       const name = craterAt(x, z);
       if (name) lost.push(name);
@@ -708,7 +755,8 @@ async function groundStrike(spot, target, lostText = (l) => L(`The silo's missil
   await wait(0.3);
   if (run !== runId) return null;
   // The missile stands upright on the spot; the camera closes in, it shakes, then launches and is followed.
-  const standing = missiles.showUpright(spot.x, spot.z);
+  const at = hexToWorld(spot.x, spot.z); // missiles.js works in world positions
+  const standing = missiles.showUpright(at.x, at.z);
   const prelude = async () => {
     standing.rumble();
     camShake.add(0.3);
@@ -731,7 +779,7 @@ async function groundStrike(spot, target, lostText = (l) => L(`The silo's missil
 function nearestBuilding(x, z) {
   const pool = [...grid.cells.values()].filter((c) => isBuilding(c.terrain) && c.terrain !== 'capital');
   if (!pool.length) return null;
-  const d = (c) => Math.abs(c.x - x) + Math.abs(c.z - z);
+  const d = (c) => hexDistance(c.x, c.z, x, z);
   const best = Math.min(...pool.map(d));
   const near = pool.filter((c) => d(c) === best);
   const c = near[Math.floor(Math.random() * near.length)];
@@ -748,7 +796,8 @@ function unexplodedMissile(site, target = nearestBuilding(site.x, site.z)) {
   if (!target) {
     // A dud: it stands up, wobbles, and falls over.
     const run = runId;
-    const dud = missiles.showUpright(site.x, site.z);
+    const at = hexToWorld(site.x, site.z); // missiles.js works in world positions
+    const dud = missiles.showUpright(at.x, at.z);
     toast(L('Uncovered an Unexploded Missile... it fizzled into the sand', '发现一枚未爆导弹……它在沙地里哑火了'), 'good', 2400);
     setTimeout(() => run === runId && dud.topple(), 900);
     setTimeout(() => {
@@ -946,7 +995,8 @@ function updateRuinButtons() {
       layer.appendChild(btn);
       ruinBtns.set(k, btn);
     }
-    ruinV.set(c.x, 0.55, c.z).project(camera);
+    const w = hexToWorld(c.x, c.z);
+    ruinV.set(w.x, 0.55, w.z).project(camera);
     const px = (ruinV.x * 0.5 + 0.5) * window.innerWidth;
     const py = (-ruinV.y * 0.5 + 0.5) * window.innerHeight;
     const tf = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px) translate(-50%, -100%)`;
@@ -993,13 +1043,17 @@ function updateDropAnims(dt) {
     if (!a.landed) {
       a.landed = true;
       thud(Boolean(a.cells));
-      const { x, z } = a.mesh.position;
-      // A whole Wasteland piece kicks up dust under each of its cells.
-      if (a.cells) for (const [cx, cz] of a.cells) dust.burst(cx, cz, 0.8);
-      else dust.burst(x, z);
-      // Free placement: the land around the new tile is uncovered (expansion mode uncovers whole plots).
-      if (!grid.expansionMode) fog.openAround(Math.round(x), Math.round(z), fogCfg.openRadius);
-      fog.disturb(Math.round(x), Math.round(z)); // the impact blows back and thins the clouds nearby
+      // The cells it landed on: a whole Wasteland piece knows its cells, a single tile's is under its position.
+      const cells = a.cells ?? [worldToHex(a.mesh.position.x, a.mesh.position.z)];
+      for (const [cx, cz] of cells) {
+        // Dust under each cell (a little less per cell for a whole piece).
+        dust.burst(cx, cz, a.cells ? 0.8 : 1);
+        // Free placement: the land around the new tile is uncovered (expansion mode uncovers whole plots).
+        if (!grid.expansionMode) fog.openAround(cx, cz, fogCfg.openRadius);
+      }
+      // The impact blows back and thins the clouds nearby (once, from the middle of what landed).
+      const [mx, mz] = worldToHex(a.mesh.position.x, a.mesh.position.z);
+      fog.disturb(mx, mz);
       shake.amount = Math.min(shake.amount + 0.7, 1.2);
     }
     // Damped spring around rest: flat on impact, a little tall on the way back, then still.
@@ -1342,8 +1396,8 @@ function updateInspect(cell) {
   if (t.bandit)
     notes.push(
       L(
-        'Bandits drawn by a 3×3 block of Wasteland. They stay until you Send in the Militia.',
-        `被 3×3 荒地区域引来的匪徒。在你${cardDef('militia').name}之前，他们不会离开。`,
+        'Bandits drawn by a cluster of 7 Wasteland. They stay until you Send in the Militia.',
+        `被 7 格荒地群引来的匪徒。在你${cardDef('militia').name}之前，他们不会离开。`,
       ),
     );
   if (isCamp(c.terrain)) notes.push(L(`Right now: ${campEffect(c.terrain)}`, `当前：${campEffect(c.terrain)}`));
@@ -1447,7 +1501,20 @@ function chimeTile(tile) {
 }
 
 function runPayout(e, onDone) {
-  const tiles = e.perCell
+  // Boosters (Water Pump, Oasis, Tar Pit) show what they add over themselves: their share comes off the building
+  // they boost, so the totals are unchanged.
+  const parts = new Map(e.perCell.map((p) => [`${p.x},${p.z}`, { ...p }]));
+  for (const s of e.shares) {
+    const from = parts.get(s.from);
+    const to = parts.get(s.to);
+    if (!from || !to) continue;
+    for (const r of ['food', 'oil']) {
+      if (!s[r]) continue;
+      from[r] -= s[r];
+      to[r] += s[r];
+    }
+  }
+  const tiles = [...parts.values()]
     .filter((p) => p.food || p.idle || p.oil || EFFECT_TILES.has(p.terrain))
     .map((p) => ({ ...p, mesh: payoutMesh(grid.get(p.x, p.z)) }))
     .flatMap(splitTriggers);
@@ -1463,7 +1530,8 @@ function runPayout(e, onDone) {
       chimeTile(tile);
       if (tile.oil > 0) {
         // The oil flies up into the gauge; each barrel fills it as it lands.
-        tileV.set(tile.x, 0.6, tile.z).project(camera);
+        const w = hexToWorld(tile.x, tile.z);
+        tileV.set(w.x, 0.6, w.z).project(camera);
         oilFlights.launch([(tileV.x * 0.5 + 0.5) * window.innerWidth, (-tileV.y * 0.5 + 0.5) * window.innerHeight], tile.oil, shown);
         shown += tile.oil;
       } else if (tile.oil) {
@@ -1539,23 +1607,20 @@ function spawnRaider() {
   return text;
 }
 
-/** Chance that each full 3×3 block of Wasteland draws a bandit camp at the end of a season. */
+/** Chance that each full cluster of 7 Wasteland draws a bandit camp at the end of a season. */
 const BANDIT_CHANCE = 1;
-/** Centre cells of every exact 3×3 block of Wasteland on the board. */
+/** Centre cells of every full cluster of 7 Wasteland on the board: a Wasteland cell with Wasteland on all 6 sides. */
 function findWasteBlocks() {
   const waste = (x, z) => grid.get(x, z)?.terrain.startsWith('wasteland');
   const out = [];
   for (const c of grid.cells.values()) {
-    if (!waste(c.x, c.z)) continue;
-    let full = true;
-    for (let dx = -1; dx <= 1 && full; dx++) for (let dz = -1; dz <= 1 && full; dz++) full = waste(c.x + dx, c.z + dz);
-    if (full) out.push([c.x, c.z]);
+    if (waste(c.x, c.z) && DIRS.every(([dx, dz]) => waste(c.x + dx, c.z + dz))) out.push([c.x, c.z]);
   }
   return out;
 }
 
 /**
- * End of season: each 3×3 block of Wasteland may turn its centre into a random bandit camp.
+ * End of season: each full cluster of 7 Wasteland may turn its centre into a random bandit camp.
  * Rechecks after every camp, so one big field doesn't spawn a pile of camps at once.
  * Returns [{ name, effect }] for the report.
  */
@@ -1734,7 +1799,7 @@ function settleTurn(e) {
   if (e.oilStolen)
     lines.push(`<span class="bad">${L(`Siphoners drained ${e.oilStolen} oil from your pipelines.`, `窃油者从你的输油管里抽走了 ${e.oilStolen} 石油。`)}</span>`);
   if (e.banditFood) lines.push(`<span class="bad">${L(`Scavengers stole ${e.banditFood} food.`, `拾荒者偷走了 ${e.banditFood} 食物。`)}</span>`);
-  // A full 3×3 block of Wasteland draws a new bandit camp.
+  // A full cluster of 7 Wasteland draws a new bandit camp.
   for (const camp of spawnBandits()) {
     queueScene('bandit', camp);
     lines.push(`<span class="bad">${L(`Bandits settled the wasteland: ${camp.name} (${camp.effect}).`, `匪徒占据了荒地：${camp.name}（${camp.effect}）。`)}</span>`);
@@ -2527,11 +2592,12 @@ hand.onDrop = (x, y) => {
   tryPlace();
 };
 
+const warped = new THREE.Vector2();
 function hoveredCell() {
   if (!pointerInside) return null;
-  raycaster.setFromCamera(pointer, camera);
+  raycaster.setFromCamera(crtPass.warp(warped.copy(pointer)), camera); // the CRT's bend: what shows under the pointer
   if (!intersectGround(raycaster.ray, hit)) return null; // on the bent (small-planet) ground
-  return [Math.round(hit.x), Math.round(hit.z)];
+  return worldToHex(hit.x, hit.z);
 }
 
 // ---------- mystery sites ----------
@@ -2675,8 +2741,9 @@ function showPlacementCost(piece, cells) {
   if (workers) rows.push(`<div class="row neg"><b>-${workers}</b>${ICONS.manpower}</div>`);
   if (food) rows.push(`<div class="row neg"><b>-${food}</b>${ICONS.food}<span>${L('/ season', '/ 季')}</span></div>`);
   if (!rows.length) return;
-  const cx = cells.reduce((s, c) => s + c[0], 0) / cells.length;
-  const cz = cells.reduce((s, c) => s + c[1], 0) / cells.length;
+  const world = cells.map(([x, z]) => hexToWorld(x, z));
+  const cx = world.reduce((s, w) => s + w.x, 0) / cells.length;
+  const cz = world.reduce((s, w) => s + w.z, 0) / cells.length;
   costV.set(cx, 0.9, cz).project(camera);
   const el = document.createElement('div');
   el.className = 'cost-pop';
@@ -3246,8 +3313,10 @@ function frame(now) {
   perf.gpuBegin();
   updateCurve(camera, rig.target); // the small-planet bend, around where the camera looks
   fog.render(camera); // offscreen fog pass (High/Medium/Low on high-DPI screens)
+  crtPass.begin(); // CRT: the scene goes into its off-screen image
   renderer.render(scene, camera);
   renderGhost();
+  crtPass.end(time); // CRT: the tube's picture onto the screen
   perf.gpuEnd();
   perf.end('render (cpu)');
   perf.begin('payout');
@@ -3414,4 +3483,4 @@ factory.extrasReady.then(async (extras) => {
 if (RELEASE) for (const id of ['btnDebug', 'debug', 'libraryLink']) document.getElementById(id)?.remove();
 
 // Handy for debugging in the console (dev builds only).
-if (!RELEASE) window.tileIsland = { tutorial, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };
+if (!RELEASE) window.tileIsland = { tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };

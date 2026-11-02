@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import { SHAPES, pieceOffsets } from './pieces.js';
+import { SHAPES, pieceOffsets, ROTATIONS } from './pieces.js';
+import { DIRS, hexToWorld, hexDistance } from './grid.js';
+import { hexPlane, hexOutline } from './hexGeometry.js';
 import { L, onLangChange } from './i18n.js';
 import { NEON } from './neonGlow.js';
 
@@ -23,7 +25,6 @@ export const tutorialDone = () => localStorage.getItem(TUTORIAL_KEY) === '1';
 export const markTutorialDone = () => localStorage.setItem(TUTORIAL_KEY, '1');
 
 const TRIBUTE = '#top .bar, #quotaCount';
-const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const css = (hex) => `#${hex.toString(16).padStart(6, '0')}`;
 const BOOST = { farm: css(NEON.farm), station: css(NEON.station) };
 
@@ -120,9 +121,9 @@ export class Tutorial {
     this.marks = new THREE.Group();
     this.marks.visible = false;
     scene.add(this.marks);
-    this.markGeo = new THREE.PlaneGeometry(0.92, 0.92).rotateX(-Math.PI / 2);
+    this.markGeo = hexPlane(0.92);
     this.markMat = new THREE.MeshBasicMaterial({ color: 0xe8bf68, transparent: true, opacity: 0.5, depthWrite: false });
-    this.edgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(0.98, 0.02, 0.98));
+    this.edgeGeo = hexOutline(0.98);
     this.edgeMat = new THREE.LineBasicMaterial({ color: 0xffe2a0, transparent: true });
     this.marksKey = '';
     this.v = new THREE.Vector3();
@@ -241,7 +242,8 @@ export class Tutorial {
       }
       if (this.site) {
         this.api.mysteries.spare(...this.site);
-        this.api.focus(this.site[0] / 2, this.site[1] / 2); // between the Capital and the site
+        const w = hexToWorld(...this.site);
+        this.api.focus(w.x / 2, w.z / 2); // between the Capital and the site
       }
     }
     if (s.focus) this.api.focus(...s.focus);
@@ -252,7 +254,7 @@ export class Tutorial {
     const { grid, mysteries } = this.api;
     if (grid.expansionMode) return null;
     let best = null;
-    for (const s of mysteries.sites.values()) if (!best || Math.abs(s.x) + Math.abs(s.z) < Math.abs(best[0]) + Math.abs(best[1])) best = [s.x, s.z];
+    for (const s of mysteries.sites.values()) if (!best || hexDistance(s.x, s.z) < hexDistance(...best)) best = [s.x, s.z];
     return best;
   }
 
@@ -267,14 +269,14 @@ export class Tutorial {
     let best = null;
     for (const piece of this.hand.cards) {
       if (!piece.terrain.startsWith('wasteland') || !SHAPES[piece.shape]) continue;
-      for (let rot = 0; rot < 4; rot++) {
+      for (let rot = 0; rot < ROTATIONS; rot++) {
         const offsets = pieceOffsets({ shape: piece.shape, rot });
         for (let ax = sx - 5; ax <= sx + 5; ax++) {
           for (let az = sz - 5; az <= sz + 5; az++) {
             const cells = offsets.map(([ox, oz]) => [ax + ox, az + oz]);
             if (!cells.every(([x, z]) => free(x, z)) || !cells.some(([x, z]) => grid.touchesIsland(x, z))) continue;
-            const reach = Math.min(...cells.map(([x, z]) => Math.abs(x - sx) + Math.abs(z - sz)));
-            const sides = cells.filter(([x, z]) => Math.abs(x) + Math.abs(z) === 1).length;
+            const reach = Math.min(...cells.map(([x, z]) => hexDistance(x, z, sx, sz)));
+            const sides = cells.filter(([x, z]) => hexDistance(x, z) === 1).length;
             const score = reach * 10 + (rot === (piece.rot ?? 0) ? 0 : 1) + sides * 3;
             if (!best || score < best.score) best = { score, piece, rot, anchor: [ax, az], cells };
           }
@@ -300,7 +302,7 @@ export class Tutorial {
         const x = c.x + dx;
         const z = c.z + dz;
         if (grid.has(x, z) || !grid.allowed(x, z) || mysteries.has(x, z)) continue;
-        const d = Math.abs(x) + Math.abs(z) + (DIRS.some(([a, b]) => a === x && b === z) ? -5 : 0); // keep the Capital's sides free
+        const d = hexDistance(x, z) + (DIRS.some(([a, b]) => a === x && b === z) ? -5 : 0); // keep the Capital's sides free
         if (d > bestD || (d === bestD && x + z < best[0] + best[1])) {
           best = [x, z];
           bestD = d;
@@ -327,8 +329,9 @@ export class Tutorial {
   }
 
   #cellsCentre(cells, y = 0.05) {
-    const cx = cells.reduce((a, c) => a + c[0], 0) / cells.length;
-    const cz = cells.reduce((a, c) => a + c[1], 0) / cells.length;
+    const world = cells.map(([x, z]) => hexToWorld(x, z));
+    const cx = world.reduce((a, w) => a + w.x, 0) / cells.length;
+    const cz = world.reduce((a, w) => a + w.z, 0) / cells.length;
     return this.#screen(cx, y, cz);
   }
 
@@ -428,11 +431,12 @@ export class Tutorial {
       this.marksKey = key;
       this.marks.clear();
       for (const [x, z] of view.marks ?? []) {
+        const w = hexToWorld(x, z);
         const plate = new THREE.Mesh(this.markGeo, this.markMat);
-        plate.position.set(x, 0.03, z);
+        plate.position.set(w.x, 0.03, w.z);
         plate.renderOrder = 5;
         const edge = new THREE.LineSegments(this.edgeGeo, this.edgeMat);
-        edge.position.set(x, 0.04, z);
+        edge.position.set(w.x, 0.04, w.z);
         this.marks.add(plate, edge);
       }
     }
@@ -500,7 +504,8 @@ export class Tutorial {
     // Rotate icons over a cell
     this.rotateEl.classList.toggle('hidden', !view.rotate);
     if (view.rotate) {
-      const [x, y] = this.#screen(view.rotate[0], 0.6, view.rotate[1]);
+      const r = hexToWorld(view.rotate[0], view.rotate[1]);
+      const [x, y] = this.#screen(r.x, 0.6, r.z);
       const ro = this.rotateEl;
       const tf = `translate(${Math.round(x - ro.offsetWidth / 2)}px, ${Math.round(y - ro.offsetHeight - 24)}px)`;
       if (ro._tf !== tf) ro.style.transform = ro._tf = tf;
