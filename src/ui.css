@@ -2631,6 +2631,7 @@ body.rival-view #btnMissile,
 body.rival-view #btnReplayTutorial {
   visibility: hidden;
   pointer-events: none;
+}
 
 /* ---------- the CRT monitor the world is seen through (crt.js) ---------- */
 /*
@@ -2773,3 +2774,4 @@ body.crt-shader .crt-vignette {
   .crt-vignette {
     animation: none;
   }
+}
