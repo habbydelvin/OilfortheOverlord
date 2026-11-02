@@ -37,7 +37,7 @@ import { Perf } from './perfOverlay.js';
 import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig, applyGfx } from './graphics.js';
 import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
 import { MissileStrike, MISSILE_PARAMS, MISSILE_DEFAULTS, loadMissileConfig, saveMissileConfig, clearMissileConfig } from './missiles.js';
-import { Tutorial, TUTORIAL_QUOTA, TUTORIAL_STRIKES, TUTORIAL_SITE, TUTORIAL_KEY, tutorialDone, markTutorialDone } from './tutorial.js';
+import { Tutorial, TUTORIAL_KEY, HINTS_KEY, tutorialDone, markTutorialDone } from './tutorial.js';
 import { L, both, isZh, toggleLang, onLangChange, applyStatic, textOf, retranslate } from './i18n.js';
 
 applyStatic(); // the page's own text in the saved language
@@ -59,7 +59,6 @@ onMusicVolume((volume) => {
 });
 const perf = new Perf(renderer); // '-' toggles the overlay
 const rig = new CameraRig(camera, renderer.domElement);
-const START_DISTANCE = rig.goalDistance;
 const grid = new Grid();
 const factory = new TileFactory();
 const tiles = new THREE.Group();
@@ -130,8 +129,9 @@ const debug = RELEASE
   onPerf: () => perf.setOpen(!perf.enabled),
   onResetTutorial: () => {
     localStorage.removeItem(TUTORIAL_KEY); // next reload starts with the tutorial again
+    localStorage.removeItem(HINTS_KEY);
     resetIsland({ tutorial: true });
-    return 'Tutorial reset: Year 0 started';
+    return 'Tutorial reset: guided first Spring started';
   },
   onMissiles: () => (tutorialBlocks() ? 'Not during the tutorial' : previewMissileStrike()),
   onShake: () => {
@@ -219,26 +219,21 @@ function freshTargetState() {
   return { quotaBase: FIRST_QUOTA, target: null, lowStreak: 0, freeRerolls: 0, cardPicks: 0, forceFortune: false };
 }
 
-// ---------- Year 0 tutorial (tutorial.js) ----------
+// ---------- Tutorial (tutorial.js): the guided first Spring, then one-time hints ----------
 const tutorial = new Tutorial({
   root: document.getElementById('coach'),
   scene,
   camera,
   hand,
   api: {
-    deal: (list) => {
-      hand.dealScripted(list);
-      updateHUD();
-    },
-    /** This season if it ended now: oil made, and the stockpile it would leave. */
-    forecast: () => {
-      const e = economyNow();
-      return { oil: e.oil, after: turn.stockpile + e.oil, quota: turn.quota };
-    },
-    setFreeRerolls: (n) => {
-      turn.freeRerolls = n;
-      updateHUD();
-    },
+    grid,
+    placement,
+    mysteries,
+    /** This season if it ended now (food and oil), and the food in the stores. */
+    economy: () => economyNow(),
+    stores: () => turn.food,
+    /** The board cell under the pointer, or null. */
+    cursor: () => hoveredCell(),
     focus: (x, z) => rig.focus(x, z),
     skip: () => skipTutorial(),
   },
@@ -683,7 +678,7 @@ function nearestBuilding(x, z) {
 
 /**
  * A "?" site was an Unexploded Missile: it launches from the site into `target` (default: the nearest
- * building). The site stays empty ground. Notifies the tutorial once it has landed.
+ * building). The site stays empty ground.
  */
 function unexplodedMissile(site, target = nearestBuilding(site.x, site.z)) {
   dust.burst(site.x, site.z, 1.4);
@@ -703,9 +698,7 @@ function unexplodedMissile(site, target = nearestBuilding(site.x, site.z)) {
   eventOpen = true;
   hand.select(-1);
   toast(L('Uncovered an Unexploded Missile!', '发现一枚未爆导弹！'), 'bad', 2400);
-  groundStrike({ x: site.x, z: site.z }, target, (l) => L(`The unexploded missile destroyed your ${l}`, `未爆导弹摧毁了你的${l}`)).then((lost) => {
-    if (lost && tutorial.active) tutorial.notify('missile');
-  });
+  groundStrike({ x: site.x, z: site.z }, target, (l) => L(`The unexploded missile destroyed your ${l}`, `未爆导弹摧毁了你的${l}`));
 }
 
 /** Reveals: real tiles drop in; missiles launch. `delay(i)` staggers the drops. Returns the tiles found. */
@@ -1035,8 +1028,8 @@ function updateHUD() {
   const quota = turn.quota;
   const left = yearLength() - 1 - turn.season;
   $('seasonLabel').textContent = L(
-    `${turn.round === 0 ? 'Year 0 (tutorial)' : `Year ${turn.round}`} · ${SEASONS[turn.season]} · Tribute ${left ? `in ${left} season${left === 1 ? '' : 's'}` : `due this ${SEASONS[turn.season]}`}`,
-    `${turn.round === 0 ? '第 0 年（教程）' : `第 ${turn.round} 年`} · ${SEASONS[turn.season]} · ${left ? `${left} 季后缴纳贡品` : '本季缴纳贡品'}`,
+    `Year ${turn.round} · ${SEASONS[turn.season]} · Tribute ${left ? `in ${left} season${left === 1 ? '' : 's'}` : `due this ${SEASONS[turn.season]}`}`,
+    `第 ${turn.round} 年 · ${SEASONS[turn.season]} · ${left ? `${left} 季后缴纳贡品` : '本季缴纳贡品'}`,
   );
   const ev = turn.event;
   $('eventLabel').classList.toggle('hidden', !ev);
@@ -1621,9 +1614,7 @@ function showGameOver() {
 
 function settleTurn(e) {
   // The year ends after Winter, or early as soon as this season's oil meets the quota.
-  // The tutorial year always runs to Winter (it never meets the quota early anyway).
-  const tut = tutorial.active;
-  let yearEnds = turn.season >= yearLength() - 1 || (!tut && turn.stockpile + e.oil >= turn.quota);
+  let yearEnds = turn.season >= yearLength() - 1 || turn.stockpile + e.oil >= turn.quota;
   // Text below is built in the current language when shown (functions), so the toast follows a language switch.
   const season = turn.season;
   const round = turn.round;
@@ -1654,8 +1645,8 @@ function settleTurn(e) {
   if (e.oilStolen)
     lines.push(`<span class="bad">${L(`Siphoners drained ${e.oilStolen} oil from your pipelines.`, `窃油者从你的输油管里抽走了 ${e.oilStolen} 石油。`)}</span>`);
   if (e.banditFood) lines.push(`<span class="bad">${L(`Scavengers stole ${e.banditFood} food.`, `拾荒者偷走了 ${e.banditFood} 食物。`)}</span>`);
-  // A full 3×3 block of Wasteland draws a new bandit camp. (Not in the scripted tutorial.)
-  for (const camp of tut ? [] : spawnBandits()) {
+  // A full 3×3 block of Wasteland draws a new bandit camp.
+  for (const camp of spawnBandits()) {
     queueScene('bandit', camp);
     lines.push(`<span class="bad">${L(`Bandits settled the wasteland: ${camp.name} (${camp.effect}).`, `匪徒占据了荒地：${camp.name}（${camp.effect}）。`)}</span>`);
     msg.push(() => L(` · Bandits: ${TERRAINS[camp.kind].name}!`, ` · 匪患：${TERRAINS[camp.kind].name}！`));
@@ -1664,11 +1655,11 @@ function settleTurn(e) {
 
   // Rebels: a season with a food surplus drives one camp off; a season that ends with
   // no food at all (net ≤ 0 and empty stores) brings a new camp, in place for the next season.
-  if (!tut && Math.round(e.foodBalance) > 0 && departRaider()) {
+  if (Math.round(e.foodBalance) > 0 && departRaider()) {
     lines.push(`<span class="good">${L('Your people are fed: a rebel camp packed up and left.', '你的子民吃饱了：一座叛军营地拔营离去。')}</span>`);
     msg.push(L(' · Raiders left', ' · 掠夺者已离去'));
   }
-  if (!tut && rebelsRise(e)) {
+  if (rebelsRise(e)) {
     const raid = spawnRaider();
     if (raid) {
       queueScene('rebel', spawnRaider.last);
@@ -1696,21 +1687,6 @@ function settleTurn(e) {
   finishSettle();
 
   function finishSettle() {
-  // Year 0: next scripted season, or (after Winter) the Overlord's judgement. No quota growth, shop or strikes flow.
-  if (tut) {
-    $('report').innerHTML = lines.join('<br />');
-    if (!yearEnds) {
-      turn.season++;
-      toast(() => msg.map(textOf).join(''), kind, 3200);
-      dealNewHand();
-      return;
-    }
-    const quota = turn.quota;
-    const delivered = turn.stockpile;
-    turn.stockpile = 0;
-    playPredecessorJudgement({ quota, delivered });
-    return;
-  }
   // Tribute at the end of the year (after Winter, or early once the quota is met).
   let failure = null; // set when the tribute is missed: the Overlord comes to speak instead of the shop
   if (yearEnds) {
@@ -2184,13 +2160,6 @@ function applyYearEvent(key, ev, choiceIdx) {
 }
 
 function dealNewHand() {
-  // The tutorial deals its own scripted hand for the new season.
-  if (tutorial.active) {
-    tutorial.notify('season');
-    updateHUD();
-    pop($('oilStock'));
-    return;
-  }
   // Dust Storm: extra Wasteland dealt on top of the normal hand.
   const waste = turn.event?.mods?.extraWaste ?? 0;
   hand.deal(handSize() + waste, [...turn.pinned, ...Array(waste).fill('wasteland')]);
@@ -2575,7 +2544,7 @@ function tryPlace() {
   if (!result.ok) {
     placement.reject();
     buzz();
-    toast(result.reason, 'bad', 1600, false);
+    if (result.reason) toast(result.reason, 'bad', 1600, false); // the tutorial refuses without words
     return;
   }
   if (ACTIONS[piece.terrain]) {
@@ -2600,7 +2569,7 @@ function tryPlace() {
   updateHUD();
   if (economyNow().idle > idleBefore)
     toast(L('No free workers: this building sits idle until you add housing', '没有空闲人力：这座建筑将一直闲置，直到你建造更多住房'), 'bad', 2400);
-  tutorial.notify('placed');
+  tutorial.notify('placed', cells);
 }
 
 /**
@@ -2730,15 +2699,8 @@ window.addEventListener('keydown', (e) => {
     if (k === 'enter') endTurn();
     return; // no placing / rotating / nuking mid-payout
   }
-  if (tutorial.active) {
-    // On script: Enter presses the advisor's Next; the debug shortcuts are off.
-    if (k === 'enter' && tutorial.waitingNext) {
-      e.preventDefault();
-      if (!e.repeat) tutorial.notify('next');
-      return;
-    }
-    if ('nmpvtx'.includes(k) && k.length === 1) return tutorial.nudge();
-  }
+  // The guided Spring stays on track: the debug shortcuts are off.
+  if (tutorial.active && 'nmpvtx'.includes(k) && k.length === 1) return tutorial.nudge();
   if (k >= '1' && k <= '9' && Number(k) <= hand.cards.length) {
     const i = Number(k) - 1;
     hand.select(hand.selected === i ? -1 : i);
@@ -2765,16 +2727,7 @@ window.addEventListener('keydown', (e) => {
 $('btnReroll').addEventListener('click', (e) => {
   e.currentTarget.blur();
   if (hand.isEmpty || payout.active || turn.over || shopOpen || eventOpen) return;
-  if (tutorial.active) {
-    if (!tutorial.allows('reroll')) return tutorial.nudge();
-    // Scripted: the free reroll always comes up with the Oil Station the Winter step needs.
-    turn.freeRerolls = 0;
-    shuffle();
-    hand.dealScripted([{ terrain: 'station' }, { terrain: 'farm' }]);
-    updateHUD();
-    tutorial.notify('reroll');
-    return;
-  }
+  if (tutorial.active) return tutorial.nudge(); // the guided Spring plays the opening hand as dealt
   if (turn.freeRerolls > 0) {
     // Target reward: free, and doesn't raise the price of the next paid reroll.
     turn.freeRerolls--;
@@ -2828,18 +2781,15 @@ $('btnTutorial').addEventListener('click', (e) => {
 
 // ---------- lifecycle ----------
 /**
- * A new run. opts.tutorial: Year 0 (the scripted tutorial) instead of Year 1. opts.intro = false: skip the
- * Year 1 opening scene (the caller plays it later). opts.keepFade: leave the black fade up (tutorial → Year 1).
- * (Also used directly as a click handler, so opts may be an Event: only these exact flags count.)
+ * A new run. opts.tutorial: guide the first Spring (the tutorial; also on a first visit). opts.intro = false: skip
+ * the Year 1 opening scene. (Also used directly as a click handler, so opts may be an Event: only these exact flags count.)
  */
 function resetIsland(opts) {
-  const tut = opts?.tutorial === true;
+  const tut = opts?.tutorial === true || !tutorialDone();
   runId++; // stops a missile strike / failure speech still running
   introRun++; // and an opening scene
   tutorial.stop();
-  if (opts?.keepFade !== true) $('fade').classList.remove('on');
-  // The tutorial always uses free placement; a normal run goes back to the saved mode.
-  grid.expansionMode = !tut && localStorage.getItem(MODE_KEY) === 'expansion';
+  grid.expansionMode = localStorage.getItem(MODE_KEY) === 'expansion';
   missiles.clear();
   striking = false;
   rig.release();
@@ -2890,21 +2840,6 @@ function resetIsland(opts) {
   $('gameover').classList.add('hidden');
   $('report').textContent = L('No seasons played yet.', '尚未度过任何季节。');
   addTile(0, 0, SEED_TERRAIN, 0, true); // the game opens with the Capital already standing
-  if (tut) {
-    // Year 0: the old Overseer's last year. Two strikes already, one hand-placed "?" (an unexploded missile), scripted hands.
-    Object.assign(turn, { round: 0, quota: TUTORIAL_QUOTA, quotaBase: TUTORIAL_QUOTA, strikes: TUTORIAL_STRIKES });
-    shownStrikes = TUTORIAL_STRIKES; // already filled: no flare
-    mysteries.clear();
-    const { x, z, terrain, target } = TUTORIAL_SITE;
-    mysteries.placeScripted(x, z, terrain, { target });
-    frontier.rebuild(grid);
-    tutorial.start();
-    hand.dealScripted([{ terrain: 'farm' }, { terrain: 'station' }]);
-    rig.focus(0, 0);
-    updateHUD();
-    playTutorialIntro();
-    return;
-  }
   mysteries.reset();
   frontier.rebuild(grid);
   // Opening hand: always one of each basic building plus two Wasteland, in random order.
@@ -2913,154 +2848,15 @@ function resetIsland(opts) {
   hand.render();
   rig.focus(0, 0);
   updateHUD();
+  if (tut) tutorial.start(); // guides the first Spring once the opening scene is over
   if (opts?.intro !== false) playIntro();
+  else tutorial.begin();
 }
 
-/** Skip tutorial: straight to a normal Year 1, with its opening scene. */
+/** Skip tutorial: the guiding stops and Spring carries on as a normal season. */
 function skipTutorial() {
   markTutorialDone();
-  resetIsland();
-}
-
-// ---------- Year 0: the tutorial's scenes ----------
-/** The Overlord gives the old Overseer his last warning, then the advisor takes over. */
-async function playTutorialIntro() {
-  const run = runId;
-  const live = () => run === runId;
-  const overlord = () => 'The Overlord'; // speaker key (portrait); dialogue.js shows the name
-  const say = async (text) => live() && dialogue.say(overlord(), text);
-  eventOpen = true;
-  hand.select(-1);
-  dialogue.open({
-    kind: 'pressure',
-    kindLabel: L('Year 0 · Tutorial', '第 0 年 · 教程'),
-    title: L('The Last Warning', '最后通牒'),
-    effect: L(
-      `Two tributes missed · ${TUTORIAL_QUOTA} barrels due after Winter · one more miss and the city falls`,
-      `已两次失职 · 冬季结束后须上缴 ${TUTORIAL_QUOTA} 桶 · 再失职一次，城市就会沦陷`,
-    ),
-  });
-  await say(L('Overseer. Two tributes missed. Two.', '总督。两次未缴贡品。两次。'));
-  await say(
-    L(
-      'My legions march against the technobarbarians of the Wastelands, and my tanks are drinking sand. Because of you.',
-      '我的军团正在荒原上征讨技术蛮族，而我的坦克却在喝沙子。都是因为你。',
-    ),
-  );
-  if (!live()) return;
-  const i = await dialogue.ask(
-    overlord(),
-    L(
-      `This is your last year. ${TUTORIAL_QUOTA} barrels when Winter ends, or I find an Overseer who can count.`,
-      `这是你的最后一年。冬季结束时交出 ${TUTORIAL_QUOTA} 桶，否则我就去找一个会数数的总督。`,
-    ),
-    [
-      { text: L('You will have them, Overlord.', '您会如数得到的，霸主。') },
-      { text: L('The wells are drying up...', '油井正在枯竭……') },
-      { text: L('I need more time.', '我需要更多时间。') },
-    ],
-  );
-  const retorts = [
-    L('I have heard that before. Twice.', '这话我听过。两次。'),
-    L(
-      'Then build more of them. Your advisor will show you how, since you seem to have forgotten.',
-      '那就多建几座。既然你似乎已经忘了怎么做，就让你的顾问教教你。',
-    ),
-    L('Time is the one thing you have run out of.', '时间，恰恰是你已经用光的东西。'),
-  ];
-  await say(retorts[i]);
-  await say(L('Do not make me come back early.', '别逼我提前回来。'));
-  if (!live()) return;
-  await dialogue.leave();
-  if (!live()) return;
-  eventOpen = false;
-  tutorial.begin();
-}
-
-/**
- * Year 0 ends short (the unexploded missile saw to that): the third strike. The Overlord relieves his Overseer, every
- * tile but the Capital burns, and after a fade to black a new Overseer (the player) starts Year 1.
- */
-async function playPredecessorJudgement({ quota, delivered }) {
-  const run = runId;
-  const live = () => run === runId;
-  const overlord = () => 'The Overlord'; // speaker key (portrait); dialogue.js shows the name
-  const say = async (text) => live() && dialogue.say(overlord(), text);
-  eventOpen = true;
-  hand.select(-1);
-  turn.strikes = MAX_STRIKES;
-  updateHUD();
-  dialogue.allowSkip(true);
-  dialogue.open({
-    kind: 'disaster',
-    kindLabel: L(`Tribute missed · strike ${MAX_STRIKES} of ${MAX_STRIKES}`, `贡品未缴 · 失职 ${MAX_STRIKES}/${MAX_STRIKES}`),
-    title: L("The Overlord's Judgement", '霸主的审判'),
-    effect: L(
-      `Short by ${quota - delivered} barrels · the Overseer is relieved of duty`,
-      `短缺 ${quota - delivered} 桶 · 总督被解除职务`,
-    ),
-  });
-  await say(L(`${delivered} barrels. I asked for ${quota}.`, `${delivered} 桶。我要的是 ${quota} 桶。`));
-  await say(
-    L(
-      'An old missile? An accident? Three years, Overseer. Three years of accidents.',
-      '一枚旧导弹？一场意外？三年了，总督。三年的意外。',
-    ),
-  );
-  if (!live()) return;
-  const replies = [
-    [
-      L('The missile was not my fault!', '那枚导弹不是我的错！'),
-      L('Nothing ever is. That is precisely the problem.', '从来都不是你的错。问题恰恰就在这里。'),
-    ],
-    [
-      L('Give me one more year.', '再给我一年。'),
-      L('I gave you three. I am not a generous man; I was a patient one.', '我给了你三年。我从不慷慨，只是曾经有耐心。'),
-    ],
-    [L('...', '……'), L('Nothing to say? For once, you have pleased me.', '无话可说？难得你让我满意了一次。')],
-  ];
-  const i = await dialogue.ask(overlord(), L('Anything to say for yourself?', '你还有什么要为自己辩解的吗？'), replies.map(([text]) => ({ text })));
-  await say(replies[i][1]);
-  await say(
-    L(
-      'The Hive City stays. It is mine, after all. Everything else you built... goes with you.',
-      '蜂巢城留下。毕竟它是我的。你建造的其他一切……都随你一起消失。',
-    ),
-  );
-  if (!live()) return;
-  await dialogue.leave();
-  if (!live()) return;
-  const targets = [...grid.cells.values()].filter((c) => c.terrain !== 'capital').map(({ x, z }) => ({ x, z }));
-  await playMissileStrike(targets, { restoreCamera: false });
-  if (!live()) return;
-  await wait(0.6);
-  if (!live()) return;
-  await fadeToYearOne();
-}
-
-/** Fade to black, start a normal Year 1 under it, fade back in on the Overlord meeting his new Overseer. */
-async function fadeToYearOne() {
-  markTutorialDone();
-  const fade = $('fade');
-  fade.querySelector('.fade-text').innerHTML = L(
-    'Some weeks later<br /><small>A new Overseer arrives at the Hive City</small>',
-    '数周之后<br /><small>一位新总督抵达蜂巢城</small>',
-  );
-  fade.classList.add('on');
-  const run = runId;
-  await wait(3.2);
-  if (run !== runId) return;
-  resetIsland({ intro: false, keepFade: true });
-  // Under the black: the camera snaps back from the strike's wide shot to the normal view.
-  rig.goalDistance = rig.distance = START_DISTANCE;
-  rig.target.copy(rig.goal);
-  const next = runId;
-  await wait(0.6);
-  if (next !== runId) return;
-  fade.classList.remove('on');
-  await wait(0.9);
-  if (next !== runId) return;
-  playIntro();
+  tutorial.stop();
 }
 
 /**
@@ -3260,7 +3056,9 @@ async function playIntro() {
   await dialogue.leave();
   if (run !== introRun) return;
   eventOpen = false;
-  toast(L(`First tribute: ${turn.quota} barrels, due after Winter`, `首次贡品：${turn.quota} 桶，冬季结束后上缴`), 'bad', 3200);
+  // A first game: the tutorial shows the tribute (wordless) and guides the Spring instead of this toast.
+  if (tutorial.active) tutorial.begin();
+  else toast(L(`First tribute: ${turn.quota} barrels, due after Winter`, `首次贡品：${turn.quota} 桶，冬季结束后上缴`), 'bad', 3200);
 }
 
 /**
@@ -3459,7 +3257,7 @@ factory.ready.then(() => {
     startMusic();
     if (started || !sound) return sound;
     started = true;
-    resetIsland({ tutorial: !tutorialDone() }); // first visit: Year 0, the tutorial
+    resetIsland(); // a first visit gets the guided Spring
     last = performance.now();
     requestAnimationFrame(frame);
     $('loading').classList.add('done');

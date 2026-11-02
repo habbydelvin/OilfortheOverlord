@@ -164,20 +164,6 @@ export class Hand {
     dealSfx();
   }
 
-  /**
-   * Deal an exact hand (the tutorial): [{ terrain, shape = 'mono', rot = 0 }]. No randomness at all,
-   * so every player sees the same cards, shapes and rotations.
-   */
-  dealScripted(list) {
-    this.cards = list.map(({ terrain, shape = 'mono', rot = 0 }) => ({ ...pieceOf(terrain), shape, rot }));
-    this.fresh = new Set(this.cards.map((_, i) => i));
-    this.selected = -1;
-    this.leaveAs = 'discard';
-    this.render();
-    this.onChange?.(null);
-    dealSfx();
-  }
-
   /** Empty the hand (the shop opens with an empty hand that fills as cards are bought). */
   clear() {
     this.cards = [];

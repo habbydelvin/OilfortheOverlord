@@ -53,7 +53,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
           <button data-act="skipMet" title="Jump to the tribute and deliver exactly the quota">Skip year <small>(meet)</small></button>
           <button data-act="skipMiss" title="Jump to the tribute and deliver nothing (a strike)">Skip year <small>(miss)</small></button>
           <button data-act="missiles" title="Preview the Overlord's missile strike (settings under Missiles · preview) (M)">Missiles <small>(M)</small></button>
-          <button data-act="resetTutorial" title="Forget that the tutorial was seen, and start Year 0 now">Reset tutorial</button>
+          <button data-act="resetTutorial" title="Forget that the tutorial and hints were seen, and start a new run with the guided Spring">Reset tutorial</button>
           <button data-act="shake" title="Play one missile-impact camera shake (settings under Missile camera shake)">Test shake</button>
           <button data-act="perf" title="Performance overlay: fps, ms per system, GPU time, A/B toggles (-)">Perf</button>
         </div>

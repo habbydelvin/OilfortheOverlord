@@ -1949,8 +1949,18 @@ body.striking #mapIcons {
   background: rgba(0, 0, 0, 0.45);
   animation: none;
 }
+/* Something going wrong (food running out, the tribute falling short): the spotlight pulses red. */
+.coach-ring.alarm {
+  border-color: #ff5a3c;
+  animation: coach-alarm 0.9s ease-in-out infinite;
+}
+.coach-ring.nudge {
+  animation: coach-nudge 0.35s ease;
+}
 .coach-ring.hidden,
-.coach-bubble.hidden {
+.coach-hand.hidden,
+.coach-rotate.hidden,
+.coach-skip.hidden {
   display: none;
 }
 @keyframes coach-pulse {
@@ -1958,33 +1968,10 @@ body.striking #mapIcons {
     border-color: #fff1c8;
   }
 }
-
-.coach-bubble {
-  position: fixed;
-  left: 0;
-  top: 0;
-  width: 330px;
-  padding: 12px 16px 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(232, 191, 104, 0.55);
-  background: rgba(20, 25, 27, 0.96);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--ink);
-  pointer-events: auto;
-  user-select: none;
-}
-.coach-bubble.enter {
-  animation: coach-in 0.25s ease-out;
-}
-.coach-bubble.nudge {
-  animation: coach-nudge 0.35s ease;
-}
-@keyframes coach-in {
-  from {
-    opacity: 0;
-    scale: 0.94;
+@keyframes coach-alarm {
+  50% {
+    border-color: #ffd0c4;
+    filter: drop-shadow(0 0 10px rgba(255, 70, 40, 0.9));
   }
 }
 @keyframes coach-nudge {
@@ -1997,94 +1984,153 @@ body.striking #mapIcons {
     translate: 7px 0;
   }
 }
-.coach-who {
-  margin-bottom: 4px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--gold);
+
+/* The ghost hand: a glove that drags cards onto their cells and taps buttons (tutorial.js moves it). */
+.coach-hand {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 54px;
+  transform-origin: 18px 4px;
+  filter: drop-shadow(0 6px 8px rgba(0, 0, 0, 0.55));
+  will-change: transform, opacity;
 }
-.coach-text b {
-  color: #ffe2a0;
+.coach-hand svg {
+  position: relative;
+  display: block;
+  width: 54px;
 }
-.coach-hint {
-  margin-top: 8px;
-  padding: 6px 8px;
-  border-radius: 4px;
-  background: rgba(224, 86, 63, 0.16);
-  font-size: 13px;
+.coach-hand.nudge svg {
+  animation: coach-nudge 0.35s ease;
 }
-.coach-foot {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
+/* The card it carries: a small see-through copy of the card's picture under the fingertip. */
+.coach-hand-card {
+  position: absolute;
+  left: -34px;
+  top: -30px;
+  width: 76px;
+  height: 76px;
+  object-fit: contain;
+  opacity: 0;
+  filter: drop-shadow(0 0 10px rgba(255, 220, 150, 0.8));
 }
-.coach-step {
-  flex: 1;
-  text-align: center;
-  font-size: 11px;
-  color: var(--muted);
-}
-.coach-skip,
-.coach-next {
-  padding: 5px 10px;
-  border-radius: 4px;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.coach-skip {
-  border: 0;
-  background: none;
-  color: var(--muted);
-}
-.coach-skip:hover {
-  color: var(--ink);
-  text-decoration: underline;
-}
-.coach-next {
-  border: 1px solid var(--gold);
-  background: rgba(232, 191, 104, 0.18);
-  color: var(--gold);
-}
-.coach-next:hover {
-  background: rgba(232, 191, 104, 0.32);
-}
-.coach-next.hidden {
-  visibility: hidden;
+/* Ripple under the fingertip when it presses. */
+.coach-tap {
+  position: absolute;
+  left: -6px;
+  top: -12px;
+  width: 48px;
+  height: 48px;
+  margin: 0;
+  border: 3px solid #ffe2a0;
+  border-radius: 50%;
+  translate: -12px -6px;
+  opacity: 0;
+  box-shadow: 0 0 12px rgba(255, 220, 150, 0.8);
 }
 
-/* Fade to black between the tutorial and Year 1 (above everything, the loading screen aside). */
-#fade {
+/* Rotate: the R key, a turning arrow and the right mouse button, over the glowing cells. */
+.coach-rotate {
   position: fixed;
-  inset: 0;
-  z-index: 9000;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(16, 18, 20, 0.85);
+  box-shadow: 0 0 0 1px rgba(232, 191, 104, 0.6), 0 6px 16px rgba(0, 0, 0, 0.5);
+  color: #ffe2a0;
+  animation: coach-bob 1.2s ease-in-out infinite;
+}
+.coach-key {
   display: grid;
   place-items: center;
-  background: #000;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 1.4s ease;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #f4ead6, #c9bb9c);
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.35), 0 2px 0 #2a2218;
+  font: 800 16px var(--dp-serif, serif);
+  color: #241808;
+  animation: coach-press 1.2s ease-in-out infinite;
 }
-#fade.on {
-  opacity: 1;
+.coach-turn {
+  width: 26px;
+  height: 26px;
+  animation: coach-spin 1.2s ease-in-out infinite;
+}
+.coach-mouse {
+  width: 22px;
+  height: 31px;
+}
+.coach-mouse path:last-child {
+  animation: coach-blink 1.2s ease-in-out infinite;
+}
+@keyframes coach-bob {
+  50% {
+    translate: 0 -4px;
+  }
+}
+@keyframes coach-press {
+  40%,
+  55% {
+    translate: 0 2px;
+    box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35), 0 0 0 #2a2218;
+  }
+}
+@keyframes coach-spin {
+  from {
+    rotate: 0deg;
+  }
+  60%,
+  to {
+    rotate: 90deg;
+  }
+}
+@keyframes coach-blink {
+  50% {
+    opacity: 0.2;
+  }
+}
+
+/* "×2" rising over a boosted building, in its neon colour. */
+.coach-pop {
+  position: fixed;
+  left: 0;
+  top: 0;
+  font: 900 34px var(--dp-serif, serif);
+  color: #fff;
+  -webkit-text-stroke: 1.5px #120d08;
+  text-shadow: 0 0 8px var(--pop), 0 0 18px var(--pop), 0 0 30px var(--pop);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Skip: a round steel button with the skip icon, above the language and music buttons (same ring). */
+.coach-skip {
+  position: fixed;
+  left: 18px;
+  bottom: 118px;
+  width: 42px;
+  height: 42px;
+  padding: 11px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--dp-metal-dark, #1d2326);
+  box-shadow: inset 0 0 0 1px #0a0a0a, inset 0 0 0 3px #6a7074, inset 0 0 0 4px #151617, 0 2px 8px rgba(0, 0, 0, 0.6);
+  color: #e8bf68;
+  cursor: pointer;
   pointer-events: auto;
 }
-#fade .fade-text {
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  text-align: center;
-  color: var(--gold);
-  opacity: 0;
-  transition: opacity 1s ease 0.8s;
+.coach-skip:hover {
+  filter: brightness(1.25);
 }
-#fade.on .fade-text {
-  opacity: 1;
+.coach-skip svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 /* No subtitle (most seasons): the button label sits in the middle. */

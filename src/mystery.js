@@ -216,24 +216,9 @@ export class Mysteries {
     }
   }
 
-  /** Remove every site (the tutorial board starts empty). */
-  clear() {
-    this.sites.clear();
-    this.#dirty = true;
-  }
-
-  /**
-   * One hand-placed site with a fixed outcome (the tutorial). `extra` rides along on the reveal result,
-   * e.g. { silo: { x, z } }: the revealed ruins launch a missile at that cell.
-   */
-  placeScripted(x, z, terrain, extra = {}) {
-    this.#add(x, z);
-    Object.assign(this.sites.get(key(x, z)), { forced: terrain, extra });
-  }
-
-  /** What a site turns into: its fixed outcome if it has one, otherwise a roll. */
+  /** What a site turns into: a roll. */
   #outcome(s) {
-    return { x: s.x, z: s.z, terrain: s.forced ?? pickReveal(), ...(s.extra ?? {}) };
+    return { x: s.x, z: s.z, terrain: pickReveal() };
   }
 
   #add(x, z) {
