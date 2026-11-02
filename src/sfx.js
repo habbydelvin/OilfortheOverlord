@@ -249,6 +249,23 @@ export function coin() {
   });
 }
 
+/** A barrel of oil lands in the tribute gauge: a hollow knock, higher as the tribute fills (`level` 0..1). */
+export function barrel(level = 0) {
+  begin(0.16, (t, nodes) => {
+    noise(nodes, t, 0.04, 0.16, 1400, 0.6);
+    tone(nodes, t, 'triangle', 260 + level * 340, 0.12, 0.2, 200 + level * 260);
+  });
+}
+
+/** The season clock's bolt locks into the next season: a sharp click and a low iron thunk. */
+export function latch() {
+  begin(0.22, (t, nodes) => {
+    noise(nodes, t, 0.03, 0.22, 2600, 0.5);
+    tone(nodes, t + 0.01, 'square', 150, 0.1, 0.14, 90);
+    tone(nodes, t + 0.02, 'triangle', 420, 0.06, 0.08, 300);
+  });
+}
+
 /** Food gained. */
 export function food() {
   begin(0.14, (t, nodes) => tone(nodes, t, 'sine', 392, 0.12, 0.16, 330));

@@ -47,11 +47,14 @@ body {
 /* ---------- top progress ---------- */
 #top {
   position: absolute;
-  top: 26px;
+  top: 0; /* hangs from the top edge */
   left: 0;
   right: var(--panel-w);
   margin: 0 auto;
-  width: min(620px, 60vw);
+  width: fit-content;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 }
@@ -62,21 +65,112 @@ body {
   opacity: 0.9;
 }
 
+/* The tribute gauge: a row of barrels that fill with oil (barrelGauge.js). */
 #top .bar {
-  margin: 12px 0 10px;
-  height: 18px;
+  width: fit-content; /* the frame hugs the row of barrels */
+  margin: 0;
+  height: 38px;
+  padding: 4px 8px;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 4px;
   border-radius: 4px;
   background: #1d2430;
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
-  overflow: hidden;
+}
+/* One barrel: the wrapper takes the slosh and glow, its body is cut to a barrel's shape with the oil inside. */
+#top .qb {
+  position: relative;
+  flex: 0 0 22px;
+}
+/* Smaller screens: narrower barrels, so the top plate stays clear of the buttons on the left. */
+@media (max-width: 1360px) {
+  #top .qb {
+    flex-basis: 17px;
+  }
+}
+#top .qb-body {
+  position: absolute;
+  inset: 0;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='5 3 14 18'%3E%3Cpath d='M6 3h12c.6 2.9.9 5.9.9 9s-.3 6.1-.9 9H6c-.6-2.9-.9-5.9-.9-9s.3-6.1.9-9z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='5 3 14 18'%3E%3Cpath d='M6 3h12c.6 2.9.9 5.9.9 9s-.3 6.1-.9 9H6c-.6-2.9-.9-5.9-.9-9s.3-6.1.9-9z'/%3E%3C/svg%3E") center / contain no-repeat;
+  background: linear-gradient(90deg, #2e3336, #50585c 45%, #262a2d); /* empty: dull steel */
+}
+/* Hoops, over the oil too. */
+#top .qb-body::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(transparent 25%, rgba(0, 0, 0, 0.55) 25% 31%, transparent 31% 69%, rgba(0, 0, 0, 0.55) 69% 75%, transparent 75%);
+}
+/* Crude oil: near black with an oily sheen and a thin glint on its surface. */
+#top .qb-oil {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0;
+  background: linear-gradient(90deg, #070605, #2b241c 38%, #3d3226 46%, #14110d 60%, #050404);
+  box-shadow: inset 0 2px 0 rgba(255, 196, 120, 0.45);
+  transition: height 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.3);
+}
+/* Oil lands in it: a slosh, the oil flares bright and settles back to black; filling it up: a bigger pop and glow. */
+#top .qb.hit {
+  animation: qb-hit 0.5s ease-out;
+}
+#top .qb.hit .qb-oil {
+  animation: qb-glow 0.6s ease-out;
+}
+#top .qb.filled {
+  animation: qb-filled 0.7s ease-out;
+}
+#top .qb.filled .qb-oil {
+  animation: qb-glow 0.9s ease-out;
+}
+@keyframes qb-hit {
+  30% {
+    transform: scale(1.2) rotate(-5deg);
+    filter: drop-shadow(0 0 6px rgba(255, 170, 70, 0.9));
+  }
+  65% {
+    transform: scale(0.96) rotate(3deg);
+  }
+}
+@keyframes qb-filled {
+  25% {
+    transform: scale(1.35);
+    filter: drop-shadow(0 0 10px #ffcf70);
+  }
+}
+@keyframes qb-glow {
+  from {
+    background: linear-gradient(90deg, #8a5a14, #ffc05a 45%, #b8741c);
+  }
+}
+/* The quota is met: a faint ember glow around the row. */
+#top .bar.met .qb {
+  filter: drop-shadow(0 0 3px rgba(255, 150, 60, 0.45));
 }
 
-#top .fill {
+/* A barrel of oil flying from a tile into the gauge at payout. */
+.oil-flight {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 80;
+  width: 26px;
+  height: 26px;
+  color: #17130f; /* a black barrel of crude, lit by its glow */
+  pointer-events: none;
+  filter: drop-shadow(0 0 1px rgba(255, 200, 130, 0.9)) drop-shadow(0 0 6px rgba(255, 160, 60, 0.85)) drop-shadow(0 2px 2px rgba(0, 0, 0, 0.8));
+  will-change: transform, opacity;
+}
+.oil-flight svg.ico {
+  display: block;
+  width: 100%;
   height: 100%;
-  width: 0;
-  background: linear-gradient(180deg, #f3cf7f, var(--gold));
-  border-radius: 4px;
-  transition: width 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  color: inherit; /* not the cards' orange oil icon */
 }
 
 #top .count {
@@ -95,23 +189,19 @@ body {
   }
 }
 
-/* Quota met: the bar glows a hotter orange. */
-#top .fill.met {
-  background: linear-gradient(180deg, #ffd27a, #f0a030);
-  box-shadow: 0 0 12px rgba(255, 190, 80, 0.6);
-}
 
-/* Failed tributes: three circles under the quota bar, filled red per miss. */
+/* Failed tributes: three lamps stacked right of the Overlord's portrait, lit red per miss (his patience running out). */
 #top .strikes {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 5px;
   justify-content: center;
-  margin-top: 6px;
+  margin-left: -3px; /* tucked against the portrait frame */
 }
 
 #top .strikes i {
-  width: 14px;
-  height: 14px;
+  width: 11px;
+  height: 11px;
   border: 2px solid rgba(255, 143, 122, 0.7);
   border-radius: 50%;
   transition: background 0.3s, box-shadow 0.3s;

@@ -5,7 +5,7 @@ import './themeShine.js';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
-import { bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning } from './sfx.js';
+import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning } from './sfx.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, key as plotKey } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
@@ -17,6 +17,8 @@ import { Placement, GHOST_LAYER, PREVIEW_PARAMS, PREVIEW_DEFAULTS, loadPreviewCo
 import { Hand, pieceCost } from './hand.js';
 import { copySeam } from './seamlessGround.js';
 import { NeonTiles } from './neonGlow.js';
+import { BarrelGauge, OilFlights } from './barrelGauge.js';
+import { SeasonClock } from './seasonClock.js';
 import { BoostHints } from './boostHints.js';
 import { setupLegend } from './legend.js';
 import { Mysteries } from './mystery.js';
@@ -198,6 +200,14 @@ const hand = new Hand(document.getElementById('hand'), HAND_SIZE, (piece) => pla
 hand.perf = perf;
 
 const $ = (id) => document.getElementById(id);
+// The tribute gauge (barrels that fill with oil) and the oil flying into it at payout.
+const gauge = new BarrelGauge($('quotaBarrels'));
+const seasonClock = new SeasonClock($('seasonClock'), latch); // the four-season dial right of the tribute plate
+const oilFlights = new OilFlights(document.body, gauge, (value) => {
+  if (value <= gauge.amount) return; // the season already settled (a skipped payout): nothing to add
+  showOil(value, true);
+  barrel(Math.min(1, value / Math.max(1, turn.quota)));
+});
 const anims = [];
 let piecesPlaced = 0;
 
@@ -1101,6 +1111,7 @@ function updateHUD() {
     `Year ${turn.round} · ${SEASONS[turn.season]} · Tribute ${left ? `in ${left} season${left === 1 ? '' : 's'}` : `due this ${SEASONS[turn.season]}`}`,
     `第 ${turn.round} 年 · ${SEASONS[turn.season]} · ${left ? `${left} 季后缴纳贡品` : '本季缴纳贡品'}`,
   );
+  seasonClock.set(turn.season, yearLength() - 1);
   const ev = turn.event;
   $('eventLabel').classList.toggle('hidden', !ev);
   if (ev) {
@@ -1390,6 +1401,7 @@ function previewPayout() {
 
 function cancelPreview() {
   payout.cancel();
+  oilFlights.clear();
   previewing = false;
   document.body.classList.remove('paying');
   updateHUD(); // undo the counter / bar filling
@@ -1419,8 +1431,7 @@ function showOil(amount, bump = false) {
   $('oilStock').textContent = amount;
   $('resOil').textContent = amount;
   $('quotaCount').textContent = L(`${amount} / ${quota} barrels`, `${amount} / ${quota} 桶`);
-  $('quotaFill').style.width = `${Math.min(1, amount / quota) * 100}%`;
-  $('quotaFill').classList.toggle('met', amount >= quota);
+  gauge.show(amount, quota, bump);
   if (bump) {
     pop($('oilStock'));
     pop($('quotaCount'));
@@ -1449,7 +1460,12 @@ function runPayout(e, onDone) {
     tiles,
     (tile) => {
       chimeTile(tile);
-      if (tile.oil) {
+      if (tile.oil > 0) {
+        // The oil flies up into the gauge; each barrel fills it as it lands.
+        tileV.set(tile.x, 0.6, tile.z).project(camera);
+        oilFlights.launch([(tileV.x * 0.5 + 0.5) * window.innerWidth, (-tileV.y * 0.5 + 0.5) * window.innerHeight], tile.oil, shown);
+        shown += tile.oil;
+      } else if (tile.oil) {
         shown += tile.oil;
         showOil(shown, true);
       }
@@ -1459,11 +1475,13 @@ function runPayout(e, onDone) {
       }
     },
     () => {
+      oilFlights.finish(); // anything still in the air lands now, before the season settles
       document.body.classList.remove('paying');
       onDone();
     },
   );
 }
+const tileV = new THREE.Vector3();
 
 /**
  * A tile triggered twice (next to a Capital) hops twice, each time showing one trigger's output,
@@ -2875,6 +2893,7 @@ function resetIsland(opts) {
   rig.release();
   document.body.classList.remove('striking');
   payout.cancel(); // stop a running payout without settling it
+  oilFlights.clear();
   previewing = false;
   document.body.classList.remove('paying');
   tiles.clear();
@@ -3232,6 +3251,7 @@ function frame(now) {
   perf.end('render (cpu)');
   perf.begin('payout');
   payout.update(dt); // after render so labels use this frame's camera
+  oilFlights.update(dt);
   perf.end('payout');
   perf.frameEnd();
   requestAnimationFrame(frame);

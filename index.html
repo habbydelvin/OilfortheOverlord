@@ -86,13 +86,24 @@
     </div>
 
     <div id="ui">
+      <!-- A plate hanging from the top edge: season on its riveted strip, barrel gauge | the Overlord | strikes,
+           and the count on a tab hanging under it (the year's event and target below). -->
       <header id="top">
-        <div class="level" id="seasonLabel">Year 1 · Spring</div>
-        <div id="eventLabel" class="event-label hidden"></div>
-        <div id="targetLabel" class="event-label hidden"></div>
-        <div class="bar"><div class="fill" id="quotaFill"></div></div>
-        <div class="count" id="quotaCount">0 / 20 barrels</div>
-        <div class="strikes" id="strikes" title="Failed tributes: at 3 the Overlord destroys you" data-zh-title="失职次数：满 3 次，霸主将毁灭你"><i></i><i></i><i></i></div>
+        <div class="top-plate">
+          <div class="top-band"><div class="level" id="seasonLabel">Year 1 · Spring</div></div>
+          <div class="top-row">
+            <div class="bar" id="quotaBarrels"></div>
+            <div class="top-frame top-overlord"><img src="/portraits/TheOverlord01.png?v=20261027-1828" alt="" /></div>
+            <div class="strikes" id="strikes" title="Failed tributes: at 3 the Overlord destroys you" data-zh-title="失职次数：满 3 次，霸主将毁灭你"><i></i><i></i><i></i></div>
+          </div>
+        </div>
+        <div class="top-tab"><div class="count" id="quotaCount">0 / 20 barrels</div></div>
+        <!-- Its own small plate on the right: the season clock (seasonClock.js). -->
+        <div class="top-clock" id="seasonClock"></div>
+        <div class="top-events">
+          <div id="eventLabel" class="event-label hidden"></div>
+          <div id="targetLabel" class="event-label hidden"></div>
+        </div>
       </header>
 
       <aside id="panel">

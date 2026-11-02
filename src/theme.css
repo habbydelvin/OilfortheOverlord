@@ -162,55 +162,261 @@
   color: var(--dp-brass-hi);
 }
 
-/* ---------- top: season, tribute gauge, score plaque, strikes (straight over the map, no plate) ---------- */
+/*
+ * ---------- top, after Iron Harvest's HUD: one dark bronze plate hanging from the top edge (chamfered corners, thin
+ * cream lines), a riveted strip with the season along its top, the gauge with the Overlord who takes the tribute in a
+ * cream frame on its right and the strike lamps beside him, and the count on a riveted tab hanging under the middle.
+ * ----------
+ */
+:root {
+  --ih-cream: #d9ccaa;
+  --ih-line: rgba(217, 204, 170, 0.45);
+  --ih-bronze: #4d3522;
+  --ih-metal: linear-gradient(180deg, rgba(50, 31, 18, 0.74), rgba(20, 13, 8, 0.88)), var(--dp-tex);
+  --ih-rim: inset 0 0 0 1px #0b0806, inset 0 0 0 3px var(--ih-bronze), inset 0 0 0 4px #0b0806;
+}
 #top {
   color: var(--dp-cream);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.55)); /* the plates are clipped (chamfers): the shadow goes here */
 }
-#top .level {
-  letter-spacing: 0.08em;
-  color: var(--dp-cream);
-  opacity: 1;
+.top-plate {
+  position: relative;
+  padding-bottom: 12px;
+  background: var(--ih-metal);
+  box-shadow: var(--ih-rim), inset 0 -12px 18px rgba(0, 0, 0, 0.35);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px));
 }
-/* Tribute gauge: recessed in steel, segmented, brass fill. */
-#top .bar {
-  position: relative; /* anchor for the segment marks; no offsets, so nothing moves */
-  border-radius: 0;
-  background: #0b0b0b;
-  box-shadow:
-    inset 0 2px 5px rgba(0, 0, 0, 0.9),
-    0 0 0 1px #0a0a0a,
-    0 0 0 3px #5e6468,
-    0 0 0 4px #0a0a0a;
-}
-#top .bar::after {
+/* Thin cream line inside the plate, under the strip. */
+.top-plate::after {
   content: '';
   position: absolute;
-  inset: 0;
+  inset: 30px 7px 7px;
+  border: 1px solid var(--ih-line);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px));
   pointer-events: none;
-  background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 2px), rgba(10, 8, 7, 0.8) calc(10% - 2px) 10%);
 }
-#top .fill {
-  border-radius: 0;
-  background: linear-gradient(180deg, #f0d495 0%, #c99d4e 50%, #8a6528 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 240, 200, 0.5);
-}
-#top .fill.met {
-  background: linear-gradient(180deg, #ffdc90 0%, #e6a23e 50%, #a8661a 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 240, 200, 0.5), 0 0 12px rgba(255, 190, 80, 0.55);
-}
-/* Score: on a recessed black plaque with a brass rivet at each end. */
-#top .count {
-  color: var(--dp-brass-hi);
-  letter-spacing: 0.04em;
+/* The riveted steel strip along the top edge, with the season engraved on it. */
+.top-band {
+  height: 24px;
+  padding: 0 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background:
-    var(--dp-rivet) calc(50% - 98px) 50% / 8px 8px no-repeat,
-    var(--dp-rivet) calc(50% + 98px) 50% / 8px 8px no-repeat,
-    linear-gradient(180deg, #090909, #191919) center / 220px 100% no-repeat;
+    var(--dp-rivet) left 12px center / 8px 8px no-repeat,
+    var(--dp-rivet) left 26px center / 8px 8px no-repeat,
+    var(--dp-rivet) right 12px center / 8px 8px no-repeat,
+    var(--dp-rivet) right 26px center / 8px 8px no-repeat,
+    linear-gradient(180deg, #34312d, #191715 70%, #0e0d0c);
+  box-shadow: inset 0 -1px 0 var(--ih-line), inset 0 1px 0 rgba(255, 240, 210, 0.12);
 }
-/* Strike markers: brass-rimmed sockets. */
+#top .level {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: var(--ih-cream);
+  opacity: 1;
+  white-space: nowrap;
+}
+.top-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px 0;
+}
+/* The Overlord's square cream-bordered frame, like the portraits beside Iron Harvest's bar. */
+.top-frame {
+  position: relative;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 40%, #3a2a1c, #120c08 80%);
+  box-shadow: 0 0 0 1px #0b0806, 0 0 0 3px var(--ih-cream), 0 0 0 4px #0b0806, inset 0 2px 6px rgba(0, 0, 0, 0.85);
+}
+.top-overlord img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.7) translate(-6%, 10.5%); /* close on his face and red eyes */
+  filter: sepia(0.2) contrast(1.05);
+}
+/* Tribute gauge: the barrels sit recessed behind a cream hairline, against a dim warm backlight so the dark barrels stand out. */
+#top .bar {
+  position: relative;
+  border-radius: 0;
+  background:
+    radial-gradient(ellipse 70% 120% at 50% 50%, rgba(255, 214, 150, 0.18), transparent 75%),
+    linear-gradient(180deg, #71685a 0%, #837966 45%, #62594a 100%);
+  box-shadow:
+    inset 0 3px 6px rgba(0, 0, 0, 0.75),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.45),
+    0 0 0 1px #0b0806,
+    0 0 0 2px var(--ih-cream),
+    0 0 0 3px #0b0806;
+}
+/* The count: a riveted tab hanging under the middle of the plate, cream numerals. */
+.top-tab {
+  margin-top: -1px;
+  padding: 5px 34px 8px;
+  background:
+    var(--dp-rivet) left 12px center / 8px 8px no-repeat,
+    var(--dp-rivet) right 12px center / 8px 8px no-repeat,
+    var(--ih-metal);
+  box-shadow: var(--ih-rim);
+  outline: 1px solid var(--ih-line);
+  outline-offset: -6px;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px));
+}
+#top .count {
+  font-size: 18px;
+  letter-spacing: 0.06em;
+  color: var(--ih-cream);
+  white-space: nowrap;
+}
+.top-events {
+  margin-top: 6px;
+}
+/* The season clock: its own small plate right of the tribute plate, in the same bronze and cream. */
+.top-clock {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 14px);
+  padding: 8px 9px 14px;
+  background:
+    var(--dp-rivet) left 6px top 6px / 8px 8px no-repeat,
+    var(--dp-rivet) right 6px top 6px / 8px 8px no-repeat,
+    var(--ih-metal);
+  box-shadow: var(--ih-rim), inset 0 -10px 16px rgba(0, 0, 0, 0.35);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px));
+}
+.top-clock.clunk {
+  animation: clock-clunk 0.28s ease-out;
+}
+@keyframes clock-clunk {
+  30% {
+    translate: 0 2px;
+  }
+  60% {
+    translate: 0 -1px;
+  }
+}
+.top-clock svg {
+  display: block;
+  width: 92px;
+  height: 92px;
+}
+.sc-face {
+  fill: #120c08;
+}
+/* The seasons' scenes: the current one in full colour, the others dark and washed out. */
+.sc-scene {
+  filter: saturate(0.35) brightness(0.62);
+  transition: filter 0.4s;
+}
+.sc-scene.on {
+  filter: none;
+}
+.sc-div {
+  stroke: #0b0806;
+  stroke-width: 1.6;
+}
+.sc-ring {
+  fill: none;
+  stroke: var(--ih-bronze);
+  stroke-width: 5;
+}
+.sc-notch {
+  fill: #0b0806;
+  stroke: rgba(217, 204, 170, 0.5);
+  stroke-width: 0.6;
+}
+.sc-tribute {
+  fill: #b02a1a;
+  stroke: var(--ih-cream);
+  stroke-width: 0.7;
+}
+.sc-rim {
+  fill: none;
+  stroke: var(--ih-cream);
+  stroke-width: 1.2;
+}
+/* The mechanism: hand and gear swing with a wind-up and an overshoot; the bolt pulls back first, then snaps in. */
+.sc-hand,
+.sc-gear {
+  transition: transform 0.9s cubic-bezier(0.45, -0.25, 0.3, 1.35);
+}
+.sc-gear {
+  fill: #6b4a2e;
+  stroke: #0b0806;
+  stroke-width: 0.8;
+}
+.sc-arm {
+  fill: #2c2926;
+  stroke: var(--ih-cream);
+  stroke-width: 0.7;
+}
+.sc-hub {
+  fill: #b8914a;
+  stroke: #0b0806;
+  stroke-width: 0.8;
+}
+.sc-pin {
+  fill: #f0d9a0;
+}
+.sc-bolt rect {
+  fill: #8f9496;
+  stroke: #0b0806;
+  stroke-width: 0.7;
+}
+.sc-bolt {
+  transition: transform 0.1s ease-in;
+}
+.top-clock.unlocked .sc-bolt {
+  transform: translateY(7px);
+  transition: transform 0.15s ease-out;
+}
+.top-clock.instant .sc-hand,
+.top-clock.instant .sc-gear,
+.top-clock.instant .sc-bolt {
+  transition: none;
+}
+/* Top left: Tile library, Controls, Icon legend and Game Debug as small plates in the same bronze and cream. */
+#libraryLink,
+#btnHelp,
+#btnLegend,
+#btnDebug {
+  padding: 6px 14px 5px;
+  border: 0;
+  border-radius: 0;
+  background: var(--ih-metal);
+  box-shadow: inset 0 0 0 1px #0b0806, inset 0 0 0 2px var(--ih-bronze), 0 3px 8px rgba(0, 0, 0, 0.5);
+  outline: 1px solid var(--ih-line);
+  outline-offset: -5px;
+  font-family: var(--dp-serif);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--ih-cream);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+}
+#libraryLink:hover,
+#btnHelp:hover,
+#btnLegend:hover,
+#btnLegend.on,
+#btnDebug:hover {
+  text-decoration: none;
+  color: #fff3d6;
+  background: linear-gradient(180deg, rgba(255, 220, 160, 0.08), transparent), var(--ih-metal);
+  outline-color: rgba(240, 228, 196, 0.8);
+}
+/* Strike lamps: cream-rimmed sockets, lit red per missed tribute. */
 #top .strikes i {
-  border-color: var(--dp-brass);
+  border-color: var(--ih-cream);
   background: radial-gradient(circle at 50% 35%, #2a2b2c, #0b0b0b 75%);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.8), inset 0 1px 2px rgba(0, 0, 0, 0.9);
 }
