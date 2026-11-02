@@ -1872,6 +1872,40 @@ body.striking #mapIcons {
   opacity: 1;
 }
 
+/* Restart into the tutorial, above the language button. The first click arms it (it glows), the second restarts. */
+#btnReplayTutorial {
+  position: fixed;
+  left: 18px;
+  bottom: 118px;
+  z-index: 70;
+  width: 42px;
+  height: 42px;
+  padding: 10px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(10, 12, 14, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(232, 191, 104, 0.5), 0 2px 8px rgba(0, 0, 0, 0.5);
+  color: #e8bf68;
+  cursor: pointer;
+}
+#btnReplayTutorial svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+#btnReplayTutorial:hover {
+  filter: brightness(1.25);
+}
+#btnReplayTutorial.armed {
+  color: #ffd0c4;
+  animation: replay-armed 0.8s ease-in-out infinite;
+}
+@keyframes replay-armed {
+  50% {
+    filter: drop-shadow(0 0 8px rgba(255, 90, 60, 0.95)) brightness(1.3);
+  }
+}
+
 /* Language button (English / 中文), just above the music control. Shows the language it switches to. */
 #btnLang {
   position: fixed;
@@ -2108,11 +2142,11 @@ body.striking #mapIcons {
   pointer-events: none;
 }
 
-/* Skip: a round steel button with the skip icon, above the language and music buttons (same ring). */
+/* Skip: a round steel button with the skip icon, above the restart, language and music buttons (same ring). */
 .coach-skip {
   position: fixed;
   left: 18px;
-  bottom: 118px;
+  bottom: 168px;
   width: 42px;
   height: 42px;
   padding: 11px;

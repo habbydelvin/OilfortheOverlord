@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SHAPES } from './pieces.js';
+import { SHAPES, pieceOffsets } from './pieces.js';
 import { L, onLangChange } from './i18n.js';
 import { NEON } from './neonGlow.js';
 
@@ -7,7 +7,7 @@ import { NEON } from './neonGlow.js';
  * The tutorial, without any text. On a first game, Year 1's first Spring is guided once the Overlord's opening scene
  * is over: a spotlight on the tribute, then a ghost hand drags each card of the opening hand onto the board (the
  * Farm and the Station onto the glowing cells next to the Capital, where "×2" pops), short spotlights show workers
- * and food, and the hand taps Next turn. From then on the game is free, and a few things get a one-time wordless
+ * and food, the Wasteland is laid as a path to the nearest "?" site (which uncovers it), and the hand taps Next turn. From then on the game is free, and a few things get a one-time wordless
  * hint the first time they come up (HINTS): rotating a piece, "?" sites, food running out, rerolling, Next turn.
  *
  * main.js owns the game; it calls allows() before every player action, notify() when something happens,
@@ -30,10 +30,12 @@ const BOOST = { farm: css(NEON.farm), station: css(NEON.station) };
 /**
  * The guided Spring. Each step:
  *   wait     what moves it on: place, endTurn, time (a spotlight that moves on by itself after `ms`), end
- *   target   spotlight: CSS selector(s) for the HUD, or 'capital' (the free cells next to the Capital glow)
+ *   target   spotlight: CSS selector(s) for the HUD, 'capital' (the free cells next to the Capital glow) or 'site'
+ *            (the nearest "?" site; the step is skipped when there's none to lead to)
  *   dim      darken everything but the target; alarm: (api) => true makes the spotlight pulse red
  *   terrain  place steps: the card to play ('wasteland' matches any Wasteland)
- *   cells    place steps: 'capital' (only the free cells next to the Capital), or none (anywhere it fits)
+ *   cells    place steps: 'capital' (only the free cells next to the Capital), 'site' (the Wasteland card laid
+ *            toward the "?" site: touching it if it can reach, otherwise as close as it gets), or none (anywhere)
  *   pop      place steps: a badge that pops over the tile once placed ({ text, colour })
  */
 const STEPS = [
@@ -44,8 +46,9 @@ const STEPS = [
   { wait: 'place', terrain: 'settlement' },
   { wait: 'time', ms: 1600, dim: true, target: '#panel .res.mp' },
   { wait: 'time', ms: 1800, dim: true, target: '#panel .res.food', alarm: (api) => api.economy().foodBalance < 0 },
-  { wait: 'place', terrain: 'wasteland' },
-  { wait: 'place', terrain: 'wasteland' },
+  { wait: 'time', ms: 1800, target: 'site' },
+  { wait: 'place', terrain: 'wasteland', cells: 'site' },
+  { wait: 'place', terrain: 'wasteland', cells: 'site' },
   { wait: 'endTurn', target: '#btnNext' },
   { wait: 'end' },
 ];
@@ -53,6 +56,7 @@ const STEPS = [
 const matches = (step, terrain) =>
   step.terrain === 'wasteland' ? terrain?.startsWith('wasteland') : terrain === step.terrain;
 const keyOf = (cells) => cells.map(([x, z]) => `${x},${z}`).join('|');
+const setKey = (cells) => keyOf(cells).split('|').sort().join('|'); // the same cells in any order
 
 const BOARD_BLOCKED = '.dialogue, .striking, .paying, .shopping';
 
@@ -174,7 +178,7 @@ export class Tutorial {
     if (!this.active) return true;
     const s = this.step;
     if (!s) return false;
-    if (action === 'select') return s.wait === 'place' && matches(s, payload?.terrain);
+    if (action === 'select') return s.wait === 'place' && matches(s, payload?.terrain) && (!this.plan || payload === this.plan.piece);
     if (action === 'rotate') return s.wait === 'place';
     if (action === 'place')
       return s.wait === 'place' && matches(s, payload.piece?.terrain) && (!this.cells || payload.cells.every(([x, z]) => this.cells.some((c) => c[0] === x && c[1] === z)));
@@ -225,7 +229,59 @@ export class Tutorial {
     }
     this.cells = s.cells === 'capital' ? this.#aroundCapital() : null;
     if (s.cells === 'capital' && !this.cells.length) this.cells = null; // nowhere next to it: anywhere will do
+    this.plan = null;
+    if (s.target === 'site' || s.cells === 'site') {
+      // The site to lead to: the nearest one. Once uncovered, the rest of the Wasteland goes anywhere.
+      if (s.target === 'site') this.site = this.#nearestSite();
+      else if (this.site && !this.api.mysteries.has(...this.site)) this.site = null;
+      if (s.target === 'site' && !this.site) return this.#go(this.index + 1);
+      if (s.cells === 'site' && this.site && this.api.mysteries.has(...this.site)) {
+        this.plan = this.#pathPlan(this.site);
+        this.cells = this.plan?.cells ?? null;
+      }
+      if (this.site) {
+        this.api.mysteries.spare(...this.site);
+        this.api.focus(this.site[0] / 2, this.site[1] / 2); // between the Capital and the site
+      }
+    }
     if (s.focus) this.api.focus(...s.focus);
+  }
+
+  /** The "?" site nearest the Capital (free placement only: in expansion mode sites open with their plot). */
+  #nearestSite() {
+    const { grid, mysteries } = this.api;
+    if (grid.expansionMode) return null;
+    let best = null;
+    for (const s of mysteries.sites.values()) if (!best || Math.abs(s.x) + Math.abs(s.z) < Math.abs(best[0]) + Math.abs(best[1])) best = [s.x, s.z];
+    return best;
+  }
+
+  /**
+   * Where a Wasteland card of the hand goes to lead toward the site: every rotation and spot it could legally take,
+   * scored by how close it gets (touching it uncovers it), then by not needing a turn and leaving the Capital's
+   * sides free. { piece, rot, anchor (the cell the pointer goes to), cells } or null.
+   */
+  #pathPlan([sx, sz]) {
+    const { grid, mysteries } = this.api;
+    const free = (x, z) => !grid.has(x, z) && grid.allowed(x, z) && !mysteries.has(x, z);
+    let best = null;
+    for (const piece of this.hand.cards) {
+      if (!piece.terrain.startsWith('wasteland') || !SHAPES[piece.shape]) continue;
+      for (let rot = 0; rot < 4; rot++) {
+        const offsets = pieceOffsets({ shape: piece.shape, rot });
+        for (let ax = sx - 5; ax <= sx + 5; ax++) {
+          for (let az = sz - 5; az <= sz + 5; az++) {
+            const cells = offsets.map(([ox, oz]) => [ax + ox, az + oz]);
+            if (!cells.every(([x, z]) => free(x, z)) || !cells.some(([x, z]) => grid.touchesIsland(x, z))) continue;
+            const reach = Math.min(...cells.map(([x, z]) => Math.abs(x - sx) + Math.abs(z - sz)));
+            const sides = cells.filter(([x, z]) => Math.abs(x) + Math.abs(z) === 1).length;
+            const score = reach * 10 + (rot === (piece.rot ?? 0) ? 0 : 1) + sides * 3;
+            if (!best || score < best.score) best = { score, piece, rot, anchor: [ax, az], cells };
+          }
+        }
+      }
+    }
+    return best;
   }
 
   /** The free cells you could build on next to the Capital. */
@@ -311,22 +367,26 @@ export class Tutorial {
     }
     if (s.wait === 'place') {
       // The card isn't in the hand (or the Wasteland fits nowhere): nothing to guide, move on.
-      const i = this.hand.cards.findIndex((p) => matches(s, p.terrain));
+      const i = this.plan ? this.hand.cards.indexOf(this.plan.piece) : this.hand.cards.findIndex((p) => matches(s, p.terrain));
       const stuck = s.terrain === 'wasteland' && !this.hand.placeableForced.some((p) => matches(s, p.terrain));
       if (i < 0 || stuck) {
         this.#go(this.index + 1);
         return null;
       }
-      const to = this.cells?.[0] ?? this.#suggestCell();
+      const to = this.plan?.anchor ?? this.cells?.[0] ?? this.#suggestCell();
       const held = this.hand.piece && matches(s, this.hand.piece.terrain);
       const view = { marks: this.cells };
       if (!to) return view;
-      if (!held) view.hand = { drag: i, to };
+      // Held the wrong way round for the glowing cells: R / right-click.
+      const turned = held && this.plan && setKey(pieceOffsets(this.hand.piece)) !== setKey(pieceOffsets({ shape: this.plan.piece.shape, rot: this.plan.rot }));
+      if (turned) view.rotate = to;
+      else if (!held) view.hand = { drag: i, to };
       else if (!this.hand.dragging && this.cells) view.hand = { tap: this.#cellsCentre([to]), key: `cell${to}` };
       return view;
     }
-    const target = s.target === 'capital' ? null : s.target;
-    const view = { marks: s.target === 'capital' ? this.#aroundCapital() : null };
+    const onBoard = s.target === 'capital' || s.target === 'site';
+    const target = onBoard ? null : s.target;
+    const view = { marks: s.target === 'capital' ? this.#aroundCapital() : s.target === 'site' ? [this.site] : null };
     if (target) view.ring = { selector: target, dim: s.dim, alarm: s.alarm?.(this.api) };
     else if (s.dim) view.ring = { dim: true };
     if (s.wait === 'endTurn') view.hand = { tapOn: target };

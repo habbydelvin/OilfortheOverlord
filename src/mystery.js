@@ -28,13 +28,14 @@ const SITE_BANDS = [
 const MIN_PLOT_GAP = 2;
 const randInt = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
 
-function pickReveal() {
-  let r = Math.random() * MYSTERY_POOL.reduce((s, [, w]) => s + w, 0);
-  for (const [terrain, w] of MYSTERY_POOL) {
+function pickReveal(exclude = null) {
+  const pool = MYSTERY_POOL.filter(([terrain]) => terrain !== exclude);
+  let r = Math.random() * pool.reduce((s, [, w]) => s + w, 0);
+  for (const [terrain, w] of pool) {
     r -= w;
     if (r <= 0) return terrain;
   }
-  return MYSTERY_POOL[0][0];
+  return pool[0][0];
 }
 
 function shuffle(a) {
@@ -216,9 +217,15 @@ export class Mysteries {
     }
   }
 
+  /** The tutorial leads the player to this site: it won't be an Unexploded Missile. */
+  spare(x, z) {
+    const s = this.sites.get(key(x, z));
+    if (s) s.spared = true;
+  }
+
   /** What a site turns into: a roll. */
   #outcome(s) {
-    return { x: s.x, z: s.z, terrain: pickReveal() };
+    return { x: s.x, z: s.z, terrain: pickReveal(s.spared ? 'missile' : null) };
   }
 
   #add(x, z) {
