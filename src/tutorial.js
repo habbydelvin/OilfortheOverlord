@@ -39,14 +39,14 @@ const BOOST = { farm: css(NEON.farm), station: css(NEON.station) };
  *   pop      place steps: a badge that pops over the tile once placed ({ text, colour })
  */
 const STEPS = [
-  { wait: 'time', ms: 2200, dim: true, target: TRIBUTE },
-  { wait: 'time', ms: 2200, target: 'capital', focus: [0, 0] },
+  { wait: 'time', ms: 2600, dim: true, target: TRIBUTE },
+  { wait: 'time', ms: 2800, target: 'capital', focus: [0, 0] },
   { wait: 'place', terrain: 'farm', cells: 'capital', pop: { text: '×2', colour: BOOST.farm } },
   { wait: 'place', terrain: 'station', cells: 'capital', pop: { text: '×2', colour: BOOST.station } },
   { wait: 'place', terrain: 'settlement' },
-  { wait: 'time', ms: 1600, dim: true, target: '#panel .res.mp' },
-  { wait: 'time', ms: 1800, dim: true, target: '#panel .res.food', alarm: (api) => api.economy().foodBalance < 0 },
-  { wait: 'time', ms: 1800, target: 'site' },
+  { wait: 'time', ms: 2000, dim: true, target: '#panel .res.mp' },
+  { wait: 'time', ms: 2200, dim: true, target: '#panel .res.food', alarm: (api) => api.economy().foodBalance < 0 },
+  { wait: 'time', ms: 3400, target: 'site' }, // longer: the camera pans over to it first
   { wait: 'place', terrain: 'wasteland', cells: 'site' },
   { wait: 'place', terrain: 'wasteland', cells: 'site' },
   { wait: 'endTurn', target: '#btnNext' },

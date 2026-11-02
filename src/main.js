@@ -2782,22 +2782,10 @@ $('btnTutorial').addEventListener('click', (e) => {
   setHelp(false);
   resetIsland({ tutorial: true });
 });
-// Bottom left: restart into the tutorial. It wipes the run, so the first click only arms it for a moment.
-let replayArmed = null;
+// Bottom left: restart the game into the tutorial.
 $('btnReplayTutorial').addEventListener('click', (e) => {
-  const btn = e.currentTarget;
-  btn.blur();
-  if (!replayArmed) {
-    btn.classList.add('armed');
-    replayArmed = setTimeout(() => {
-      btn.classList.remove('armed');
-      replayArmed = null;
-    }, 2500);
-    return;
-  }
-  clearTimeout(replayArmed);
-  replayArmed = null;
-  btn.classList.remove('armed');
+  e.currentTarget.blur();
+  setHelp(false);
   resetIsland({ tutorial: true });
 });
 

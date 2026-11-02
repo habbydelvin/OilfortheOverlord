@@ -1872,7 +1872,7 @@ body.striking #mapIcons {
   opacity: 1;
 }
 
-/* Restart into the tutorial, above the language button. The first click arms it (it glows), the second restarts. */
+/* Restart into the tutorial, above the language button. */
 #btnReplayTutorial {
   position: fixed;
   left: 18px;
@@ -1895,15 +1895,6 @@ body.striking #mapIcons {
 }
 #btnReplayTutorial:hover {
   filter: brightness(1.25);
-}
-#btnReplayTutorial.armed {
-  color: #ffd0c4;
-  animation: replay-armed 0.8s ease-in-out infinite;
-}
-@keyframes replay-armed {
-  50% {
-    filter: drop-shadow(0 0 8px rgba(255, 90, 60, 0.95)) brightness(1.3);
-  }
 }
 
 /* Language button (English / 中文), just above the music control. Shows the language it switches to. */
@@ -2129,15 +2120,20 @@ body.striking #mapIcons {
   }
 }
 
-/* "×2" rising over a boosted building, in its neon colour. */
+/* "×2" rising over a boosted building: lettered like the payout numbers (.floater), in its neon colour. */
 .coach-pop {
   position: fixed;
   left: 0;
   top: 0;
-  font: 900 34px var(--dp-serif, serif);
-  color: #fff;
-  -webkit-text-stroke: 1.5px #120d08;
-  text-shadow: 0 0 8px var(--pop), 0 0 18px var(--pop), 0 0 30px var(--pop);
+  font: 800 var(--floater-size, 30px) 'Avenir Next', 'Nunito', 'Segoe UI', 'OTO Han Sans', system-ui, sans-serif;
+  color: var(--pop);
+  text-shadow:
+    0 2px 0 #1a1410,
+    2px 0 0 #1a1410,
+    -2px 0 0 #1a1410,
+    0 -2px 0 #1a1410,
+    0 0 14px var(--pop),
+    0 4px 8px rgba(0, 0, 0, 0.55);
   white-space: nowrap;
   pointer-events: none;
 }
