@@ -1,5 +1,5 @@
 import { RELEASE } from './release.js'; // first: clears dev tuning before any settings load
-import { updateCurve, intersectGround } from './curvature.js'; // early: bends every material made after it (small planet)
+import { updateCurve, flattenCurve, intersectGround } from './curvature.js'; // early: bends every material made after it (small planet)
 import './ui.css';
 import './theme.css';
 import './themeShine.js';
@@ -42,6 +42,10 @@ import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
 import { MissileStrike, MISSILE_PARAMS, MISSILE_DEFAULTS, loadMissileConfig, saveMissileConfig, clearMissileConfig } from './missiles.js';
 import { Tutorial, TUTORIAL_KEY, HINTS_KEY, tutorialDone, markTutorialDone } from './tutorial.js';
 import { L, both, isZh, toggleLang, onLangChange, applyStatic, textOf, retranslate } from './i18n.js';
+import { createRivals } from './rivals.js';
+import { createRivalView } from './rivalView.js';
+import { createGlobeView, GLOBE_PARAMS, GLOBE_DEFAULTS, loadGlobeConfig, saveGlobeConfig, clearGlobeConfig } from './globeView.js';
+import { createCloudTransition } from './cloudTransition.js';
 
 applyStatic(); // the page's own text in the saved language
 
@@ -49,7 +53,7 @@ const HAND_SIZE = 5;
 const SEED_TERRAIN = 'capital';
 
 // ---------- setup ----------
-const { renderer, scene, camera, sun, followTarget } = createScene(document.getElementById('app'));
+const { renderer, scene, camera, sun, followTarget, setBoardFraming } = createScene(document.getElementById('app'));
 initMusic(); // background track downloads now; it starts with the game, once sound is allowed
 onMusicVolume((volume) => {
   audioCfg.music = volume;
@@ -64,6 +68,12 @@ const perf = new Perf(renderer); // '-' toggles the overlay
 const rig = new CameraRig(camera, renderer.domElement);
 const grid = new Grid();
 const factory = new TileFactory();
+/** 'board' | 'globe' | 'rival'. Off the board, placement and the hand stay shut. */
+let view = 'board';
+let rivals = [];
+let rivalShown = null;
+let globe;
+const rivalView = createRivalView({ renderer, factory, rig });
 const tiles = new THREE.Group();
 scene.add(tiles);
 const previewCfg = loadPreviewConfig(); // Game Debug → Placement preview
@@ -74,6 +84,7 @@ const dust = new Dust(scene);
 const expansion = new Expansion(scene);
 // Clouds over locked plots in expansion mode; they part when a plot is unlocked.
 const fogCfg = loadFogConfig(); // saved Game Debug slider values
+const globeCfg = loadGlobeConfig(); // globe tuning (city size, spread), same panel
 const fog = new FogOfWar(scene, fogCfg);
 // Reduced-resolution fog (quality presets); the placed tiles still hide the fog behind them.
 fog.attachRenderer(renderer, scene, [tiles]);
@@ -196,6 +207,14 @@ const debug = RELEASE
     clear: clearFogConfig,
     onChange: (p) => fog.applySettings(!p || p.layout), // null = reset all
   },
+  globe: {
+    params: GLOBE_PARAMS,
+    defaults: GLOBE_DEFAULTS,
+    cfg: globeCfg,
+    save: saveGlobeConfig,
+    clear: clearGlobeConfig,
+    onChange: (p) => (!p || p.layout) && globe?.relayout(), // null = reset all
+  },
 });
 const hand = new Hand(document.getElementById('hand'), HAND_SIZE, (piece) => placement.setPiece(piece), grid);
 hand.perf = perf;
@@ -254,8 +273,10 @@ hand.guard = (action, piece) => !busy() && tutorial.allows(action, piece);
 hand.onBlocked = () => tutorial.nudge();
 placement.guard = (cells, piece) => tutorial.placeGuard(cells, piece);
 /** Debug tools and shortcuts are off during the tutorial (it has to stay on script). */
-/** True while something owns the screen (dialogue, missiles, shop, payout): nothing can be picked or placed. */
-const busy = () => eventOpen || striking || shopOpen || payout.active || turn.over;
+/** True while something owns the screen (dialogue, missiles, shop, payout, tutorial): the War Map stays shut. */
+const screenBusy = () => eventOpen || striking || shopOpen || payout.active || turn.over || tutorial.active;
+/** Also true off the board, so the hand, the ghost and placement ignore the War Map and rival cities. */
+const busy = () => screenBusy() || view !== 'board';
 const tutorialBlocks = () => {
   if (!tutorial.active) return false;
   tutorial.nudge();
@@ -815,7 +836,7 @@ function previewMissileStrike({ convert = missileCfg.previewCraters === 'yes', c
 $('btnMissile').addEventListener('click', (e) => {
   const btn = e.currentTarget;
   btn.blur();
-  const busyNow = turn.over || striking || shopOpen || eventOpen || payout.active || tutorial.active;
+  const busyNow = turn.over || striking || shopOpen || eventOpen || payout.active || tutorial.active || view !== 'board';
   if (busyNow) {
     btn.classList.remove('refused');
     void btn.offsetWidth;
@@ -889,6 +910,7 @@ onLangChange(() => {
   for (const btn of ruinBtns.values()) labelRuinBtn(btn);
   inspected = null; // the hovered tile's card is redrawn next frame
   if ($('toast').classList.contains('show')) $('toast').textContent = textOf(toastMsg);
+  if (view === 'rival' && rivalShown) fillRivalBar(rivalShown);
 });
 
 // ---------- Pre-war Ruins ----------
@@ -2608,6 +2630,7 @@ function setExpansionMode(on) {
 }
 
 function tryPlace() {
+  if (view !== 'board') return;
   if (turn.over || shopOpen || eventOpen) return;
   if (payout.active) {
     payout.skip(); // clicking the board during the payout fast-forwards it
@@ -2760,6 +2783,142 @@ function demolish(x, z, quiet = false) {
 
 rig.onClick = tryPlace;
 
+function playerBuildingCount() {
+  let count = 0;
+  for (const cell of grid.cells.values()) if (isBuilding(cell.terrain)) count++;
+  return count;
+}
+
+function fillRivalBar(rival) {
+  rivalShown = rival;
+  $('rivalTitle').textContent = `${L(rival.def.name, rival.def.zh)} · ${L(rival.def.personalityName, rival.def.personalityZh)}`;
+  $('rivalStats').textContent = L(
+    `${rival.stats.buildings} buildings · ${rival.stats.oil} oil`,
+    `${rival.stats.buildings} 座建筑 · ${rival.stats.oil} 石油`,
+  );
+}
+
+/** Back to the board from either the globe or a rival city. Safe during a reset. */
+function resetView() {
+  if (view === 'rival') rivalView.exit();
+  if (view !== 'board') setBoardFraming(true);
+  globe?.exit();
+  view = 'board';
+  rivalShown = null;
+  rig.locked = false;
+  rig.resetOverscroll();
+  viewRun++; // drops a fade that is still running
+  switching = false;
+  clouds.reset();
+  document.body.classList.remove('globe-view', 'rival-view');
+}
+
+// ---------- view switches (board ⇄ globe ⇄ rival city) ----------
+// Scroll out past max zoom on the board or in a rival city to see the hex planet; click a city on it to fly in.
+const clouds = createCloudTransition($('viewClouds'));
+let switching = false;
+let viewRun = 0;
+let boardReturnDistance = null;
+
+const fade = (on) => (on ? clouds.cover() : clouds.uncover());
+
+/** Clouds roll in, the view swaps behind them, they part. A reset in the middle wins. */
+async function swapView(change) {
+  if (switching) return;
+  switching = true;
+  const run = viewRun;
+  await fade(true);
+  if (run !== viewRun) return;
+  change();
+  await fade(false);
+  if (run === viewRun) switching = false;
+}
+
+function openGlobe() {
+  if (switching || view === 'globe') return;
+  if (view === 'board') {
+    if (screenBusy()) return;
+    boardReturnDistance = rig.goalDistance;
+    hand.select(-1);
+  }
+  const from = view === 'rival' ? rivalShown?.id : 'player';
+  rig.locked = true;
+  swapView(() => {
+    if (view === 'rival') {
+      rivalView.exit();
+      rivalShown = null;
+      document.body.classList.remove('rival-view');
+    }
+    setBoardFraming(false);
+    view = 'globe';
+    document.body.classList.add('globe-view');
+    globe.enter(rivals, from);
+  });
+}
+
+/** Globe → board, after the fly-in onto Hive City. The board camera comes back pulled out, then settles in. */
+function closeGlobe() {
+  if (view !== 'globe') return;
+  swapView(() => {
+    globe.exit();
+    document.body.classList.remove('globe-view');
+    setBoardFraming(true);
+    view = 'board';
+    rig.release();
+    rig.distance = rig.maxDistance;
+    rig.resetOverscroll();
+    rig.goalDistance = Math.min(boardReturnDistance ?? rig.maxDistance, rig.maxDistance * 0.5);
+  });
+}
+
+function enterRival(id) {
+  const rival = rivals.find((entry) => entry.id === id);
+  if (!rival || view !== 'globe') return;
+  swapView(() => {
+    globe.exit();
+    document.body.classList.remove('globe-view');
+    document.body.classList.add('rival-view');
+    setBoardFraming(false);
+    rivalView.enter(rival);
+    // Arrive pulled out a little, then settle on the city.
+    const settle = rig.goalDistance;
+    rig.distance = rig.maxDistance;
+    rig.goalDistance = settle;
+    fillRivalBar(rival);
+    view = 'rival';
+    rig.release();
+    rig.resetOverscroll();
+  });
+}
+
+function leaveRival() {
+  if (view === 'rival') openGlobe();
+}
+
+/** From the globe, the Esc / G way home: fly onto Hive City first. */
+function globeHome() {
+  if (view === 'globe' && !switching && !globe.busy) globe.visit('player');
+}
+
+globe = createGlobeView({
+  renderer,
+  root: $('globeUI'),
+  factory,
+  playerBuildings: playerBuildingCount,
+  onVisit: (id) => (id === 'player' ? closeGlobe() : enterRival(id)),
+  onDive: (k) => {
+    if (!switching) clouds.setPeek(k);
+  },
+});
+rig.onZoomPastMax = () => {
+  if (view === 'board' || view === 'rival') openGlobe();
+  if (!switching) rig.resetOverscroll(); // refused (another screen is up)
+};
+$('btnRivalBack').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  leaveRival();
+});
+
 /**
  * Dev-testing hotkeys (Space, `, -, N, M, P, V, T, X). Off for players; set true to use them again.
  * The Game Debug panel (its button, top left) still has the same tools.
@@ -2778,6 +2937,20 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (tgt.matches?.('input, select, textarea')) return; // typing in the debug panel
+  if (k === 'g' && !e.repeat) {
+    if (view === 'globe') globeHome();
+    else openGlobe();
+    return;
+  }
+  if (k === 'escape' && view === 'rival') {
+    leaveRival();
+    return;
+  }
+  if (k === 'escape' && view === 'globe') {
+    globeHome();
+    return;
+  }
+  if (view !== 'board') return;
   if (dev && k === '`') {
     debug.toggle();
     return;
@@ -2884,6 +3057,8 @@ $('btnReplayTutorial').addEventListener('click', (e) => {
  */
 function resetIsland(opts) {
   const tut = opts?.tutorial === true || !tutorialDone();
+  resetView();
+  rivals = createRivals((Math.random() * 0x100000000) >>> 0);
   runId++; // stops a missile strike / failure speech still running
   introRun++; // and an opening scene
   tutorial.stop();
@@ -3190,6 +3365,35 @@ function frame(now) {
 
   perf.begin('camera');
   rig.update(dt);
+  if (!switching && view !== 'globe') clouds.setPeek(rig.stretch ** 0.8 * 0.92);
+  if (view === 'globe') {
+    perf.end('camera');
+    perf.begin('render (cpu)');
+    perf.gpuBegin();
+    flattenCurve(); // the War Map has its own hex-planet bend; the board's map shape never applies here
+    globe.update(dt);
+    globe.render();
+    perf.gpuEnd();
+    perf.end('render (cpu)');
+    perf.frameEnd();
+    requestAnimationFrame(frame);
+    return;
+  }
+  if (view === 'rival') {
+    perf.end('camera');
+    perf.begin('tile anims');
+    factory.update(dt);
+    perf.end('tile anims');
+    perf.begin('render (cpu)');
+    perf.gpuBegin();
+    updateCurve(camera, rig.target); // rival cities follow the Graphics map shape (Flat / Planet), like the board
+    renderer.render(rivalView.scene, camera);
+    perf.gpuEnd();
+    perf.end('render (cpu)');
+    perf.frameEnd();
+    requestAnimationFrame(frame);
+    return;
+  }
   followTarget(rig.target, rig.distance, dt);
   perf.end('camera');
   perf.begin('drops+shake');
@@ -3411,7 +3615,7 @@ factory.extrasReady.then(async (extras) => {
 });
 
 // Release build: players get no Game Debug button, no tile library link (library.html isn't built), no cheats.
-if (RELEASE) for (const id of ['btnDebug', 'debug', 'libraryLink']) document.getElementById(id)?.remove();
+if (RELEASE) for (const id of ['debugDock', 'libraryLink']) document.getElementById(id)?.remove();
 
 // Handy for debugging in the console (dev builds only).
-if (!RELEASE) window.tileIsland = { tutorial, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes };
+if (!RELEASE) window.tileIsland = { tutorial, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, _t: { openGlobe, globeCfg, clear: () => (eventOpen = false) } };

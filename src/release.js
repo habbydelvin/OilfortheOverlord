@@ -22,6 +22,7 @@ const DEV_KEYS = [
   'oto.iconConfig',
   'oto.shakeConfig',
   'oto.previewConfig',
+  'oto.globeConfig',
 ];
 
 /** Saves from older releases that no longer count: the old tutorial flag (now oto.tutorialDone.v2, tutorial.js). */

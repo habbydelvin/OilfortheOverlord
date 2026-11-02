@@ -4,6 +4,27 @@ import { WORLD_HALF } from './grid.js';
 const damp = (k, dt) => 1 - Math.exp(-k * dt);
 const DRAG_THRESHOLD = 5; // px before a press becomes a pan instead of a click
 
+/** How long a pause is before a scroll-out gesture starts over. */
+export const WHEEL_GAP = 600;
+/** One mouse detent. Two of these reach CameraRig.OVERSCROLL. */
+const WHEEL_NOTCH = 180;
+/** Events closer than this are one trackpad swipe, not separate notches. */
+const WHEEL_STREAM = 45;
+
+/**
+ * Signed wheel amount for the "past the zoom stop" gesture. A mouse detent is one notch even when
+ * the browser reports a tiny pixel delta. A fast stream keeps its real delta, capped, so one swipe
+ * still has to travel a little.
+ */
+export function wheelUnits(e, lastAt = 0) {
+  const sign = Math.sign(e.deltaY);
+  if (!sign) return 0;
+  const mag = Math.abs(e.deltaY);
+  const detent = e.deltaMode !== 0 || (mag < 40 && Math.abs(e.wheelDelta || 0) >= 100);
+  if (detent || performance.now() - lastAt > WHEEL_STREAM) return sign * WHEEL_NOTCH * (e.deltaMode === 2 ? 3 : 1);
+  return sign * Math.min(mag, 120);
+}
+
 /**
  * Top-down strategy camera:
  *  - left/middle drag: pan        - wheel: zoom
@@ -130,12 +151,64 @@ export class CameraRig {
   #onWheel = (e) => {
     e.preventDefault();
     if (this.locked) return;
+    const now = performance.now();
+    const units = wheelUnits(e, this.#wheelAt);
+    this.#wheelAt = now;
+    // Already zoomed out: more scroll-out climbs past max into the clouds. Past COMMIT the globe opens and the
+    // climb finishes by itself. Below it, a pause drains slowly (scrolling again resumes); only a deliberate
+    // scroll back in cancels, so a stray reversed momentum tick does not.
+    if (this.onZoomPastMax && (this.#over > 0 || (e.deltaY > 0 && this.goalDistance >= this.maxDistance - 1e-3))) {
+      this.#overAt = now;
+      if (e.deltaY < 0) {
+        this.#back += Math.abs(units);
+        if (this.#back < WHEEL_NOTCH * 1.2) return;
+        this.#over = 0;
+        this.overscroll = 0;
+        this.#back = 0;
+      } else {
+        this.#back = 0;
+        this.#over = Math.min(CameraRig.OVERSCROLL, this.#over + Math.abs(units));
+        this.overscroll = this.#over / CameraRig.OVERSCROLL;
+        if (this.overscroll >= CameraRig.COMMIT && !this.#committed) {
+          this.#committed = true;
+          this.onZoomPastMax();
+        }
+        return;
+      }
+    }
     this.goalDistance = THREE.MathUtils.clamp(
       this.goalDistance * Math.exp(e.deltaY * 0.0015),
       this.minDistance,
       this.maxDistance,
     );
   };
+
+  /** Wheel units past max zoom that count as "zoom out further". */
+  static OVERSCROLL = 360; // two notches or one flick fills it
+  /** Past this share of OVERSCROLL the switch is committed. */
+  static COMMIT = 0.6; // about two notches
+
+  /** Drop any overscroll (after a view switch). */
+  resetOverscroll() {
+    this.#over = 0;
+    this.#back = 0;
+    this.overscroll = 0;
+    this.#stretch = 0;
+    this.#committed = false;
+  }
+  /** 0–1 build-up of the current overscroll (for the stretch). */
+  overscroll = 0;
+  onZoomPastMax = null;
+  /** Eased overscroll, 0–1 (drives the stretch and the edge clouds). */
+  get stretch() {
+    return this.#stretch;
+  }
+  #over = 0;
+  #back = 0;
+  #committed = false;
+  #overAt = 0;
+  #wheelAt = 0;
+  #stretch = 0;
 
   #onKeyDown = (e) => {
     if (e.target.matches?.('input, select, textarea')) return; // debug panel sliders use arrow keys
@@ -167,10 +240,23 @@ export class CameraRig {
     this.distance += (this.goalDistance - this.distance) * (dt ? damp(this.zoomRate, dt) : 1);
     this.yaw += (this.goalYaw - this.yaw) * (dt ? damp(9, dt) : 1);
 
-    const horiz = Math.cos(this.pitch) * this.distance;
+    // Overscroll stretch: eases toward the build-up, which drains once the wheel stops.
+    if (this.#committed) {
+      // Committed: keep climbing into the clouds on its own.
+      this.#over = Math.min(CameraRig.OVERSCROLL, this.#over + (dt * CameraRig.OVERSCROLL) / 0.6);
+      this.overscroll = this.#over / CameraRig.OVERSCROLL;
+    } else if (this.#over > 0 && performance.now() - this.#overAt > WHEEL_GAP) {
+      this.#over = Math.max(0, this.#over - (dt * CameraRig.OVERSCROLL) / 1.5);
+      this.overscroll = this.#over / CameraRig.OVERSCROLL;
+    }
+    this.#stretch += (this.overscroll - this.#stretch) * (dt ? damp(12, dt) : 1);
+    // Past max the camera keeps climbing (up to ~2.2× max) into the cloud layer.
+    const dist = this.distance * (1 + 1.2 * this.#stretch * this.#stretch);
+
+    const horiz = Math.cos(this.pitch) * dist;
     this.camera.position.set(
       this.target.x + Math.sin(this.yaw) * horiz,
-      this.target.y + Math.sin(this.pitch) * this.distance,
+      this.target.y + Math.sin(this.pitch) * dist,
       this.target.z + Math.cos(this.yaw) * horiz,
     );
     this.camera.lookAt(this.target);

@@ -20,21 +20,7 @@ export function createScene(container) {
 
   const camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.1, 300);
 
-  // Lighting: cool sky fill + warm key light that casts shadows.
-  const sky = new THREE.HemisphereLight(0xdfe8e4, 0x2a2622, 1.3);
-  scene.add(sky);
-  const sun = new THREE.DirectionalLight(0xfff0d6, 2.2);
-  // Layer 1 is the placement ghost's own pass (placement.js GHOST_LAYER): it needs the same lights, and still
-  // casts its shadow on the board.
-  sky.layers.enable(1);
-  sun.layers.enable(1);
-  sun.shadow.camera.layers.enable(1);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.bias = -0.0005;
-  sun.shadow.normalBias = 0.02;
-  Object.assign(sun.shadow.camera, { near: 0.5, far: 60 });
-  scene.add(sun, sun.target);
+  const { sun } = createLights(scene);
 
   const ground = createGround(renderer);
   scene.add(ground);
@@ -43,13 +29,20 @@ export function createScene(container) {
   // open play area (left of the 300px side panel, above the card hand).
   const PANEL_W = 300;
   const HAND_H = 250; // visible height of the hand cards
+  let boardFraming = true;
   function fitViewport() {
     const w = window.innerWidth;
     const h = window.innerHeight;
     camera.aspect = w / h;
-    camera.setViewOffset(w, h, PANEL_W / 2, HAND_H / 2, w, h);
+    // Rival cities hide the panel and the hand, so the look-at point sits in the true centre.
+    if (boardFraming) camera.setViewOffset(w, h, PANEL_W / 2, HAND_H / 2, w, h);
+    else camera.clearViewOffset();
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
+  }
+  function setBoardFraming(on) {
+    boardFraming = on;
+    fitViewport();
   }
   fitViewport();
   window.addEventListener('resize', fitViewport);
@@ -85,7 +78,27 @@ export function createScene(container) {
     );
   }
 
-  return { renderer, scene, camera, sun, followTarget };
+  return { renderer, scene, camera, sun, followTarget, setBoardFraming };
+}
+
+/**
+ * Cool sky fill plus a warm shadow-casting sun. Layer 1 is the placement ghost's own pass
+ * (placement.js GHOST_LAYER): it needs the same lights, and still casts its shadow on the board.
+ */
+export function createLights(scene) {
+  const sky = new THREE.HemisphereLight(0xdfe8e4, 0x2a2622, 1.3);
+  scene.add(sky);
+  const sun = new THREE.DirectionalLight(0xfff0d6, 2.2);
+  sky.layers.enable(1);
+  sun.layers.enable(1);
+  sun.shadow.camera.layers.enable(1);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.bias = -0.0005;
+  sun.shadow.normalBias = 0.02;
+  Object.assign(sun.shadow.camera, { near: 0.5, far: 60 });
+  scene.add(sun, sun.target);
+  return { sky, sun };
 }
 
 /**
@@ -128,7 +141,7 @@ function createFadeTexture() {
   return texture;
 }
 
-function createGround(renderer) {
+export function createGround(renderer) {
   sandTexture().anisotropy = renderer.capabilities.getMaxAnisotropy();
   const ground = new THREE.Mesh(
     // Subdivided (one piece per 2 cells) so it can bend with the small-planet look (curvature.js).

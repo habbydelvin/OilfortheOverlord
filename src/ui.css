@@ -886,6 +886,21 @@ body.paying #btnReroll {
   gap: 12px;
 }
 
+/* Game Debug: its own corner, above every view, overlay and transition, so it is always reachable. */
+#debugDock {
+  position: fixed;
+  z-index: 100;
+  left: 22px;
+  top: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  pointer-events: none;
+}
+body:has(#debugDock) #leftcol {
+  top: 58px; /* below the Game Debug button */
+}
+
 #libraryLink {
   pointer-events: auto;
   font-size: 12px;
@@ -2398,4 +2413,220 @@ body.striking #mapIcons {
   border-radius: 2px;
   background: color-mix(in srgb, var(--neon) 18%, transparent);
   box-shadow: 0 0 0 1px var(--neon), 0 0 6px 2px var(--neon), inset 0 0 6px 1px var(--neon);
+}
+
+/* ---------- war map globe (src/globeView.js) and rival cities ---------- */
+#viewClouds {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  width: 100%;
+  height: 100%;
+  display: none;
+  pointer-events: none;
+}
+#viewClouds.on {
+  display: block;
+}
+/* Only a real cover/uncover blocks input; the overscroll peek must let the wheel through. */
+#viewClouds.blocking {
+  pointer-events: auto;
+}
+#globeUI {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  pointer-events: none;
+  color: var(--dp-cream, #f0e4c8);
+}
+#globeUI.hidden {
+  display: none;
+}
+.globe-title {
+  position: absolute;
+  top: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 22px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dp-head, var(--gold));
+  text-shadow: 0 2px 8px #000;
+}
+.globe-hint {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 4px;
+  background: rgba(12, 10, 8, 0.55);
+  color: var(--dp-muted, var(--muted));
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.globe-node {
+  position: fixed;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 0 6px;
+  border: 0;
+  background: none;
+  color: var(--dp-cream, #f0e4c8);
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: opacity 0.18s ease;
+}
+.globe-node.off {
+  opacity: 0;
+  pointer-events: none;
+}
+.globe-node i {
+  display: none;
+}
+.globe-node span {
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: rgba(12, 10, 8, 0.62);
+  box-shadow: inset 0 -2px 0 var(--node);
+  text-shadow: 0 1px 2px #000;
+  white-space: nowrap;
+}
+.globe-node.hover span {
+  background: rgba(12, 10, 8, 0.85);
+  color: var(--dp-head, var(--gold));
+}
+.globe-card {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  width: 210px;
+  padding: 10px 12px;
+  border-radius: 4px;
+  background: var(--dp-metal-dark, rgba(16, 14, 12, 0.92));
+  box-shadow: var(--dp-rim, inset 0 0 0 1px rgba(201, 160, 90, 0.45)), 0 10px 24px rgba(0, 0, 0, 0.45);
+  color: var(--dp-cream, #f0e4c8);
+  font-size: 13px;
+  pointer-events: none;
+}
+.globe-card.hidden {
+  display: none;
+}
+.globe-card-name {
+  margin-bottom: 6px;
+  font-size: 16px;
+  color: var(--dp-head, var(--gold));
+}
+.globe-card div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 2px;
+}
+.globe-card span {
+  color: var(--dp-muted, var(--muted));
+}
+.globe-card .globe-card-hint {
+  justify-content: center;
+  margin-top: 8px;
+  color: var(--dp-muted, var(--muted));
+  font-size: 12px;
+  font-style: italic;
+}
+#rivalBar {
+  display: none;
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  z-index: 46;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  background: var(--dp-metal-dark, rgba(16, 14, 12, 0.9));
+  box-shadow: var(--dp-rim, inset 0 0 0 1px rgba(201, 160, 90, 0.45));
+  color: var(--dp-cream, #f0e4c8);
+  pointer-events: auto;
+  transform: translateX(-50%);
+}
+body.rival-view #rivalBar {
+  display: flex;
+}
+#btnRivalBack {
+  border: 0;
+  border-radius: 4px;
+  padding: 6px 10px;
+  background: rgba(232, 191, 104, 0.12);
+  color: var(--gold);
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+#btnRivalBack:hover {
+  background: rgba(232, 191, 104, 0.24);
+}
+#rivalTitle {
+  font-size: 18px;
+  color: var(--dp-head, var(--gold));
+}
+#rivalStats {
+  color: var(--dp-muted, var(--muted));
+  font-size: 13px;
+}
+body.globe-view #top,
+body.rival-view #top {
+  translate: 0 -140%;
+}
+body.globe-view #panel,
+body.rival-view #panel {
+  translate: 110% 0;
+}
+body.globe-view #leftcol,
+body.rival-view #leftcol {
+  translate: -110% 0;
+}
+body.globe-view #hand,
+body.rival-view #hand {
+  translate: 0 120%;
+  visibility: hidden;
+  pointer-events: none;
+}
+body.globe-view #top,
+body.globe-view #panel,
+body.globe-view #leftcol,
+body.rival-view #top,
+body.rival-view #panel,
+body.rival-view #leftcol {
+  opacity: 0;
+  pointer-events: none;
+}
+body.globe-view #mapIcons,
+body.globe-view #ruinBtns,
+body.globe-view #floaters,
+body.globe-view #toast,
+body.globe-view #resTip,
+body.globe-view #inspect,
+body.rival-view #mapIcons,
+body.rival-view #ruinBtns,
+body.rival-view #floaters,
+body.rival-view #toast,
+body.rival-view #resTip,
+body.rival-view #inspect,
+body.globe-view #btnMissile,
+body.globe-view #btnReplayTutorial,
+body.rival-view #btnMissile,
+body.rival-view #btnReplayTutorial {
+  visibility: hidden;
+  pointer-events: none;
 }

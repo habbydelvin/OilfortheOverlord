@@ -168,7 +168,7 @@
           <div class="help-head"><span data-zh="操作说明">Controls</span><span id="helpClose">✕</span></div>
           <div
             class="help-body"
-            data-zh="<b>1–5</b> / 点击卡牌 · 选择板块<br /><b>R</b> / 右键 · 旋转 &nbsp; <b>F</b> · 反向旋转<br /><b>点击</b> · 放置 &nbsp; <b>Esc</b> · 取消<br /><b>拖动卡牌</b> 到地图上 · 放置<br /><b>Enter</b> · 下一回合<br /><b>拖动</b> / <b>WASD</b> · 平移 &nbsp; <b>滚轮</b> · 缩放<br /><b>Q / E</b> · 旋转视角 &nbsp; <b>C</b> · 回到中心"
+            data-zh="<b>1–5</b> / 点击卡牌 · 选择板块<br /><b>R</b> / 右键 · 旋转 &nbsp; <b>F</b> · 反向旋转<br /><b>点击</b> · 放置 &nbsp; <b>Esc</b> · 取消<br /><b>拖动卡牌</b> 到地图上 · 放置<br /><b>Enter</b> · 下一回合<br /><b>拖动</b> / <b>WASD</b> · 平移 &nbsp; <b>滚轮</b> · 缩放<br /><b>Q / E</b> · 旋转视角 &nbsp; <b>C</b> · 回到中心<br /><b>G</b> · 战争地图"
           >
             <b>1–5</b> / click card · select piece<br />
             <b>R</b> / right-click · rotate &nbsp; <b>F</b> · rotate back<br />
@@ -176,11 +176,15 @@
             <b>Drag a card</b> onto the board · place<br />
             <b>Enter</b> · next turn<br />
             <b>Drag</b> / <b>WASD</b> · pan &nbsp; <b>Wheel</b> · zoom<br />
-            <b>Q / E</b> · turn camera &nbsp; <b>C</b> · recenter
+            <b>Q / E</b> · turn camera &nbsp; <b>C</b> · recenter<br />
+            <b>G</b> · war map
           </div>
           <button id="btnTutorial" type="button" data-zh="重玩教程">Replay tutorial</button>
         </div>
         <button id="btnLegend" type="button" data-zh="图标说明">Icon legend</button>
+      </div>
+      <!-- Game Debug lives outside #leftcol so no view (globe, rival city, shop, strike) ever hides it. -->
+      <div id="debugDock">
         <button id="btnDebug" class="hidden">Game Debug</button>
         <div id="debug" class="hidden"></div>
       </div>
@@ -208,6 +212,17 @@
         <div class="shop-band"><div id="pickCards"></div></div>
         <div class="shop-foot"></div>
       </div>
+      <div id="globeUI" class="hidden">
+        <div class="globe-title">War Map</div>
+        <div id="globeLabels"></div>
+        <div id="globeCard" class="globe-card hidden"></div>
+        <div class="globe-hint" data-zh="拖动旋转 · 点击城市前往 · Esc 返回蜂巢城">Drag to spin · Click a city to visit · Esc returns to Hive City</div>
+      </div>
+      <header id="rivalBar">
+        <button id="btnRivalBack" type="button">◀ <span data-zh="战争地图">War Map</span></button>
+        <div id="rivalTitle"></div>
+        <div id="rivalStats"></div>
+      </header>
       <div id="gameover" class="hidden">
         <div class="box">
           <h1 data-zh="城市已陷落">The city has fallen</h1>
@@ -226,6 +241,8 @@
       <div id="coach"></div>
     </div>
     <!-- Fade to black between the tutorial and Year 1. -->
+    <!-- Cloud bank between the board, the globe and rival cities (src/cloudTransition.js). -->
+    <canvas id="viewClouds"></canvas>
 
     <script type="module" src="/src/main.js"></script>
   </body>

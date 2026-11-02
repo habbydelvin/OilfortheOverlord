@@ -49,6 +49,7 @@ const bends = (m) => !m.isMeshDepthMaterial && !m.isMeshDistanceMaterial && !m.u
 
 function bend(material, shader) {
   if (!bends(material)) return;
+  if (shader.vertexShader.includes('curveClip(')) return; // already bent (a re-wrapped onBeforeCompile)
   Object.assign(shader.uniforms, uniforms);
   const src = shader.vertexShader;
   const end = src.lastIndexOf('}'); // main() is the last function of every vertex shader here
@@ -102,6 +103,12 @@ export function updateCurve(camera, target) {
   uniforms.uCurveT.value.set(tmp.x, tmp.y, tmp.z, k);
   uniforms.uCurveU.value.set(0, 1, 0).transformDirection(camera.matrixWorldInverse);
   Object.assign(state, { k, cx: target.x, cz: target.z, camera });
+}
+
+/** Turn the bend off for the next renders (views with their own camera, e.g. the War Map globe). */
+export function flattenCurve() {
+  uniforms.uCurveT.value.w = 0;
+  Object.assign(state, { k: 0, camera: null });
 }
 
 /** How far the drawing drops a ground point at (x, z). */
