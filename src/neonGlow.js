@@ -15,11 +15,13 @@ export const NEON = {
   farm: 0x39ff6a,
   station: 0xb44dff,
   settlement: 0xff8a2a,
+  milfactory: 0xff5a3a,
 };
 const BOOSTERS = {
   farm: ['pump', 'oasis', 'capital'],
   station: ['tarpit', 'capital', 'refinery'],
   settlement: ['labourcamp'],
+  milfactory: ['missilelab', 'warhead'],
 };
 /**
  * Glow by number of boosting neighbours (index 1-4): overall opacity; the ground halo's reach into the tile (share

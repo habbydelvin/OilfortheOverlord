@@ -1,7 +1,7 @@
 import './cards.css';
 import './library.css';
 import { SHAPES } from './pieces.js';
-import { ACTIONS, ICONS, SHOP_ITEMS, TERRAINS, TERRAIN_KEYS, cardArtHTML, cardDef, cardText, hex, snapHTML } from './tiles.js';
+import { ACTIONS, ICONS, SHOP_ITEMS, SHOP_REQUIRES, TERRAINS, TERRAIN_KEYS, cardArtHTML, cardDef, cardText, hex, snapHTML } from './tiles.js';
 import { WORKERS } from './economy.js';
 import { SCALE, P, loadScaleConfig, eventPct, FIRST_EVENT_YEAR } from './scalingConfig.js';
 import { EVENTS, KIND_LABEL } from './events.js';
@@ -132,6 +132,15 @@ function availability(key, terrain) {
   if (key === 'raider') return L('Starvation only', '仅因饥荒出现');
   if (terrain.bandit) return L('3×3 block of Wasteland, end of season', '3×3 荒地区域，季节结束时');
   if (key === 'ruins') return L('Mystery site only', '仅来自神秘地点');
+  if (SHOP_REQUIRES[key]) {
+    const need = TERRAINS[SHOP_REQUIRES[key]]?.name ?? SHOP_REQUIRES[key];
+    return L(
+      `After unlocking ${need} · then locked until bought (${PRICE[key]} barrels)`,
+      `先解锁${need} · 再购买解锁（${PRICE[key]} 桶）`,
+    );
+  }
+  if (key === 'milfactory' || key === 'intercept')
+    return L(`Locked until bought (${PRICE[key]} barrels) · then ${terrain.weight}`, `购买前锁定（${PRICE[key]} 桶）· 之后 ${terrain.weight}`);
   if (terrain.weight <= 0) return L('Never', '从不');
   if (PRICE[key]) return L(`Locked until bought (${PRICE[key]} barrels) · then ${terrain.weight}`, `购买前锁定（${PRICE[key]} 桶）· 之后 ${terrain.weight}`);
   const share = Math.round((terrain.weight / bagWeight) * 1000) / 10;
@@ -194,8 +203,11 @@ function statLines(stats) {
 function badgeHTML(key) {
   const workers = WORKERS[key] ?? 0;
   const food = -Math.min(0, TERRAINS[key]?.stats?.food ?? 0);
+  const oil = -Math.min(0, TERRAINS[key]?.stats?.oil ?? 0);
   if (workers) return `<div class="badge">-${workers}${ICONS.manpower}</div>`;
   if (food) return `<div class="badge">-${food}${ICONS.food}</div>`;
+  if (oil) return `<div class="badge">-${oil}${ICONS.oil}</div>`;
+  if (key === 'overtime') return `<div class="badge">-2${ICONS.oil}</div>`;
   return `<div class="badge free">0${ICONS.manpower}</div>`;
 }
 
@@ -265,8 +277,21 @@ function actionHTML(key) {
         <div><dt>${L('Category', '类别')}</dt><dd>${L('action', CATEGORY_ZH.action)}</dd></div>
         <div><dt>${L('Area', '范围')}</dt><dd>${area}</dd></div>
         <div><dt>${L('Uses', '次数')}</dt><dd>${L('One, then discarded', '一次，之后弃掉')}</dd></div>
-        <div><dt>${L('Shop', '市场')}</dt><dd>${L(`${PRICE[key]} barrels`, `${PRICE[key]} 桶`)}</dd></div>
-        <div><dt>${L('Draw', '抽取')}</dt><dd>${L('Locked until bought · then', '购买前锁定 · 之后')} ${a.weight} · ${Math.round((a.weight / bagWeight) * 1000) / 10}%</dd></div>
+        <div><dt>${L('Shop', '市场')}</dt><dd>${
+          PRICE[key]
+            ? L(`${PRICE[key]} barrels`, `${PRICE[key]} 桶`)
+            : L('Produced by a Military Factory', '由军事工厂生产')
+        }</dd></div>
+        <div><dt>${L('Draw', '抽取')}</dt><dd>${
+          SHOP_REQUIRES[key]
+            ? L(
+                `After unlocking ${TERRAINS[SHOP_REQUIRES[key]].name} · locked until bought`,
+                `先解锁${TERRAINS[SHOP_REQUIRES[key]].name} · 再购买解锁`,
+              )
+            : a.weight
+              ? `${L('Locked until bought · then', '购买前锁定 · 之后')} ${a.weight} · ${Math.round((a.weight / bagWeight) * 1000) / 10}%`
+              : L('Never drawn', '从不抽取')
+        }</dd></div>
       </dl>
     </article>`;
 }

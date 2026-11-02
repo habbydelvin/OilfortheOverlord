@@ -240,6 +240,14 @@ body {
   color: var(--gold);
 }
 
+#panel .stat.missile .big {
+  font-size: 28px;
+}
+
+#panel .stat.missile.hidden {
+  display: none;
+}
+
 #panel .big {
   font-size: 46px;
   font-weight: 600;
@@ -1012,6 +1020,19 @@ body.paying #btnReroll {
 }
 #hand .card.leaving {
   pointer-events: none;
+}
+
+/* Missile produced at a factory: GPU transform from the tile into the hand. */
+.flying-card {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 90;
+  pointer-events: none;
+  margin: 0;
+  transition: none !important;
+  will-change: transform;
+  filter: drop-shadow(0 14px 20px rgba(0, 0, 0, 0.7));
 }
 
 /*

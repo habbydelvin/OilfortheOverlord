@@ -2,9 +2,10 @@ import { DIRS } from './grid.js';
 import { TERRAINS } from './tiles.js';
 import { SCALE, scaled } from './scalingConfig.js';
 import { L } from './i18n.js';
+import { FACTORY_OIL } from './arsenal.js';
 
 /** Workers each building needs to run. */
-export const WORKERS = { farm: 1, station: 1, refinery: 1 };
+export const WORKERS = { farm: 1, station: 1, refinery: 1, missilelab: 2, warhead: 2 };
 
 /**
  * Calculates one season of the economy from the current grid.
@@ -235,6 +236,8 @@ export function computeEconomy(grid, state = {}) {
   // Siphoners tap the pipelines: a share of this season's oil (never below 0).
   const banditOil = camps.oil * SCALE.banditOil;
   const oilStolen = Math.min(oilMade, banditOil);
+  const factoryOil = (counts.milfactory ?? 0) * FACTORY_OIL;
+  for (const per of perCell) if (per.terrain === 'milfactory') per.oil -= FACTORY_OIL;
   const oil = oilMade - oilStolen;
 
   // Per-tile: farms grow at the staffing rate; final oil is shared out over stations by their crude
@@ -275,6 +278,7 @@ export function computeEconomy(grid, state = {}) {
     taxOil,
     taxSlots,
     oilMade,
+    factoryOil,
     mods,
     foodGrown,
     foodEaten: totalEaten,

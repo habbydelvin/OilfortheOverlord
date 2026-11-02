@@ -5,12 +5,12 @@ import './themeShine.js';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
-import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning } from './sfx.js';
+import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, deal as dealSfx, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning } from './sfx.js';
 import { CameraRig } from './controls.js';
-import { Grid, DIRS, key as plotKey } from './grid.js';
+import { Grid, DIRS, inWorld, key as plotKey } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
 import { preloadCardArt } from './tiles.js';
-import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
+import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, shopReady, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
 import { hasBlockout, loadProgress, breathe, decodeImage } from './models.js';
 import { Frontier } from './frontier.js';
 import { Placement, GHOST_LAYER, PREVIEW_PARAMS, PREVIEW_DEFAULTS, loadPreviewConfig, savePreviewConfig, clearPreviewConfig } from './placement.js';
@@ -25,6 +25,7 @@ import { Mysteries } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
 import { computeEconomy, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS } from './economy.js';
+import { FACTORY_OIL, OVERTIME_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile } from './arsenal.js';
 import { Payout } from './payout.js';
 import { EVENTS, KIND_LABEL, drawEvent } from './events.js';
 import { Dialogue } from './dialogue.js';
@@ -214,7 +215,7 @@ let piecesPlaced = 0;
 // Turn state: a turn is a season, a round is four seasons, tribute after Winter.
 /** Food in the store at the start, so a bad first year isn't an instant loss. */
 const STARTING_FOOD = 5;
-const turn = { strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, event: null, metStreak: 0, lastMissed: false, unlocked: new Set(), pinned: [], coins: 0, total: 0, food: STARTING_FOOD, population: 0, quota: FIRST_QUOTA, ...freshTargetState() };
+const turn = { strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, event: null, metStreak: 0, lastMissed: false, unlocked: new Set(), pinned: [], missileHeld: [], coins: 0, total: 0, food: STARTING_FOOD, population: 0, quota: FIRST_QUOTA, ...freshTargetState() };
 
 /**
  * Yearly target state (see targets.js).
@@ -359,7 +360,7 @@ function addTile(x, z, terrain, delay = 0, instant = false, { bare = false } = {
   mesh.position.set(x, 0, z);
   mesh.visible = instant;
   tiles.add(mesh);
-  grid.set(x, z, { terrain, mesh, onRuins });
+  grid.set(x, z, { terrain, mesh, onRuins, missileProgress: terrain === 'milfactory' ? 0 : undefined });
   if (!instant) anims.push({ mesh, t: -delay, landed: false });
 }
 
@@ -509,6 +510,16 @@ function pickStrikeTargets(count, capital = false) {
   return picked.map(({ x, z }) => ({ x, z }));
 }
 
+/** Spend 3 oil at an unused adjacent Intercept Network to save this tile from one incoming hit. */
+function tryIntercept(x, z, used) {
+  const nets = interceptorsBeside(grid, x, z).filter((n) => !used.has(`${n.x},${n.z}`));
+  if (!nets.length || turn.stockpile < INTERCEPT_OIL) return false;
+  turn.stockpile -= INTERCEPT_OIL;
+  used.add(`${nets[0].x},${nets[0].z}`);
+  showOil(turn.stockpile, true);
+  return true;
+}
+
 /** A missile lands: the tile becomes a Toxic Crater (ruins under it are gone too). Returns the tile's name. */
 function craterAt(x, z) {
   const cell = grid.get(x, z);
@@ -563,6 +574,7 @@ function strikeCamera(targets) {
 async function playMissileStrike(targets, { convert = true, restoreCamera = true, follow = false, prelude = null } = {}) {
   const run = runId;
   const lost = [];
+  const interceptUsed = new Set();
   if (!targets.length) return lost;
   striking = true;
   eventOpen = true;
@@ -623,6 +635,7 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
     },
     onCover: ({ x, z }) => {
       if (!convert || run !== runId) return;
+      if (tryIntercept(x, z, interceptUsed)) return;
       const name = craterAt(x, z);
       if (name) lost.push(name);
     },
@@ -1103,6 +1116,137 @@ function shadeIdle(e = economyNow()) {
   zoomIcons.setBoosts(e.boosts); // the boosters' "+n" map icons
 }
 
+const gridHasFactory = () => [...grid.cells.values()].some((c) => c.terrain === 'milfactory');
+function missileHandCount() {
+  return (turn.missileHeld?.length ?? 0) + missileFlights.length + (missileFlying ? 1 : 0);
+}
+
+const flyV = new THREE.Vector3();
+function screenOf(x, z) {
+  flyV.set(x, 0.85, z).project(camera);
+  return { x: (flyV.x * 0.5 + 0.5) * window.innerWidth, y: (-flyV.y * 0.5 + 0.5) * window.innerHeight };
+}
+
+function syncProducedMissiles() {
+  if (!turn.missileHeld) turn.missileHeld = [];
+  hand.setProduced(turn.missileHeld);
+  updateHUD();
+}
+
+/** First missile takes this long; each next one is this fraction as long, down to FLY_MIN. */
+const FLY_FIRST = 0.7;
+const FLY_DECAY = 0.78;
+const FLY_MIN = 0.16;
+
+/** Card flies from a factory tile into the hand (transform + arc, ease-in, like a scoring card). */
+function flyMissileCard(cell, kind, duration, done) {
+  const t = cardDef(kind);
+  const el = document.createElement('div');
+  el.className = 'card action flying-card';
+  el.style.setProperty('--top', hex(t.top));
+  el.style.setProperty('--edge', hex(t.edge));
+  el.innerHTML = `<div class="art">${cardArtHTML(kind)}</div>${snapHTML(t)}<div class="name">${t.name}</div><div class="rule">${cardText(t)}</div>`;
+  document.body.appendChild(el);
+  const from = cell ? screenOf(cell.x, cell.z) : { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+  const pose = (x, y, s, rot) => {
+    el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%) scale(${s}) rotate(${rot}deg)`;
+  };
+  pose(from.x, from.y, 0.38, -12);
+  const gen = flyGen;
+  const t0 = performance.now();
+  const dur = Math.max(80, duration * 1000);
+  const step = (now) => {
+    if (gen !== flyGen) {
+      el.remove();
+      return;
+    }
+    const u = Math.min(1, (now - t0) / dur);
+    const e = u * u; // ease-in: slow off the tile, faster into the hand
+    const hr = $('hand').getBoundingClientRect();
+    const toX = hr.left + hr.width * 0.5;
+    const toY = hr.top + Math.min(90, hr.height * 0.28);
+    const x = from.x + (toX - from.x) * e;
+    const y = from.y + (toY - from.y) * e - 110 * 4 * u * (1 - u);
+    pose(x, y, 0.38 + 0.5 * e, -12 * (1 - e));
+    if (u < 1) {
+      requestAnimationFrame(step);
+      return;
+    }
+    el.remove();
+    dealSfx();
+    done?.();
+  };
+  requestAnimationFrame(step);
+}
+
+const missileFlights = [];
+let missileFlying = false;
+let missileFlyBeat = 0;
+let flyGen = 0;
+
+function queueMissile(kind, cell) {
+  missileFlights.push({ kind, cell });
+  pumpMissileFlights();
+}
+
+const missileFlightWaiters = [];
+
+function whenMissileFlightsDone(cb) {
+  if (!missileFlying && !missileFlights.length) cb();
+  else missileFlightWaiters.push(cb);
+}
+
+function pumpMissileFlights() {
+  if (missileFlying) return;
+  if (!missileFlights.length) {
+    const waiters = missileFlightWaiters.splice(0);
+    for (const cb of waiters) cb();
+    return;
+  }
+  missileFlying = true;
+  const { kind, cell } = missileFlights.shift();
+  const duration = Math.max(FLY_MIN, FLY_FIRST * FLY_DECAY ** missileFlyBeat);
+  missileFlyBeat++;
+  flyMissileCard(cell, kind, duration, () => {
+    if (!turn.missileHeld) turn.missileHeld = [];
+    turn.missileHeld.push(kind);
+    syncProducedMissiles();
+    missileFlying = false;
+    pumpMissileFlights();
+  });
+}
+
+function resetMissileFlights() {
+  flyGen++;
+  missileFlights.length = 0;
+  missileFlying = false;
+  missileFlyBeat = 0;
+  missileFlightWaiters.length = 0;
+}
+
+/** Pay oil and advance each Military Factory. Completing a year pins Missile cards. */
+function runFactories() {
+  missileFlyBeat = 0;
+  const idle = new Set((economyNow().perCell ?? []).filter((p) => p.idle).map((p) => `${p.x},${p.z}`));
+  const need = yearLength();
+  const made = [];
+  for (const cell of grid.cells.values()) {
+    if (cell.terrain !== 'milfactory') continue;
+    if (turn.stockpile < FACTORY_OIL) {
+      made.push({ unpaid: true });
+      continue;
+    }
+    turn.stockpile -= FACTORY_OIL;
+    cell.missileProgress = (cell.missileProgress ?? 0) + 1;
+    if (cell.missileProgress < need) continue;
+    cell.missileProgress = 0;
+    const y = factoryYield(grid, cell, idle);
+    for (let i = 0; i < y.count; i++) queueMissile(y.kind, cell);
+    made.push(y);
+  }
+  return made;
+}
+
 function updateHUD() {
   const n = grid.size;
   const quota = turn.quota;
@@ -1163,8 +1307,14 @@ function updateHUD() {
   $('resMpD').className = e.idle ? 'down' : '';
   shadeIdle(e);
   // Oil: big number = the stockpile (the Overlord takes it all after Winter), small = this season's yield.
-  $('resOilD').textContent = `(+${e.oil})`;
+  $('resOilD').textContent = e.factoryOil ? `(+${e.oil} −${e.factoryOil})` : `(+${e.oil})`;
   $('resOilD').className = e.oil > 0 ? 'up' : '';
+  const missiles = missileHandCount();
+  const missileEl = $('missileStock');
+  if (missileEl) {
+    missileEl.textContent = missiles;
+    $('missileStat')?.classList.toggle('hidden', !missiles && !gridHasFactory());
+  }
 
   // Food stores: excess food banked for lean seasons (capacity from the Capitals).
   showStore(turn.food, e.foodCap);
@@ -1346,6 +1496,11 @@ function updateInspect(cell) {
       ),
     );
   if (isCamp(c.terrain)) notes.push(L(`Right now: ${campEffect(c.terrain)}`, `当前：${campEffect(c.terrain)}`));
+  if (c.terrain === 'milfactory') {
+    const need = yearLength();
+    const have = c.missileProgress ?? 0;
+    notes.push(L(`Missile progress ${have} / ${need} seasons`, `导弹进度 ${have} / ${need} 季`));
+  }
   if (t.buildable) notes.push(L('A building can be placed on top of this tile', '可以在这个地块上放置建筑'));
   const KINDS = { building: L('building', '建筑'), land: L('land', '地形'), junk: L('junk', '废料') };
   el.innerHTML = `
@@ -1367,6 +1522,7 @@ function endTurn() {
   if (payout.active) {
     if (previewing) cancelPreview();
     else {
+      oilFlights.finish();
       payout.skip(); // pressing again fast-forwards
       return;
     }
@@ -1381,7 +1537,22 @@ function endTurn() {
   hand.select(-1);
   tutorial.notify('endTurn');
   const e = economyNow();
-  runPayout(e, () => settleTurn(e));
+  runPayout(e, () => finishSeasonFx(e));
+}
+
+/** Pause after missiles land so the draw is a separate beat. */
+const MISSILE_HOLD = 0.4;
+
+/** Oil has landed: factories pay and produce, missiles fly into the hand, then the year can wrap up. */
+function finishSeasonFx(e) {
+  turn.stockpile += e.oil;
+  turn.total += e.oil;
+  const factoryWork = runFactories();
+  const made = factoryWork.some((w) => w.count);
+  whenMissileFlightsDone(() => {
+    if (made) setTimeout(() => settleTurn({ ...e, oil: 0, factoryWork }), MISSILE_HOLD * 1000);
+    else settleTurn({ ...e, oil: 0, factoryWork });
+  });
 }
 
 /** Debug (Space): play the payout sequence without ending the turn or changing anything. */
@@ -1390,6 +1561,7 @@ function previewPayout() {
   if (tutorialBlocks()) return;
   if (payout.active) {
     if (!previewing) {
+      oilFlights.finish();
       payout.skip(); // a real turn is playing: just finish it
       return;
     }
@@ -1475,9 +1647,10 @@ function runPayout(e, onDone) {
       }
     },
     () => {
-      oilFlights.finish(); // anything still in the air lands now, before the season settles
-      document.body.classList.remove('paying');
-      onDone();
+      oilFlights.whenIdle(() => {
+        document.body.classList.remove('paying');
+        onDone();
+      });
     },
   );
 }
@@ -1710,6 +1883,8 @@ function settleTurn(e) {
   turn.stockpile += e.oil;
   turn.total += e.oil;
   turn.food = e.storeAfter;
+  const factoryWork = e.factoryWork ?? [];
+  yearEnds = turn.season >= yearLength() - 1 || turn.stockpile >= turn.quota;
 
   const sgn = (n) => {
     const r = Math.round(n);
@@ -1728,6 +1903,13 @@ function settleTurn(e) {
   let kind = 'good';
   if (e.foodWasted)
     lines.push(`<span class="bad">${L(`The stores are full: ${e.foodWasted} food spoiled.`, `粮仓已满：${e.foodWasted} 食物腐坏了。`)}</span>`);
+  const missilesMade = factoryWork.filter((w) => w.count).reduce((s, w) => s + w.count, 0);
+  if (missilesMade)
+    lines.push(
+      `<span class="good">${L(`Military Factory produced ${missilesMade} missile${missilesMade === 1 ? '' : 's'}.`, `军事工厂生产了 ${missilesMade} 枚导弹。`)}</span>`,
+    );
+  if (factoryWork.some((w) => w.unpaid))
+    lines.push(`<span class="bad">${L('A Military Factory had no oil and sat idle.', '一座军事工厂没有石油，未能开工。')}</span>`);
 
   // Bandits already camped: what they took this season.
   if (e.oilStolen)
@@ -2253,6 +2435,7 @@ function dealNewHand() {
   hand.deal(handSize() + waste, [...turn.pinned, ...Array(waste).fill('wasteland')]);
   turn.pinned = [];
   holdingPurchases = false;
+  syncProducedMissiles();
   updateHUD();
   pop($('oilStock'));
 }
@@ -2272,7 +2455,8 @@ let shopRerolls = 0;
 const shopRerollCost = () => SHOP_REROLL_BASE + shopRerolls;
 
 function stockShop() {
-  shopStock = [...SHOP_ITEMS].sort(() => Math.random() - 0.5).slice(0, SHOP_SLOTS);
+  const pool = SHOP_ITEMS.filter(([k]) => shopReady(k, turn.unlocked));
+  shopStock = [...pool].sort(() => Math.random() - 0.5).slice(0, SHOP_SLOTS);
 }
 
 function openShop() {
@@ -2283,6 +2467,7 @@ function openShop() {
   // The old hand is gone; bought cards are dealt into the empty hand as they are bought.
   hand.clear();
   turn.pinned.forEach((k) => hand.addPinned(k));
+  syncProducedMissiles();
   holdingPurchases = true;
   renderShop(true);
   // Restart the open animation every time.
@@ -2306,14 +2491,74 @@ function debugEvent() {
  * next year's target dialogue); otherwise nothing is delivered (a strike and the failure speech).
  * The skipped season's own oil is ignored; food and population still tick once.
  */
-function debugSkipYear(met) {
+/** Drop a Military Factory next to the Capital if the board has none. */
+function debugEnsureFactory() {
+  const have = [...grid.cells.values()].filter((c) => c.terrain === 'milfactory');
+  if (have.length) return { cells: have, placed: false };
+  const cap = mainCapital() ?? { x: 0, z: 0 };
+  const ok = (x, z) => inWorld(x, z) && grid.get(x, z)?.terrain !== 'capital';
+  let spot = null;
+  for (const [dx, dz] of DIRS) {
+    const x = cap.x + dx;
+    const z = cap.z + dz;
+    if (ok(x, z) && !grid.has(x, z)) {
+      spot = [x, z];
+      break;
+    }
+  }
+  if (!spot) {
+    for (const [dx, dz] of DIRS) {
+      const x = cap.x + dx;
+      const z = cap.z + dz;
+      const t = grid.get(x, z)?.terrain;
+      if (ok(x, z) && t && !isBuilding(t)) {
+        spot = [x, z];
+        break;
+      }
+    }
+  }
+  const [x, z] = spot ?? [cap.x + 1, cap.z];
+  addTile(x, z, 'milfactory');
+  shadeIdle();
+  updateHUD();
+  return { cells: [grid.get(x, z)], placed: true };
+}
+
+/** G: put a factory on the board, then play the season settle so missiles fly from it. */
+function debugMissileSettle() {
+  if (turn.over || striking || shopOpen || eventOpen || payout.active) {
+    return L('Finish the current screen first', '请先结束当前界面');
+  }
+  const { cells, placed } = debugEnsureFactory();
+  for (const c of cells) c.missileProgress = yearLength() - 1;
+  turn.stockpile = Math.max(turn.stockpile, FACTORY_OIL * Math.max(1, cells.length));
+  const go = () => {
+    hand.select(-1);
+    const e = economyNow();
+    runPayout(e, () => finishSeasonFx(e));
+  };
+  if (placed) setTimeout(go, (DROP.fall + 0.2) * 1000);
+  else go();
+  return placed
+    ? L('Military Factory placed · settling', '已放下军事工厂 · 开始结算')
+    : L('Settling Military Factory', '正在结算军事工厂');
+}
+
+function debugSkipYear(met, surplus = 0) {
   if (turn.over) return 'Game over: restart first';
   if (shopOpen || eventOpen || payout.active) return 'Finish the current screen first';
   if (previewing) cancelPreview();
   hand.select(-1);
   turn.season = yearLength() - 1;
   turn.stockpile = met ? turn.quota : 0;
-  settleTurn({ ...economyNow(), oil: 0 });
+  const factoryWork = runFactories();
+  whenMissileFlightsDone(() => {
+    settleTurn({ ...economyNow(), oil: 0, factoryWork });
+    if (met && surplus && shopOpen) {
+      turn.coins = surplus;
+      renderShop();
+    }
+  });
   return met ? `Skipped year: tribute met` : 'Skipped year: tribute missed';
 }
 
@@ -2417,7 +2662,7 @@ let pickOptions = [];
 
 /** Show 3 random market tiles; the clicked one is unlocked and put in the next hand for free. */
 function openCardPick() {
-  pickOptions = SHOP_ITEMS.filter(([k]) => !BASIC_SHOP.has(k)).sort(() => Math.random() - 0.5).slice(0, PICK_SLOTS);
+  pickOptions = SHOP_ITEMS.filter(([k]) => !BASIC_SHOP.has(k) && shopReady(k, turn.unlocked)).sort(() => Math.random() - 0.5).slice(0, PICK_SLOTS);
   eventOpen = true;
   hand.select(-1);
   renderCardPick(true);
@@ -2636,9 +2881,22 @@ function tryPlace() {
     return;
   }
   if (ACTIONS[piece.terrain]) {
+    if (piece.terrain === 'overtime' && turn.stockpile < OVERTIME_OIL) {
+      placement.reject();
+      buzz();
+      toast(L(`Need ${OVERTIME_OIL} oil to work overtime`, `熬夜加班需要 ${OVERTIME_OIL} 石油`), 'bad', 1600);
+      return;
+    }
+    const played = piece.terrain;
     hand.consume();
-    if (piece.terrain === 'spark') spark(cells);
-    else if (piece.terrain === 'militia') militia(...cells[0]);
+    if (isPlayerMissile(played)) {
+      const i = turn.missileHeld.indexOf(played);
+      if (i >= 0) turn.missileHeld.splice(i, 1);
+    }
+    if (played === 'spark') spark(cells);
+    else if (played === 'militia') militia(...cells[0]);
+    else if (played === 'missile' || played === 'missile2') firePlayerMissile(cells);
+    else if (played === 'overtime') workOvertime(...cells[0]);
     else if (piece.terrain === 'demolish2') {
       const targets = placement.demolishable(cells);
       targets.forEach(([x, z]) => demolish(x, z, true));
@@ -2669,11 +2927,42 @@ function tryPlace() {
  * with the resource icon, in the payout label style. Nothing for tiles that cost nothing.
  */
 const costV = new THREE.Vector3();
+function firePlayerMissile(cells) {
+  const targets = placement.missileable(cells);
+  targets.forEach(([x, z]) => demolish(x, z, true));
+  boom();
+  toast(
+    L(`Missile destroyed ${targets.length} building${targets.length === 1 ? '' : 's'}`, `导弹摧毁了 ${targets.length} 座建筑`),
+    'good',
+  );
+  updateHUD();
+}
+
+function workOvertime(x, z) {
+  const cell = grid.get(x, z);
+  turn.stockpile -= OVERTIME_OIL;
+  cell.missileProgress = (cell.missileProgress ?? 0) + 1;
+  const need = yearLength();
+  if (cell.missileProgress >= need) {
+    cell.missileProgress = 0;
+    const idle = new Set((economyNow().perCell ?? []).filter((p) => p.idle).map((p) => `${p.x},${p.z}`));
+    const y = factoryYield(grid, cell, idle);
+    missileFlyBeat = 0;
+    for (let i = 0; i < y.count; i++) queueMissile(y.kind, cell);
+    toast(L(y.count > 1 ? 'Overtime finished missiles' : 'Overtime finished a missile', '加班赶出了导弹'), 'good');
+  } else {
+    toast(L(`Factory progress ${cell.missileProgress} / ${need}`, `工厂进度 ${cell.missileProgress} / ${need}`), 'good');
+  }
+  showOil(turn.stockpile, true);
+  updateHUD();
+}
+
 function showPlacementCost(piece, cells) {
-  const { workers, food } = pieceCost(piece);
+  const { workers, food, oil } = pieceCost(piece);
   const rows = [];
   if (workers) rows.push(`<div class="row neg"><b>-${workers}</b>${ICONS.manpower}</div>`);
   if (food) rows.push(`<div class="row neg"><b>-${food}</b>${ICONS.food}<span>${L('/ season', '/ 季')}</span></div>`);
+  if (oil && piece.terrain === 'milfactory') rows.push(`<div class="row neg"><b>-${oil}</b>${ICONS.oil}<span>${L('/ season', '/ 季')}</span></div>`);
   if (!rows.length) return;
   const cx = cells.reduce((s, c) => s + c[0], 0) / cells.length;
   const cz = cells.reduce((s, c) => s + c[1], 0) / cells.length;
@@ -2692,7 +2981,7 @@ function showPlacementCost(piece, cells) {
  * if it makes 0 (a Refinery with no station beside it). Idle ones don't. Upkeep isn't charged. A tile
  * next to a Capital triggers twice, as in the season payout.
  */
-const triggers = (p) => cardDef(p.terrain)?.trigger === 'On trigger' && !p.idle;
+const triggers = (p) => cardDef(p.terrain)?.trigger === 'On trigger' && !p.idle && p.terrain !== 'milfactory';
 function spark(cells) {
   const area = new Set(cells.map(([x, z]) => `${x},${z}`));
   const e = economyNow();
@@ -2813,6 +3102,11 @@ window.addEventListener('keydown', (e) => {
   else if (dev && k === 'v' && !e.repeat) debugEvent();
   else if (dev && k === 't' && !e.repeat) debugTarget(e.shiftKey);
   else if (dev && k === 'x' && !e.repeat) setExpansionMode(!grid.expansionMode);
+  else if (!RELEASE && k === 'g' && !e.repeat) {
+    if (tutorial.active) return tutorial.nudge();
+    const msg = debugMissileSettle();
+    toast(msg, msg.includes('Finish') || msg.includes('请先') ? 'bad' : 'good');
+  }
   else if (k === 'enter') endTurn();
 });
 
@@ -2907,6 +3201,7 @@ function resetIsland(opts) {
   expansion.clear();
   fog.reset(grid);
   piecesPlaced = 0;
+  resetMissileFlights();
   Object.assign(turn, {
     round: 1,
     season: 0,
@@ -2925,6 +3220,7 @@ function resetIsland(opts) {
     seenRebels: false, // first-contact scenes, once per run
     seenBandits: false,
     pinned: [],
+    missileHeld: [],
     coins: 0,
     shopMult: 1,
     ...freshTargetState(),

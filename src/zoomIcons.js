@@ -3,7 +3,7 @@ import { ICONS } from './tiles.js';
 
 /**
  * Map icons: when the camera zooms out, a resource icon floats over each tile
- * (food / oil / manpower, a crown on the Capital, a ruin over Pre-war Ruins).
+ * (food / oil / manpower / missile, a crown on the Capital, a ruin over Pre-war Ruins).
  * Boosters (Water Pump, Oasis, Tar Pit, Refinery) get their own icon with a live "+n" tag: what they add to their
  * neighbours this season (for the Refinery, the extra oil its multiplier makes).
  * They fade out as you zoom back in. Tunable in Game Debug → Map icons.
@@ -65,12 +65,16 @@ const TAR =
 const REFINERY =
   '<svg class="ico map-refinery" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 2.2c-1.5 1.6-2 2.9-1.2 4.2.4-.8 1-1.2 1.6-1.4-.2 1 .2 1.7 1 2 .8-1.4.4-3-1.4-4.8z" fill="#ffb347" stroke="#1c1c1c" stroke-width="0.9" stroke-linejoin="round"/><rect x="8.2" y="7" width="6" height="14" rx="2" fill="#9aa3ab" stroke="#1c1c1c" stroke-width="1.3"/><path d="M8.6 10.6h5.2M8.6 14.4h5.2M8.6 18.2h5.2" stroke="#c0392b" stroke-width="1.5"/><rect x="15.4" y="13" width="5" height="8" rx="1.6" fill="#d0782a" stroke="#1c1c1c" stroke-width="1.3"/><path d="M14.2 16h1.2" stroke="#1c1c1c" stroke-width="1.3"/><path d="M3 21.2h18" stroke="#1c1c1c" stroke-width="1.6" stroke-linecap="round"/></svg>';
 
+/** Military Factory: a steel missile (same silhouette as the HUD launch button). */
+const MISSILE =
+  '<svg class="ico map-missile" viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(45 12 12)"><path d="M12 1.6c2 1.6 3.1 4 3.1 6.6v7.6h-6.2V8.2c0-2.6 1.1-5 3.1-6.6z" fill="#c5cdd3" stroke="#1c1c1c" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.1 12.4l-3.2 3.6v2.4l3.2-1.5zM14.9 12.4l3.2 3.6v2.4l-3.2-1.5z" fill="#d0782a" stroke="#1c1c1c" stroke-width="1.1" stroke-linejoin="round"/><path d="M10.2 16.8h3.6l-.5 2.1h-2.6z" fill="#9aa3ab" stroke="#1c1c1c" stroke-width="1.1" stroke-linejoin="round"/><path d="M10.9 19.8h2.2L12 22.4z" fill="#ff8a2a" stroke="#1c1c1c" stroke-width="1" stroke-linejoin="round"/></g></svg>';
+
 /** Bandit and rebel camps: a red devil's head (horns, ears, eyes, grin), dark outline like the others. */
 const DEVIL =
   '<svg class="ico map-devil" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.6 9.4C4 7.6 3.4 5 4 2.6c1.3 1.8 3 3 5 3.6M18.4 9.4c1.6-1.8 2.2-4.4 1.6-6.8-1.3 1.8-3 3-5 3.6" fill="#f2c94c" stroke="#1c1c1c" stroke-width="1.3" stroke-linejoin="round"/><path d="M12 5.4c-4.2 0-7.2 3-7.2 7.2 0 4.6 3.3 8.8 7.2 8.8s7.2-4.2 7.2-8.8c0-4.2-3-7.2-7.2-7.2z" fill="#d23a2a" stroke="#1c1c1c" stroke-width="1.4"/><path d="M7.6 11.4l3 1.4-.2 1.2-2.4-.6zM16.4 11.4l-3 1.4.2 1.2 2.4-.6z" fill="#ffe27a" stroke="#1c1c1c" stroke-width="0.9" stroke-linejoin="round"/><path d="M8.6 16.2c1 1.6 2.2 2.2 3.4 2.2s2.4-.6 3.4-2.2" fill="none" stroke="#1c1c1c" stroke-width="1.4" stroke-linecap="round"/><path d="M10.2 17.4l.5 1M13.8 17.4l-.5 1" stroke="#fff" stroke-width="0.9" stroke-linecap="round"/></svg>';
 
 /** The map icons' drawings, for the icon legend (legend.js). */
-export const MAP_ICONS = { crown: CROWN, ruins: RUINS, water: WATER, palm: PALM, tar: TAR, refinery: REFINERY, devil: DEVIL };
+export const MAP_ICONS = { crown: CROWN, ruins: RUINS, water: WATER, palm: PALM, tar: TAR, refinery: REFINERY, missile: MISSILE, devil: DEVIL };
 
 /** Booster tiles: their icon and the resource they add to their neighbours (shown as a live "+n" tag). */
 const BOOSTERS = {
@@ -88,8 +92,12 @@ function iconFor(terrain) {
       return ICONS.food;
     case 'station':
       return ICONS.oil;
+    case 'milfactory':
+      return MISSILE;
     case 'settlement':
     case 'labourcamp':
+    case 'missilelab':
+    case 'warhead':
       return ICONS.manpower;
     case 'capital':
       return CROWN;

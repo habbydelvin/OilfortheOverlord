@@ -17,6 +17,9 @@ const HINTS = {
   tarpit: { near: ['station'], colour: NEON.station },
   refinery: { near: ['station'], colour: NEON.station },
   labourcamp: { near: ['settlement'], colour: NEON.settlement },
+  milfactory: { near: ['missilelab', 'warhead'], colour: NEON.milfactory },
+  missilelab: { near: ['milfactory'], colour: NEON.milfactory },
+  warhead: { near: ['milfactory'], colour: NEON.milfactory },
 };
 /** Booster card -> the colour of the buildings it boosts, for its area around the pointer while placing it. */
 const AREA = {
@@ -25,6 +28,8 @@ const AREA = {
   tarpit: NEON.station,
   refinery: NEON.station,
   labourcamp: NEON.settlement,
+  missilelab: NEON.milfactory,
+  warhead: NEON.milfactory,
 };
 const HOVER = 0.45; // glow strength while hovering the card (share of a one-booster building's glow)
 const PLACING = 1; // while placing it
