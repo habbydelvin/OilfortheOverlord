@@ -1238,6 +1238,24 @@ function updateRuinButtons() {
 
 const factoryBars = new Map();
 const factoryBarV = new THREE.Vector3();
+/**
+ * The highest points of a tile's model (smoke aside), in its holder's own space: what a label above it has to clear
+ * on screen. A few dozen vertices off the top, so projecting them each frame costs next to nothing.
+ */
+function topPoints(holder) {
+  holder.updateMatrixWorld(true);
+  const toHolder = new THREE.Matrix4().copy(holder.matrixWorld).invert();
+  const pts = [];
+  holder.traverse((o) => {
+    if (!o.isMesh || o.isSkinnedMesh) return;
+    for (let q = o; q && q !== holder; q = q.parent) if (/Smoke|Steam/.test(q.name)) return;
+    const m = new THREE.Matrix4().multiplyMatrices(toHolder, o.matrixWorld);
+    const p = o.geometry.attributes.position;
+    const step = Math.max(1, Math.floor(p.count / 300));
+    for (let i = 0; i < p.count; i += step) pts.push(new THREE.Vector3().fromBufferAttribute(p, i).applyMatrix4(m));
+  });
+  return pts.sort((a, b) => b.y - a.y).slice(0, 48);
+}
 const FACTORY_FILL_MS = 450;
 const FACTORY_HOP = 0.5;
 const factoryFloaters = [];
@@ -1389,10 +1407,18 @@ function updateFactoryBars() {
       rec.el.classList.toggle('snap', filled === 0 && prev === need);
       [...rec.el.children].forEach((pip, i) => pip.classList.toggle('on', i < filled));
     }
-    factoryBarV.set(c.x, 0.15, c.z).project(camera);
+    // Centred over its cell, just above the factory as it shows on screen (the highest of its top points).
+    if (rec.mesh !== c.mesh) {
+      rec.mesh = c.mesh;
+      rec.top = topPoints(c.mesh);
+    }
+    const w = hexToWorld(c.x, c.z);
+    factoryBarV.set(w.x, 0, w.z).project(camera);
     const px = (factoryBarV.x * 0.5 + 0.5) * window.innerWidth;
-    const py = (-factoryBarV.y * 0.5 + 0.5) * window.innerHeight;
-    const tf = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px) translate(-50%, 120%)`;
+    let top = factoryBarV.y;
+    for (const p of rec.top) top = Math.max(top, factoryBarV.copy(p).applyMatrix4(c.mesh.matrixWorld).project(camera).y);
+    const py = (-top * 0.5 + 0.5) * window.innerHeight;
+    const tf = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px) translate(-50%, calc(-100% - 4px))`;
     if (rec.el._tf !== tf) rec.el.style.transform = rec.el._tf = tf;
   }
   for (const [k, rec] of factoryBars) {
