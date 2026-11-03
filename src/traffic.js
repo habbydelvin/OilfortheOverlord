@@ -91,7 +91,7 @@ export class Traffic {
 
   #spawn(cell) {
     const spec = SHIPS.get(cell.terrain);
-    const model = cell.mesh.children.find((c) => c.name === cell.terrain);
+    const model = cell.mesh.getObjectByName(cell.terrain); // inside the holder's turn group (the tile's rotation)
     if (!model) return;
     cell.mesh.updateMatrixWorld(true);
     const mesh = new THREE.Mesh(spec.geometry, spec.material);

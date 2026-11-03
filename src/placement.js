@@ -144,7 +144,7 @@ export class Placement {
     }
     for (const w of world) {
       if (!wholePiece) {
-        const b = blockout ? this.factory.preview(piece.terrain) : cellPart(this.blockGeo, this.blockMat);
+        const b = blockout ? this.factory.preview(piece.terrain, piece.rot) : cellPart(this.blockGeo, this.blockMat);
         b.position.set(w.x, 0, w.z);
         if (!blockout) b.children[0].castShadow = true;
         this.blocks.add(b);

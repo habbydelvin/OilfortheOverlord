@@ -360,7 +360,7 @@ const WASTELAND_VARIANTS = ['wasteland1', 'wasteland2', 'wasteland3', 'wasteland
  * It stomps down after `delay` seconds; `instant` puts it straight in place instead (the starting Capital).
  * bare: the cell gets an empty holder because a whole-piece Wasteland model covers it (see addWastePiece).
  */
-function addTile(x, z, terrain, delay = 0, instant = false, { bare = false } = {}) {
+function addTile(x, z, terrain, delay = 0, instant = false, { bare = false, rot = 0 } = {}) {
   // Mix wasteland shades per cell so a wasteland piece doesn't look like one flat slab.
   if (WASTELAND_VARIANTS.includes(terrain)) {
     terrain = WASTELAND_VARIANTS[Math.floor(Math.random() * WASTELAND_VARIANTS.length)];
@@ -369,7 +369,8 @@ function addTile(x, z, terrain, delay = 0, instant = false, { bare = false } = {
   const onRuins = old?.terrain === 'ruins' || (old?.onRuins ?? false);
   if (old) removeMesh(old.mesh);
 
-  const mesh = factory.create(terrain, { bare });
+  const mesh = factory.create(terrain, { bare, rot });
+  mesh.userData.rot = rot; // kept for the stand-in -> model swap (factory.upgrade)
   const w = hexToWorld(x, z);
   mesh.position.set(w.x, 0, w.z);
   mesh.visible = instant;
@@ -2718,7 +2719,7 @@ function tryPlace() {
   }
   const idleBefore = economyNow().idle;
   if (piece.terrain.startsWith('wasteland')) addWastePiece(piece, cells);
-  else cells.forEach(([x, z], i) => addTile(x, z, piece.terrain, i * 0.05));
+  else cells.forEach(([x, z], i) => addTile(x, z, piece.terrain, i * 0.05, false, { rot: piece.rot }));
   piecesPlaced++;
   showPlacementCost(piece, cells);
   hand.consume();
