@@ -3678,7 +3678,7 @@ function updateAimBar() {
   const aimed = rival ? queuedStrikes(rival.id) : [];
   const aimedCells = aimed.map((s) => footprint(s.kind, s.at, s.size));
   rivalView.setMarkers(aimedCells, aimHover);
-  rivalView.setArcs(aimHover ?? [], rival ? homeBearing(rival) : null, aimedCells.flat());
+  rivalView.setArcs(aimHover ? [aimHover] : [], rival ? homeBearing(rival) : null, aimedCells.flat());
   globe?.setQueued(queuedStrikes().map((s) => ({ from: 'player', to: s.to })));
 }
 

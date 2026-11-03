@@ -616,7 +616,7 @@ function drawAims(hover = null) {
   const mine = queue.filter((q) => q.to === shown.id);
   const aimed = mine.map((q) => footprint(q.kind, q.at));
   rivalView.setMarkers(aimed, hover);
-  rivalView.setArcs(hover ?? [], homeBearing(shown), aimed.flat());
+  rivalView.setArcs(hover ? [hover] : [], homeBearing(shown), aimed.flat());
 }
 
 rig.onZoomPastMax = () => {

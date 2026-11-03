@@ -83,8 +83,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   /** One reticle around `cells` ([[x, z]]), with its own materials so it can fade alone. */
   function makeReticle(cells) {
     const pts = cells.map(([x, z]) => hexToWorld(x, z));
-    const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
-    const cz = pts.reduce((a, p) => a + p.z, 0) / pts.length;
+    const { x: cx, z: cz } = centreOf(cells);
     const radius = Math.max(...pts.map((p) => Math.hypot(p.x - cx, p.z - cz))) + 0.55;
     const g = new THREE.Group();
     g.position.set(cx, MARK_Y, cz);
@@ -137,7 +136,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     }
   }
   // While aiming: a thin unbroken trail from where Hive City lies (off past the horizon) down onto each target tile,
-  // as First Strike draws its flight paths. Additive, so its colour ramp is its fade: bright up high, gone at the tile.
+  // as First Strike draws its flight paths. Additive, so its colour ramp is its fade: bright up high, dimmer at the tile.
   const arcs = new THREE.Group();
   scene.add(arcs);
   const ARC_COLOUR = new THREE.Color(0xffe58a); // a paler cousin of the reticle's yellow
@@ -153,7 +152,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     fog: false,
   });
   const arcSize = new THREE.Vector2();
-  const arcByKey = new Map(); // "x,z" -> the path onto that cell
+  const arcByKey = new Map(); // "x,z;x,z" (the cells it wraps) -> path
   let fog = null;
   let active = false;
   let saved = null;
@@ -301,18 +300,24 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     }
   }
 
-  /** One flight path onto cell (x, z), coming in from `dir`, with its own material so it can fade alone. */
-  function makeArc([x, z], dir) {
-    const end = hexToWorld(x, z);
+  /** Middle of `cells` ([[x, z]]) on the ground: where the reticle around them sits. */
+  function centreOf(cells) {
+    const pts = cells.map(([x, z]) => hexToWorld(x, z));
+    return { x: pts.reduce((a, p) => a + p.x, 0) / pts.length, z: pts.reduce((a, p) => a + p.z, 0) / pts.length };
+  }
+
+  /** One flight path onto the middle of `cells`, coming in from `dir`, with its own material so it can fade alone. */
+  function makeArc(cells, dir) {
+    const end = centreOf(cells);
     const p0 = new THREE.Vector3(end.x + dir.x * 22, 9, end.z + dir.z * 22);
-    const p2 = new THREE.Vector3(end.x, 0.3, end.z);
+    const p2 = new THREE.Vector3(end.x, MARK_Y, end.z); // in the reticle's plane, so it meets the reticle's centre
     const p1 = p0.clone().lerp(p2, 0.55).add(new THREE.Vector3(0, 6, 0));
     const curve = new THREE.QuadraticBezierCurve3(p0, p1, p2);
     const pos = [];
     const col = [];
     for (const [i, p] of curve.getPoints(ARC_POINTS).entries()) {
       const t = i / ARC_POINTS; // 0 at the horizon, 1 at the tile
-      const k = THREE.MathUtils.smoothstep(t, 0, 0.12) * (1 - t) ** 0.7;
+      const k = THREE.MathUtils.smoothstep(t, 0, 0.12) * (1 - 0.65 * t); // still visible where it meets the centre
       pos.push(p.x, p.y, p.z);
       col.push(ARC_COLOUR.r * k, ARC_COLOUR.g * k, ARC_COLOUR.b * k);
     }
@@ -335,19 +340,22 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   }
 
   /**
-   * Flight paths while aiming: one onto each of `cells` ([[x, z]], the picked card's cells under the cursor), coming
-   * in from `dir` (unit {x, z}: where Hive City lies from this city on the War Map), or none if `dir` is null. A path
-   * whose cell turns up in `aimed` ([[x, z]], the queued strikes' cells: the card was just played) fades out; any
-   * other path that's no longer wanted goes at once.
+   * Flight paths while aiming: one onto the middle of each of `groups` ([[[x, z], ...]], as a reticle wraps them:
+   * the picked card's cells under the cursor), coming in from `dir` (unit {x, z}: where Hive City lies from this city
+   * on the War Map), or none if `dir` is null. A path whose cells all turn up in `aimed` ([[x, z]], the queued
+   * strikes' cells: the card was just played) fades out; any other path that's no longer wanted goes at once.
    */
-  function setArcs(cells, dir, aimed = []) {
+  function setArcs(groups, dir, aimed = []) {
     const done = new Set(aimed.map(([x, z]) => key(x, z)));
-    const want = new Map(dir ? cells.filter(([x, z]) => !done.has(key(x, z))).map((c) => [key(c[0], c[1]), c]) : []);
+    const isAimed = (cells) => cells.every(([x, z]) => done.has(key(x, z)));
+    const want = new Map(
+      dir ? groups.filter((cells) => cells?.length && !isAimed(cells)).map((cells) => [cells.map(([x, z]) => key(x, z)).join(';'), cells]) : [],
+    );
     let carry = 0; // moving tile to tile: new paths pick up where the old ones' fade-in was
     for (const [k, line] of arcByKey) {
       if (want.has(k)) continue;
       arcByKey.delete(k);
-      if (done.has(k)) line.userData.fade = 0;
+      if (isAimed(k.split(';').map((s) => s.split(',').map(Number)))) line.userData.fade = 0;
       else {
         carry = Math.max(carry, line.userData.appear);
         dropArc(line);
