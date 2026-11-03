@@ -10,9 +10,9 @@ import { createGlobeView } from './globeView.js';
 import { createCloudTransition } from './cloudTransition.js';
 import { createRivalView } from './rivalView.js';
 import { chooseStrikes, noteAttacks } from './rivalAI.js';
-import { applyToRival, footprint } from './war.js';
+import { applyToRival, footprint, spreadFrom } from './war.js';
 import { PLAYER_NODE } from './rivals.js';
-import { TileFactory, TERRAINS } from './tiles.js';
+import { TileFactory, TERRAINS, cardDef, cardText, hex, snapHTML, cardArtHTML } from './tiles.js';
 import { FogOfWar, loadFogConfig } from './fogOfWar.js';
 import { MissileStrike, loadMissileConfig } from './missiles.js';
 import { Dust } from './dust.js';
@@ -164,12 +164,11 @@ function drawRings() {
   rings.clear();
   if (!showRings) return;
   const r = INTERCEPT.range;
-  const covered = new Map(); // cell key -> hot?
+  const covered = new Map();
   for (const c of grid.cells.values()) {
     if (c.terrain !== 'intercept') continue;
     const hot = hotNet === key(c.x, c.z);
     const w = hexToWorld(c.x, c.z);
-    // Cell centres within range lie inside radius r; the ring sits on the outer edge of the last covered cells.
     rings.add(ringLine(w.x, w.z, r + 0.5, ringMat(hot ? 0xc8ffe8 : 0x6affc0, hot ? 1 : 0.6)));
     for (const [x, z] of hexesAround(c.x, c.z, r)) covered.set(key(x, z), covered.get(key(x, z)) || hot);
   }
@@ -455,6 +454,33 @@ function craterRival(r, rec) {
   if (rivalView.rival === r) rivalView.refresh();
 }
 
+/** Dropping a card: dive onto the aimed tiles now (the turn still resolves them later). */
+function playOutgoing(r, cells) {
+  const d = homeBearing(r);
+  const targets = cells.map((at) => {
+    const w = hexToWorld(at[0], at[1]);
+    const cell = r.grid.get(at[0], at[1]);
+    const rec = {
+      at,
+      kind: 'missile',
+      shots: [],
+      lost:
+        cell && cell.terrain !== 'crater' && cell.terrain !== 'capital'
+          ? [{ x: at[0], z: at[1], terrain: cell.terrain, name: TERRAINS[cell.terrain]?.name ?? cell.terrain }]
+          : [],
+    };
+    rec.hit = rec.lost.length > 0 || cell?.terrain === 'capital';
+    return { x: w.x, z: w.z, rec, from: { x: w.x + d.x * 16, y: 9, z: w.z + d.z * 16 }, flight: 1.55, accel: 1.2 };
+  });
+  rivalMissiles.fire(targets, {
+    onImpact: () => {
+      boom();
+      if (view === 'rival') camShake.add(missileCfg.shake);
+    },
+    onCover: (t) => craterRival(r, t.rec),
+  });
+}
+
 function playRival(r, rec) {
   const w = hexToWorld(rec.at[0], rec.at[1]);
   const t = { x: w.x, z: w.z, rec, flight: missileCfg.followFlight, fired: 0 };
@@ -494,7 +520,7 @@ function arrive(rec) {
   }
   const r = rivals.find((x) => x.id === rec.to);
   if (!r) return;
-  if (view === 'rival' && shown === r && rec.from === 'player') landing.push(playRival(r, rec));
+  if (view === 'rival' && shown === r && rec.from === 'player' && !rec.vis) landing.push(playRival(r, rec));
   else craterRival(r, rec);
 }
 const viewBtn = document.getElementById('viewBtn');
@@ -585,11 +611,19 @@ function homeBearing(r) {
   return { x: dx / len, z: dz / len };
 }
 
-function drawAims() {
+function drawAims(hover = null) {
   if (!shown) return;
   const mine = queue.filter((q) => q.to === shown.id);
-  rivalView.setMarkers(mine.flatMap((q) => footprint(q.kind, q.at)));
-  rivalView.setArcs(mine.map((q) => q.at), homeBearing(shown));
+  rivalView.setMarkers(mine.flatMap((q) => footprint(q.kind, q.at)), hover);
+  const seen = new Set();
+  const arcs = [];
+  for (const p of [...mine.map((q) => q.at), ...(hover ?? [])]) {
+    const k = `${p[0]},${p[1]}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    arcs.push(p);
+  }
+  rivalView.setArcs(arcs, homeBearing(shown));
 }
 
 rig.onZoomPastMax = () => {
@@ -612,13 +646,24 @@ function rearm() {
   renderHand();
 }
 
+function handKinds() {
+  const kinds = [];
+  if (silo > 2) kinds.push('salvo');
+  for (let i = 0; i < silo; i++) kinds.push('missile');
+  return kinds;
+}
+
 function renderHand() {
   handEl.innerHTML = '';
   handEl.classList.toggle('hidden', view !== 'rival' || busy);
-  for (let i = 0; i < silo; i++) {
+  for (const kind of handKinds()) {
+    const t = cardDef(kind);
     const c = document.createElement('div');
-    c.className = 'mcard';
-    c.innerHTML = '<b>▲</b><span>Missile</span><small>destroy 1 tile</small>';
+    c.className = 'card action';
+    c.dataset.kind = kind;
+    c.style.setProperty('--top', hex(t.top));
+    c.style.setProperty('--edge', hex(t.edge));
+    c.innerHTML = `<div class="art">${cardArtHTML(kind)}</div>${snapHTML(t)}<div class="name">${t.name}</div><div class="rule">${cardText(t)}</div>`;
     c.addEventListener('pointerdown', startDrag);
     handEl.append(c);
   }
@@ -641,27 +686,46 @@ function startDrag(e) {
   ghost.classList.add('ghost');
   document.body.append(ghost);
   card.classList.add('lifted');
-  drag = { card, ghost };
+  drag = { card, ghost, kind: card.dataset.kind };
   moveDrag(e);
 }
 function moveDrag(e) {
   if (!drag) return;
-  drag.ghost.style.transform = `translate(${e.clientX - 40}px, ${e.clientY - 55}px)`;
-  const c = e.target === renderer.domElement || document.elementFromPoint(e.clientX, e.clientY) === renderer.domElement ? rivalCellAt(e.clientX, e.clientY) : null;
-  rivalView.setMarkers(queue.filter((q) => q.to === shown?.id).flatMap((q) => footprint(q.kind, q.at)), c && shown?.grid.has(c[0], c[1]) ? [c] : null);
+  drag.ghost.style.transform = `translate(${e.clientX - 54}px, ${e.clientY - 90}px)`;
+  const onCanvas = document.elementFromPoint(e.clientX, e.clientY) === renderer.domElement;
+  const c = onCanvas ? rivalCellAt(e.clientX, e.clientY) : null;
+  let hover = null;
+  if (c && shown?.grid.has(c[0], c[1])) {
+    hover = drag.kind === 'salvo' ? spreadFrom(shown.grid, c, silo) : footprint('missile', c);
+  }
+  drawAims(hover);
 }
 window.addEventListener('pointermove', moveDrag);
 window.addEventListener('pointerup', (e) => {
   if (!drag) return;
-  const { card, ghost } = drag;
+  const { card, ghost, kind } = drag;
   drag = null;
   ghost.remove();
   card.classList.remove('lifted');
   const onCanvas = document.elementFromPoint(e.clientX, e.clientY) === renderer.domElement;
   const c = onCanvas ? rivalCellAt(e.clientX, e.clientY) : null;
-  if (c && shown?.grid.has(c[0], c[1]) && silo > 0 && !queue.some((q) => q.to === shown.id && q.at[0] === c[0] && q.at[1] === c[1])) {
-    queue.push({ to: shown.id, at: [c[0], c[1]], kind: 'missile' });
-    silo--;
+  if (c && shown?.grid.has(c[0], c[1]) && silo > 0) {
+    const taken = (at) => queue.some((q) => q.to === shown.id && q.at[0] === at[0] && q.at[1] === at[1]);
+    const aimed = [];
+    if (kind === 'salvo') {
+      for (const at of spreadFrom(shown.grid, c, silo)) {
+        if (silo <= 0) break;
+        if (taken(at)) continue;
+        queue.push({ to: shown.id, at, kind: 'missile', vis: true });
+        silo--;
+        aimed.push(at);
+      }
+    } else if (!taken(c)) {
+      queue.push({ to: shown.id, at: [c[0], c[1]], kind: 'missile', vis: true });
+      silo--;
+      aimed.push(c);
+    }
+    if (aimed.length) playOutgoing(shown, aimed);
   }
   renderHand();
   drawAims();

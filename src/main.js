@@ -28,11 +28,11 @@ import { Mysteries } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
 import { computeEconomy, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS } from './economy.js';
-import { FACTORY_OIL, OVERTIME_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, missileCapacity } from './arsenal.js';
+import { FACTORY_OIL, OVERTIME_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity } from './arsenal.js';
 import { pieceOf } from './pieces.js';
 import { findCiws } from './interceptMesh.js';
 import { queueDrawn, addMissile, missileCount, missileKinds, trimMissiles, resetMissiles, openCityStrike, drawStrikeHand, returnStrikeHand, bindCityStrikeUi, queueStrike, unqueueStrike, queuedStrikes, takeQueue, clearQueue } from './cityStrike.js';
-import { CAPITAL_HP, resolve as resolveWar, applyToRival, footprint } from './war.js';
+import { CAPITAL_HP, resolve as resolveWar, applyToRival, footprint, spreadFrom } from './war.js';
 import { chooseStrikes, noteAttacks } from './rivalAI.js';
 import { INTERCEPT } from './arsenal.js';
 import { Payout, tileHop } from './payout.js';
@@ -3289,6 +3289,15 @@ function tryPlace() {
       firePlayerMissile(cells, fromHand);
       tutorial.notify('placed', cells); // the strike lesson's guided shot
     }
+    else if (played === 'salvo') {
+      const ammo = missileAmmoInHand();
+      const fan = spreadFrom(grid, cells[0], ammo.length);
+      fan.forEach(([x, z]) => craterAt(x, z));
+      const used = new Set(ammo.slice(0, fan.length));
+      hand.cards = hand.cards.filter((p) => !used.has(p));
+      hand.render();
+      updateHUD();
+    }
     else if (played === 'overtime') workOvertime(...cells[0]);
     else if (piece.terrain === 'demolish2') {
       const targets = placement.demolishable(cells);
@@ -3666,8 +3675,17 @@ function updateAimBar() {
   const cards = rivalHand ? hand.cards.filter((p) => isPlayerMissile(p.terrain)).length : 0;
   $('rivalAim').classList.toggle('hidden', !rival || rival.alive === false || (!q && !cards));
   $('rivalQueue').textContent = L(`${q} aimed · ${cards} in hand · fires after End Turn`, `已瞄准 ${q} · 手牌 ${cards} · 结束回合后发射`);
-  rivalView.setMarkers(rival ? queuedStrikes(rival.id).flatMap((s) => footprint(s.kind, s.at)) : [], aimHover);
-  rivalView.setArcs(rival ? queuedStrikes(rival.id).map((s) => s.at) : [], rival ? homeBearing(rival) : null);
+  const aimed = rival ? queuedStrikes(rival.id) : [];
+  rivalView.setMarkers(aimed.flatMap((s) => footprint(s.kind, s.at, s.size)), aimHover);
+  const arcAt = [];
+  const seen = new Set();
+  for (const p of [...aimed.map((s) => s.at), ...(aimHover ?? [])]) {
+    const k = `${p[0]},${p[1]}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    arcAt.push(p);
+  }
+  rivalView.setArcs(arcAt, rival ? homeBearing(rival) : null);
   globe?.setQueued(queuedStrikes().map((s) => ({ from: 'player', to: s.to })));
 }
 
@@ -3710,8 +3728,12 @@ function aimAtPointer() {
     const piece = aimPiece();
     if (!piece) return;
     if (!rival.grid.has(at[0], at[1])) return toast(L('Aim at one of their tiles', '请瞄准对方的地块'), 'bad');
-    queueDrawn(rival.id, at, piece.terrain);
-    hand.consume();
+    if (piece.terrain === 'salvo') aimSalvo(rival, at);
+    else {
+      queueDrawn(rival.id, at, piece.terrain, 1, { vis: true });
+      hand.consume();
+      playOutgoingRival(rival, [at], piece.terrain);
+    }
     confirm();
   }
   updateAimBar();
@@ -3743,11 +3765,31 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   aimAtPointer();
 });
 
+function missileAmmoInHand() {
+  return hand.cards.filter((p) => isMissileAmmo(p.terrain));
+}
+
+/** Play the Salvo card: every missile in hand fans onto tiles around `at`. */
+function aimSalvo(rival, at) {
+  const ammo = missileAmmoInHand();
+  if (!ammo.length) return toast(L('No missiles to fan out', '没有可铺开的导弹'), 'bad');
+  const cells = spreadFrom(rival.grid, at, ammo.length);
+  if (!cells.length) return toast(L('Aim at one of their tiles', '请瞄准对方的地块'), 'bad');
+  for (let i = 0; i < cells.length; i++) queueDrawn(rival.id, cells[i], ammo[i].terrain, 1, { vis: true });
+  playOutgoingRival(rival, cells, 'missile');
+  const used = new Set(ammo.slice(0, cells.length));
+  hand.cards = hand.cards.filter((p) => p.terrain !== 'salvo' && !used.has(p));
+  hand.selected = -1;
+  hand.render();
+}
+
 /** Per frame in a rival city: the hover ring follows the pointer while a missile card is picked. */
 function updateAimHover() {
   const piece = aimPiece();
   const c = piece ? rivalCell() : null;
-  const next = c ? footprint(piece.terrain, [c[0], c[1]]) : null;
+  let next = null;
+  if (c && piece.terrain === 'salvo') next = spreadFrom(rivalShown.grid, [c[0], c[1]], missileAmmoInHand().length);
+  else if (c) next = footprint(piece.terrain, [c[0], c[1]]);
   if (JSON.stringify(next) === JSON.stringify(aimHover)) return;
   aimHover = next;
   updateAimBar();
@@ -3820,6 +3862,41 @@ function craterRival(r, rec) {
   if (rivalShown === r) rivalView.refresh();
 }
 
+/** Dropping a card: missiles dive onto the aimed tiles right now (the attack phase still resolves them later). */
+function playOutgoingRival(r, cells, kind = 'missile') {
+  rivalMissiles ??= new MissileStrike(rivalView.scene, camera, missileCfg);
+  const d = homeBearing(r);
+  const targets = cells.map((at) => {
+    const w = hexToWorld(at[0], at[1]);
+    const cell = r.grid.get(at[0], at[1]);
+    const rec = {
+      at,
+      kind,
+      shots: [],
+      lost:
+        cell && cell.terrain !== 'crater' && cell.terrain !== 'capital'
+          ? [{ x: at[0], z: at[1], terrain: cell.terrain, name: TERRAINS[cell.terrain]?.name ?? cell.terrain }]
+          : [],
+    };
+    rec.hit = rec.lost.length > 0 || cell?.terrain === 'capital';
+    return {
+      x: w.x,
+      z: w.z,
+      rec,
+      from: { x: w.x + d.x * 16, y: 9, z: w.z + d.z * 16 },
+      flight: 1.55,
+      accel: 1.2,
+    };
+  });
+  rivalMissiles.fire(targets, {
+    onImpact: () => {
+      boom();
+      camShake.add(missileCfg.shake);
+    },
+    onCover: (_t) => craterRival(r, _t.rec),
+  });
+}
+
 /** Our missile into the rival city on screen: their interceptors' flak meets it (or misses) on the way down. */
 function playRivalStrike(r, rec) {
   rivalMissiles ??= new MissileStrike(rivalView.scene, camera, missileCfg);
@@ -3870,7 +3947,7 @@ function arrive(rec) {
   }
   const r = rivals.find((x) => x.id === rec.to);
   if (!r) return;
-  if (view === 'rival' && rivalShown === r && rec.from === 'player') landing.push(playRivalStrike(r, rec));
+  if (view === 'rival' && rivalShown === r && rec.from === 'player' && !rec.vis) landing.push(playRivalStrike(r, rec));
   else craterRival(r, rec);
 }
 
@@ -3931,7 +4008,7 @@ async function runAttackPhase() {
   globe.setQueued([]); // the aimed arcs become real flights now
   const mine = takeQueue()
     .filter((q) => rivals.find((r) => r.id === q.to)?.alive !== false)
-    .map((q) => ({ from: 'player', to: q.to, at: q.at, kind: q.kind }));
+    .map((q) => ({ from: 'player', to: q.to, at: q.at, kind: q.kind, vis: q.vis, size: q.size }));
   const theirs = rivals.filter((r) => r.alive !== false).flatMap((r) => chooseStrikes(r, cities, { round: turn.round, chance: INTERCEPT.chance }));
   const strikes = [...mine, ...theirs];
   if (!strikes.length) return false;

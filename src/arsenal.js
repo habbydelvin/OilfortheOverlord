@@ -62,7 +62,8 @@ export function interceptorsNear(grid, x, z, range = INTERCEPT.range) {
   return out;
 }
 
-export const isPlayerMissile = (key) => key === 'missile' || key === 'missile2';
+export const isMissileAmmo = (key) => key === 'missile' || key === 'missile2';
+export const isPlayerMissile = (key) => isMissileAmmo(key) || key === 'salvo';
 
 /** How many missiles the city can hold: base slots plus each staffed Magazine. */
 export function missileCapacity(grid, idleKeys) {

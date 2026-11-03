@@ -197,7 +197,7 @@ export class Placement {
       if (!cell || !isCamp(cell.terrain)) return { ok: false, reason: L('The militia only clears bandit and rebel camps', '民兵只能清除匪营和叛军营地') };
       return { ok: true, reason: '' };
     }
-    if (this.piece?.terrain === 'missile' || this.piece?.terrain === 'missile2') {
+    if (this.piece?.terrain === 'missile' || this.piece?.terrain === 'missile2' || this.piece?.terrain === 'salvo') {
       const guarded = this.guard?.(cells, this.piece); // the tutorial: only its target
       if (guarded) return guarded;
       if (!this.missileable(cells).length) return { ok: false, reason: L('No building to destroy here', '这里没有可摧毁的建筑') };

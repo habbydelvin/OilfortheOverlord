@@ -398,6 +398,17 @@ export const ACTIONS = {
     weight: 0, // produced next to a Warhead Institute
     rule: 'Destroy buildings in a 2×2 square',
   },
+  salvo: {
+    name: 'Salvo',
+    trigger: 'On play',
+    top: 0x9b3424,
+    edge: 0x5c1c14,
+    category: 'action',
+    symbol: '⁂',
+    range: 0,
+    weight: 0, // strike hand only, when 3+ missiles
+    rule: 'Drag onto a tile: every missile in hand fans out from there',
+  },
   overtime: {
     name: 'Work Overtime',
     trigger: 'On play',
@@ -455,6 +466,7 @@ const ZH = {
   intercept: { name: '拦截网络', rule: '花费 3 石油，阻止相邻建筑被攻击一次' },
   magazine: { name: '储弹仓', rule: '导弹容量 +1' },
   missile: { name: '导弹', rule: '摧毁 1 格建筑' },
+  salvo: { name: '齐射', rule: '拖到一格上：手中每枚导弹从该处铺开瞄准' },
   missile2: { name: '导弹', rule: '摧毁 2×2 范围内的建筑' },
   overtime: { name: '熬夜加班', rule: '花费 2 石油：一座军事工厂生产进度 +1 季' },
 };

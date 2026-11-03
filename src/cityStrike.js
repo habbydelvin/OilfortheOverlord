@@ -40,7 +40,9 @@ export function trimMissiles(cap) {
 /** Pull up to `n` missiles out of stock as playable strike cards (same piece shape as the season hand). */
 export function drawStrikeHand(n = stock.length) {
   const take = stock.splice(0, Math.max(0, n));
-  return take.map((kind) => pieceOf(kind));
+  const pieces = take.map((kind) => pieceOf(kind));
+  if (take.length > 2) pieces.unshift(pieceOf('salvo'));
+  return pieces;
 }
 
 /** Spend one missile of this kind from stock. Returns false if none. */
@@ -53,7 +55,10 @@ export function spendMissile(kind = 'missile') {
 
 /** Put unspent strike cards back into stock (leaving the attack screen). */
 export function returnStrikeHand(pieces) {
-  for (const p of pieces) stock.push(p.terrain === 'missile2' ? 'missile2' : 'missile');
+  for (const p of pieces) {
+    if (p.terrain === 'salvo') continue;
+    stock.push(p.terrain === 'missile2' ? 'missile2' : 'missile');
+  }
 }
 
 // ---------- strikes queued on rival cities (fired in the attack phase, after the season is scored) ----------
@@ -67,8 +72,8 @@ export function queueStrike(to, at, kind = 'missile') {
 }
 
 /** Aim a missile card already drawn out of stock (played from the hand) at cell `at` of city `to`. */
-export function queueDrawn(to, at, kind = 'missile') {
-  queue.push({ to, at: [...at], kind: kind === 'missile2' ? 'missile2' : 'missile' });
+export function queueDrawn(to, at, kind = 'missile', size = 1, extra = {}) {
+  queue.push({ to, at: [...at], kind: kind === 'missile2' ? 'missile2' : 'missile', size, ...extra });
 }
 
 /**

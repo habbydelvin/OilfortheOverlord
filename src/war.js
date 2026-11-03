@@ -1,4 +1,4 @@
-import { key } from './grid.js';
+import { DIRS, key } from './grid.js';
 import { TERRAINS } from './tiles.js';
 import { INTERCEPT, interceptorsNear } from './arsenal.js';
 
@@ -21,8 +21,27 @@ export const GRACE_ROUNDS = 1;
 
 const WARHEAD = [[0, 0], [1, 0], [0, 1], [1, 1]];
 
-export function footprint(kind, [x, z]) {
-  return kind === 'missile2' ? WARHEAD.map(([dx, dz]) => [x + dx, z + dz]) : [[x, z]];
+export function footprint(kind, [x, z], size) {
+  const n = Math.max(1, size ?? (kind === 'missile2' ? 2 : 1));
+  const cells = [];
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) cells.push([x + i, z + j]);
+  return cells;
+}
+
+/** BFS from `origin` over tiles that exist on `grid`, up to `n` cells (a salvo fan). */
+export function spreadFrom(grid, origin, n) {
+  const out = [];
+  const seen = new Set();
+  const q = [origin];
+  while (q.length && out.length < n) {
+    const [x, z] = q.shift();
+    const k = key(x, z);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    if (grid.has(x, z)) out.push([x, z]);
+    for (const [dx, dz] of DIRS) q.push([x + dx, z + dz]);
+  }
+  return out;
 }
 
 /**
