@@ -2721,7 +2721,7 @@ function debugEnsureFactory() {
   return { cells: [grid.get(x, z)], placed: true };
 }
 
-/** G: put a factory on the board, then play the season settle so missiles fly from it. */
+/** J: put a factory on the board, then play the season settle so missiles fly from it. */
 function debugMissileSettle() {
   if (turn.over || striking || shopOpen || eventOpen || payout.active) {
     return L('Finish the current screen first', '请先结束当前界面');
@@ -2832,8 +2832,8 @@ function openStrikeScreen(opts = {}) {
   updateHUD();
   toast(
     drawn.length
-      ? L('Air strike: missiles drawn. Click a building to fire. K to leave.', '空袭：导弹已抽出。点建筑开火。K 离开。')
-      : L('Air strike: silo empty. K to leave.', '空袭：弹库是空的。K 离开。'),
+      ? L('Air strike: missiles drawn. Click a building to fire. Esc or L to leave.', '空袭：导弹已抽出。点建筑开火。Esc 或 L 离开。')
+      : L('Air strike: silo empty. Esc or L to leave.', '空袭：弹库是空的。Esc 或 L 离开。'),
     'good',
   );
   return new Promise((resolve) => {
@@ -3838,7 +3838,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (striking) return; // the missile strike cinematic owns the screen
   if (strikeOpen) {
-    if (k === 'escape' || k === 'k') closeStrikeScreen();
+    if (k === 'escape' || k === 'l') closeStrikeScreen();
     else if (k >= '1' && k <= '9' && Number(k) <= hand.cards.length) {
       const i = Number(k) - 1;
       hand.select(hand.selected === i ? -1 : i);
@@ -3871,7 +3871,7 @@ window.addEventListener('keydown', (e) => {
   else if (dev && k === 'v' && !e.repeat) debugEvent();
   else if (dev && k === 't' && !e.repeat) debugTarget(e.shiftKey);
   else if (dev && k === 'x' && !e.repeat) setExpansionMode(!grid.expansionMode);
-  else if (!RELEASE && k === 'g' && !e.repeat) {
+  else if (!RELEASE && k === 'j' && !e.repeat) {
     if (tutorial.active) return tutorial.nudge();
     const msg = debugMissileSettle();
     toast(msg, msg.includes('Finish') || msg.includes('请先') ? 'bad' : 'good');
