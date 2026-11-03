@@ -1189,14 +1189,15 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
   /** Fly down onto a node, then report it. main.js fades and swaps the view. */
   async function visit(id) {
     const n = nodes.find((node) => node.id === id);
-    if (!n || visiting || !active) return;
-    visiting = true;
+    if (!n || visiting || dive || !active) return;
     drag = null;
     velocity.set(0, 0);
     setHovered(null);
-    await animate(n.p, D_CLOSE, 0.75, easeInOut);
-    // Stay "visiting" (no hover, drag or card) while the clouds cover the swap; exit() clears it.
-    if (active) onVisit(id);
+    // Same dive as scrolling in (clouds roll in during the fly-down), timed by how far there is to go.
+    const pan = bend.wrapDelta(n.p.x, n.p.y).length();
+    const zoom = THREE.MathUtils.clamp((distance - D_MIN) / (D_MAX - D_MIN), 0, 1);
+    const dur = THREE.MathUtils.clamp(0.6 + 0.35 * zoom + 0.04 * pan, 0.6, 1.2);
+    dive = { n, from: bend.scroll().clone(), d0: distance, k: 0, shown: 0, at: performance.now(), auto: dur };
   }
 
   // ---------- frame ----------
@@ -1274,14 +1275,22 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
         done();
       }
     } else if (dive) {
-      if (dive.k >= 0.6) dive.k = Math.min(1, dive.k + dt / 0.6); // committed: finish the dive
-      else if (performance.now() - dive.at > WHEEL_GAP) dive.k = Math.max(0, dive.k - dt / 1.5); // paused early: drift back
-      dive.shown += (dive.k - dive.shown) * (1 - Math.exp(-9 * dt));
+      if (dive.auto) {
+        // Clicked: a steady ramp, no drift back.
+        dive.k = Math.min(1, dive.k + dt / dive.auto);
+        dive.shown = dive.k;
+      } else {
+        if (dive.k >= 0.6) dive.k = Math.min(1, dive.k + dt / 0.6); // committed: finish the dive
+        else if (performance.now() - dive.at > WHEEL_GAP) dive.k = Math.max(0, dive.k - dt / 1.5); // paused early: drift back
+        dive.shown += (dive.k - dive.shown) * (1 - Math.exp(-9 * dt));
+      }
       const k = dive.shown;
       const d = bend.wrapDelta(dive.n.p.x, dive.n.p.y, dive.from);
-      const e = k * k * (3 - 2 * k);
+      // Clicks ease in only (still moving when the clouds take over); scroll dives keep smoothstep.
+      const e = dive.auto ? k * k * (2 - k) : k * k * (3 - 2 * k);
       setScroll(dive.from.x + d.x * e, dive.from.y + d.y * e);
-      distance = goalDistance = D_MIN + (D_CLOSE - D_MIN) * e;
+      const d0 = dive.d0 ?? D_MIN;
+      distance = goalDistance = d0 + (D_CLOSE - d0) * e;
       onDive(Math.min(1, k * 1.05) ** 1.5);
       if (k > 0.96) {
         const id = dive.n.id;
