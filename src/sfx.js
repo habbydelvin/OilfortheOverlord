@@ -316,3 +316,12 @@ export function doom() {
     tone(nodes, t + 0.28, 'sine', 262, 0.22, 0.14, 196);
   });
 }
+
+/** A CIWS burst: a fast ripping "brrrt" of rounds for `dur` seconds. */
+export function ciws(dur = 0.8) {
+  begin(dur + 0.05, (t, nodes) => {
+    const n = Math.round(dur * 45);
+    for (let i = 0; i < n; i++) noise(nodes, t + i / 45, 0.014, 0.16, 700 + Math.random() * 500, 0.9);
+    tone(nodes, t, 'sawtooth', 48, dur, 0.06, 40);
+  });
+}

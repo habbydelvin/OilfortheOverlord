@@ -25,6 +25,13 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   // One group for the city's tiles, kept for good: the fog's depth pass holds on to it.
   const root = new THREE.Group();
   scene.add(root);
+  // Target markers while aiming (queued strikes) and the hover ring under the cursor.
+  const marks = new THREE.Group();
+  marks.renderOrder = 20;
+  scene.add(marks);
+  const ringGeo = new THREE.RingGeometry(0.32, 0.46, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
+  const markMat = new THREE.MeshBasicMaterial({ color: 0xff4a2a, transparent: true, opacity: 0.95, depthTest: false, toneMapped: false });
+  const hoverMat = new THREE.MeshBasicMaterial({ color: 0xffc08a, transparent: true, opacity: 0.7, depthTest: false, toneMapped: false });
   let fog = null;
   let active = false;
   let saved = null;
@@ -146,6 +153,20 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     coverCity(rival);
   }
 
+  /** Rings over `cells` ([[x, z]] queued targets) and `hover` (cells under the cursor, or null). */
+  function setMarkers(cells, hover = null) {
+    marks.clear();
+    const ring = (x, z, mat, y) => {
+      const m = new THREE.Mesh(ringGeo, mat);
+      const w = hexToWorld(x, z);
+      m.position.set(w.x, y, w.z);
+      m.renderOrder = 20;
+      marks.add(m);
+    };
+    for (const [x, z] of cells) ring(x, z, markMat, 0.6);
+    for (const [x, z] of hover ?? []) ring(x, z, hoverMat, 0.62);
+  }
+
   /** Per frame while a rival city is shown: the fog follows the camera; its offscreen pass comes before the scene. */
   function update(dt, camera) {
     if (!active || !fog) return;
@@ -156,6 +177,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   /** Put the board camera back on the exact rig state from before the visit. */
   function exit() {
     clearRoot();
+    marks.clear();
     active = false;
     shown = null;
     fog?.setVisible(false);
@@ -182,7 +204,11 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     get fog() {
       return fog;
     },
+    get rival() {
+      return shown?.rival ?? null;
+    },
     build,
+    setMarkers,
     enter,
     exit,
     refresh,

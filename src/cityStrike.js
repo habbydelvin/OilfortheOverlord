@@ -28,6 +28,7 @@ export function missileKinds() {
 
 export function resetMissiles() {
   stock = [];
+  queue = [];
 }
 
 /** Drop the newest missiles when magazine capacity falls (a Magazine idle or gone). */
@@ -50,16 +51,52 @@ export function spendMissile(kind = 'missile') {
   return true;
 }
 
-/** Placeholder cities until the other-city map exists. */
-export const STRIKE_CITIES = [
-  { id: 'rusthaven', name: 'Rusthaven', nameZh: '铁锈港' },
-  { id: 'tarwell', name: 'Tarwell', nameZh: '焦油镇' },
-  { id: 'saltspire', name: 'Saltspire', nameZh: '盐柱' },
-];
-
 /** Put unspent strike cards back into stock (leaving the attack screen). */
 export function returnStrikeHand(pieces) {
   for (const p of pieces) stock.push(p.terrain === 'missile2' ? 'missile2' : 'missile');
+}
+
+// ---------- strikes queued on rival cities (fired in the attack phase, after the season is scored) ----------
+let queue = []; // { to, at: [x, z], kind }
+
+/** Aim one missile of `kind` from stock at cell `at` of city `to`. False if there's none in stock. */
+export function queueStrike(to, at, kind = 'missile') {
+  if (!spendMissile(kind)) return false;
+  queue.push({ to, at: [...at], kind });
+  return true;
+}
+
+/** Aim a missile card already drawn out of stock (played from the hand) at cell `at` of city `to`. */
+export function queueDrawn(to, at, kind = 'missile') {
+  queue.push({ to, at: [...at], kind: kind === 'missile2' ? 'missile2' : 'missile' });
+}
+
+/**
+ * Take back the queued strike at `at` on `to`. Returns its kind (or null). toStock: the missile goes back to the
+ * silo; otherwise the caller hands it back as a card.
+ */
+export function unqueueStrike(to, at, toStock = true) {
+  const i = queue.findIndex((q) => q.to === to && q.at[0] === at[0] && q.at[1] === at[1]);
+  if (i < 0) return null;
+  const { kind } = queue[i];
+  if (toStock) stock.push(kind);
+  queue.splice(i, 1);
+  return kind;
+}
+
+export const queuedStrikes = (to = null) => queue.filter((q) => to === null || q.to === to);
+
+/** The attack phase takes the whole queue. */
+export function takeQueue() {
+  const q = queue;
+  queue = [];
+  return q;
+}
+
+/** Cancel everything queued (or only on `to`): the missiles go back. */
+export function clearQueue(to = null) {
+  for (const q of queue) if (to === null || q.to === to) stock.push(q.kind);
+  queue = queue.filter((q) => to !== null && q.to !== to);
 }
 
 let uiOpen = null;
@@ -69,12 +106,8 @@ export function bindCityStrikeUi(fn) {
   uiOpen = fn;
 }
 
-/**
- * Enter the other-city attack screen.
- * @param {{ cities?: { id: string, name: string, nameZh?: string }[], draw?: number }} opts
- * @returns {Promise<null | { city, missile }>}
- */
+/** The old in-board strike screen (no longer bound to a key; kept for the debug tools). */
 export async function openCityStrike(opts = {}) {
   if (!uiOpen) return null;
-  return uiOpen({ cities: opts.cities ?? STRIKE_CITIES, draw: opts.draw });
+  return uiOpen({ cities: opts.cities ?? [], draw: opts.draw });
 }

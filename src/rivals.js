@@ -1,7 +1,8 @@
 import { Grid } from './grid.js';
 import { TERRAINS } from './tiles.js';
 import { computeEconomy } from './economy.js';
-import { dealHand, playHand } from './rivalAI.js';
+import { dealHand, playHand, fadeTension } from './rivalAI.js';
+import { CAPITAL_HP } from './war.js';
 
 /** Static rival city-states. Leaders are placeholders. `map` is a point on the war table, 0–100. */
 export const RIVALS = [
@@ -57,7 +58,7 @@ export function mulberry32(seed) {
 }
 
 /** Display-only. `computeEconomy` is not written back onto the rival or the player. */
-export function rivalStats(grid) {
+export function rivalStats(grid, rival = null) {
   const counts = {};
   let buildings = 0;
   for (const cell of grid.cells.values()) {
@@ -67,7 +68,13 @@ export function rivalStats(grid) {
   }
   // A full store, so the figure is what the wells would ship rather than a city starving on turn one.
   const oil = Math.round(computeEconomy(grid, { foodStore: 30 }).oilMade ?? 0);
-  return { counts, buildings, oil, tiles: grid.size };
+  let interceptors = 0;
+  let factories = 0;
+  for (const cell of grid.cells.values()) {
+    if (cell.terrain === 'intercept') interceptors++;
+    if (cell.terrain === 'milfactory') factories++;
+  }
+  return { counts, buildings, oil, tiles: grid.size, missiles: rival?.missiles?.length ?? 0, hp: rival?.capitalHp ?? CAPITAL_HP, alive: rival?.alive !== false, interceptors, factories, stockpile: rival?.oil ?? 0 };
 }
 
 /**
@@ -80,20 +87,25 @@ export function createRivals(seed) {
     const grid = new Grid();
     grid.set(0, 0, { terrain: 'capital' });
     const rng = mulberry32((base + Math.imul(i + 1, 0x9e3779b9)) >>> 0);
-    const rival = { id: def.id, def, grid, pieces: [], rng, round: 1, season: 0, foodStore: 0, stats: null, tension: 0, version: 0 };
+    const rival = { id: def.id, def, grid, pieces: [], rng, round: 1, season: 0, foodStore: 0, oil: 0, missiles: [], threat: 0, capitalHp: CAPITAL_HP, alive: true, tension: {}, stats: null, version: 0 };
     playHand(rival, dealHand(rival, true));
-    rival.stats = rivalStats(grid);
+    rival.stats = rivalStats(grid, rival);
     return rival;
   });
 }
 
 /** A season has passed: every rival plays its next hand (`round` is the player's year, for card unlocks). */
-export function advanceRivals(rivals, { round, season }) {
+export function advanceRivals(rivals, { round, season, playerMissiles = 0, yearLength }, all = rivals) {
   for (const rival of rivals ?? []) {
+    if (rival.alive === false) continue; // eliminated: no more turns
+    fadeTension(rival);
+    // What it has seen the others stockpile: more missiles about, more worth spending on shields.
+    rival.threat = all.reduce((n, r) => n + (r === rival ? 0 : r.missiles?.length ?? 0), 0) + (playerMissiles ?? 0);
     rival.round = round;
+    rival.yearLength = yearLength ?? 4;
     rival.season = season;
     playHand(rival, dealHand(rival));
-    rival.stats = rivalStats(rival.grid);
+    rival.stats = rivalStats(rival.grid, rival);
     rival.version++;
   }
 }

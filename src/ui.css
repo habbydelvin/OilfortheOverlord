@@ -2695,7 +2695,7 @@ body.striking #mapIcons {
 }
 .globe-title {
   position: absolute;
-  top: 22px;
+  bottom: 60px; /* above the hint: the HUD keeps the top of the screen */
   left: 50%;
   transform: translateX(-50%);
   font-size: 22px;
@@ -2751,6 +2751,19 @@ body.striking #mapIcons {
   box-shadow: inset 0 -2px 0 var(--node);
   text-shadow: 0 1px 2px #000;
   white-space: nowrap;
+}
+.globe-node.far {
+  opacity: 0.7; /* behind the planet, sticking out past its edge */
+}
+.globe-node.far:hover {
+  opacity: 1;
+}
+.globe-crown {
+  font-weight: normal;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--gold);
+  text-shadow: 0 1px 3px #000, 0 0 8px rgba(232, 191, 104, 0.6);
 }
 .globe-node.hover span {
   background: rgba(12, 10, 8, 0.85);
@@ -2835,15 +2848,13 @@ body.rival-view #rivalBar {
   color: var(--dp-muted, var(--muted));
   font-size: 13px;
 }
-body.globe-view #top,
+/* The War Map keeps the HUD (season, oil, quota, side panels) up; only a rival city clears it for its own bar. */
 body.rival-view #top {
   translate: 0 -140%;
 }
-body.globe-view #panel,
 body.rival-view #panel {
   translate: 110% 0;
 }
-body.globe-view #leftcol,
 body.rival-view #leftcol {
   translate: -110% 0;
 }
@@ -2853,9 +2864,6 @@ body.rival-view #hand {
   visibility: hidden;
   pointer-events: none;
 }
-body.globe-view #top,
-body.globe-view #panel,
-body.globe-view #leftcol,
 body.rival-view #top,
 body.rival-view #panel,
 body.rival-view #leftcol {
@@ -3023,4 +3031,167 @@ body.crt-shader .crt-vignette {
   .crt-vignette {
     animation: none;
   }
+}
+
+/* ---------- war: Capital HP, aiming at a rival, the attack phase ---------- */
+.capital-hp {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  margin-left: 8px;
+}
+.capital-hp i {
+  width: 9px;
+  height: 14px;
+  border-radius: 2px;
+  background: #c8453a;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+.capital-hp i.lost {
+  background: rgba(255, 255, 255, 0.12);
+}
+#btnRivalAttack,
+#rivalAim button {
+  border: 0;
+  border-radius: 4px;
+  padding: 6px 10px;
+  background: rgba(200, 69, 58, 0.25);
+  color: #f3c0a8;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+#btnRivalAttack.on {
+  background: #c8453a;
+  color: #fff;
+}
+#btnRivalAttack:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+#rivalAim {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+}
+#rivalAim.hidden {
+  display: none;
+}
+body.rival-aiming canvas {
+  cursor: crosshair;
+}
+#warUI {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  color: var(--dp-cream, #f0e4c8);
+}
+#warUI.hidden {
+  display: none;
+}
+#warUI .war-title {
+  position: absolute;
+  top: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 22px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #ff8a6a;
+  text-shadow: 0 2px 8px #000;
+}
+#btnWarSkip {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  pointer-events: auto;
+}
+.war-report {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 560px;
+  padding: 16px 20px;
+  border-radius: 6px;
+  background: var(--dp-metal-dark, rgba(16, 14, 12, 0.94));
+  box-shadow: var(--dp-rim, inset 0 0 0 1px rgba(201, 160, 90, 0.45));
+  font-size: 14px;
+  line-height: 1.6;
+  pointer-events: auto;
+}
+.war-report.hidden {
+  display: none;
+}
+.war-report .bad {
+  color: #ff8a6a;
+}
+.war-report .good {
+  color: #9fd38a;
+}
+.war-report button {
+  margin-top: 10px;
+}
+.globe-node.dead span {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+.globe-hp {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #ff8a6a;
+  text-shadow: 0 1px 2px #000;
+}
+body.war-phase #globeUI .globe-hint,
+body.war-phase #globeUI .globe-title {
+  visibility: hidden;
+}
+
+/* A rival city with missiles in the silo: the hand comes back holding the missile cards. */
+body.rival-view.rival-hand #hand {
+  translate: 0 0;
+  visibility: visible;
+  pointer-events: auto;
+}
+#btnRivalAttack.hidden,
+#btnRivalKind.hidden {
+  display: none;
+}
+
+/* "Incoming missiles!" before an attack phase that targets Hive City. */
+.war-alert {
+  position: absolute;
+  top: 34%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 28px;
+  border-radius: 6px;
+  background: rgba(60, 8, 4, 0.88);
+  box-shadow: inset 0 0 0 2px #c8453a, 0 0 30px rgba(200, 69, 58, 0.5);
+  text-align: center;
+  animation: warAlert 0.6s ease-in-out infinite alternate;
+}
+.war-alert.hidden {
+  display: none;
+}
+.war-alert b {
+  font-size: 28px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #ff6a4a;
+  text-shadow: 0 2px 8px #000;
+}
+.war-alert span {
+  font-size: 15px;
+  color: var(--dp-cream, #f0e4c8);
+}
+@keyframes warAlert {
+  from { box-shadow: inset 0 0 0 2px #c8453a, 0 0 14px rgba(200, 69, 58, 0.3); }
+  to { box-shadow: inset 0 0 0 2px #ff6a4a, 0 0 40px rgba(255, 80, 50, 0.7); }
 }

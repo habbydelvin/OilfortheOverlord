@@ -333,7 +333,7 @@ export function clearGlobeConfig() {
   localStorage.removeItem(GLOBE_STORAGE_KEY);
 }
 
-export function createGlobeView({ renderer, root, factory, playerBuildings, onVisit, onDive = () => {} }) {
+export function createGlobeView({ renderer, root, factory, playerBuildings, playerHp = () => 5, onVisit, onDive = () => {} }) {
   const dom = renderer.domElement;
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(BG);
@@ -956,7 +956,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
 
       const group = new THREE.Group();
       group.matrixAutoUpdate = false; // placeNode sets the matrix
-      group.add(factory.create('capital'));
+      group.add(factory.create(def.rival?.alive === false ? 'crater' : 'capital')); // a fallen city: its crater
       nodeRoot.add(group);
 
       const el = document.createElement('button');
@@ -979,7 +979,14 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
   function renderLabels() {
     for (const n of nodes) {
       const name = n.rival ? L(n.rival.def.name, n.rival.def.zh) : L('Hive City', '蜂巢城');
-      n.el.innerHTML = `<i></i><span>${name}</span>`;
+      // Home gets a crown over its name.
+      // hpShown / deadShown: what the attack playback has reached so far (the real state updates after it).
+      const hp = n.hpShown ?? (n.rival ? (n.rival.capitalHp ?? 5) : playerHp());
+      const dead = n.deadShown || (n.rival ? n.rival.alive === false : hp <= 0);
+      const pips = dead ? L('Destroyed', '已摧毁') : '■'.repeat(hp) + '□'.repeat(Math.max(0, 5 - hp));
+      n.el.innerHTML = `<i></i>${n.rival ? '' : '<b class="globe-crown" aria-hidden="true">♛</b>'}<span>${name}</span><b class="globe-hp">${pips}</b>`;
+      n.el.classList.toggle('home', !n.rival);
+      n.el.classList.toggle('dead', dead);
     }
     root.querySelector('.globe-title').textContent = L('War Map', '战争地图');
   }
@@ -1066,6 +1073,8 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
       <div><span>${L('Leader', '领袖')}</span><b>${leader}</b></div>
       <div><span>${L('Personality', '性情')}</span><b>${personality}</b></div>
       <div><span>${L('Buildings', '建筑')}</span><b>${buildings}</b></div>
+      ${rival ? `<div><span>${L('Missiles', '导弹')}</span><b>${rival.stats.missiles ?? 0}</b></div>
+      <div><span>${L('Interceptors', '拦截网')}</span><b>${rival.stats.interceptors ?? 0}</b></div>` : ''}
       <div><span>${L('Tension', '紧张度')}</span><b>—</b></div>
       <div class="globe-card-hint">${rival ? L('Click to visit', '点击访问') : L('Click to return', '点击返回')}</div>`;
     cardEl.classList.remove('hidden');
@@ -1188,7 +1197,9 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
   let visiting = false;
   /** Fly down onto a node, then report it. main.js fades and swaps the view. */
   async function visit(id) {
+    if (war) return; // no flying off mid attack phase
     const n = nodes.find((node) => node.id === id);
+    if (n?.rival && n.rival.alive === false) return; // nothing left to visit
     if (!n || visiting || dive || !active) return;
     drag = null;
     velocity.set(0, 0);
@@ -1314,6 +1325,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
     camera.position.set(0, 0, distance);
     camera.lookAt(0, 0, 0);
     camera.updateMatrixWorld();
+    updateWar(dt);
     updateSky(dt); // after the scroll for this frame, so the moon turns with the drag
 
     // Hover: label first, then the planet under the pointer.
@@ -1322,8 +1334,13 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
       setHovered(n);
     }
 
-    // Labels follow the pin heads; hidden on the far side.
+    // Labels follow the pin heads. On the far side they stay up, pushed out to stick past the planet's edge.
     const rect = dom.getBoundingClientRect();
+    proj.set(0, 0, 0).project(camera);
+    const cx = rect.left + ((proj.x + 1) / 2) * rect.width;
+    const cy = rect.top + ((1 - proj.y) / 2) * rect.height;
+    // Screen radius of the planet's silhouette.
+    const rim = (Math.tan(Math.asin(Math.min(1, RADIUS / distance))) / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) * (rect.height / 2);
     for (const n of nodes) {
       // Pins sink away once their cell is past the horizon, so they don't poke up from the far side.
       const ground = bend.project(n.p.x, n.p.y, 0, world).normalize().z;
@@ -1335,11 +1352,22 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
       bend.project(n.p.x, n.p.y - GLOBE.labelNorth, GLOBE.labelHeight, world); // name above the capital
       const facing = world.clone().normalize().z;
       proj.copy(world).project(camera);
-      const x = rect.left + ((proj.x + 1) / 2) * rect.width;
-      const y = rect.top + ((1 - proj.y) / 2) * rect.height;
-      const show = facing > limb() + 0.04 && !anim;
+      let x = rect.left + ((proj.x + 1) / 2) * rect.width;
+      let y = rect.top + ((1 - proj.y) / 2) * rect.height;
+      const far = facing <= limb() + 0.04;
+      if (far) {
+        // Behind the planet: out along the same direction from the centre, just past the rim.
+        let dx = x - cx;
+        let dy = y - cy;
+        const len = Math.hypot(dx, dy);
+        if (len < 1e-3) [dx, dy] = [0, -1];
+        else [dx, dy] = [dx / len, dy / len];
+        x = cx + dx * (rim + 14);
+        y = cy + dy * (rim + 14) + (dy > 0 ? 22 : 0); // labels hang above their point: keep the lower ones clear
+      }
       n.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -100%)`;
-      n.el.classList.toggle('off', !show);
+      n.el.classList.toggle('far', far);
+      n.el.classList.toggle('off', Boolean(anim) && !n.el.classList.contains('home'));
       if (n === hovered) {
         const left = Math.min(x + 26, rect.right - 230);
         const top = THREE.MathUtils.clamp(y - 20, rect.top + 8, rect.bottom - 190);
@@ -1350,6 +1378,201 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
 
   function render() {
     renderer.render(scene, camera);
+  }
+
+  // ---------- attack phase playback ----------
+  // Every strike flies at once (staggered launches) on an arc between the two cities; the defender's networks
+  // fire up at it; it bursts in the air or lands. Resolved beforehand (war.js): this only shows the results.
+  const warRoot = new THREE.Group();
+  scene.add(warRoot);
+  const headGeo = new THREE.SphereGeometry(0.09, 8, 6);
+  const burstGeo = new THREE.SphereGeometry(1, 12, 8);
+  let war = null; // { items, t, speed, done }
+  const P = new THREE.Vector3();
+  const Q = new THREE.Vector2();
+
+  /** Plane point + height along a strike's arc at u (0 launch, 1 impact). */
+  function arcPoint(it, u, out) {
+    const h = it.H * Math.sin(Math.PI * Math.min(1, u)) + 0.15;
+    return bend.project(it.from.x + it.d.x * u, it.from.y + it.d.y * u, h, out);
+  }
+
+  function makeTrail(color) {
+    const n = 28;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.85, toneMapped: false }));
+    line.frustumCulled = false;
+    warRoot.add(line);
+    return line;
+  }
+
+  function setTrail(line, fn, u0, u1) {
+    const a = line.geometry.attributes.position;
+    for (let i = 0; i < a.count; i++) {
+      fn(u0 + ((u1 - u0) * i) / (a.count - 1), P);
+      a.setXYZ(i, P.x, P.y, P.z);
+    }
+    a.needsUpdate = true;
+  }
+
+  function burst(color, size, life) {
+    const m = new THREE.Mesh(burstGeo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1, toneMapped: false, depthWrite: false }));
+    m.userData = { size, life, age: 0 };
+    m.scale.setScalar(0.01);
+    warRoot.add(m);
+    return m;
+  }
+
+  /**
+   * Play an attack phase on the globe. strikes: war.js resolve() output. Resolves when everything has landed.
+   * speed: 1 normal; skip() jumps ahead.
+   */
+  function playAttack(strikes) {
+    const nodeOf = (id) => nodes.find((n) => n.id === id);
+    const items = [];
+    strikes.forEach((s, i) => {
+      const a = nodeOf(s.from);
+      const b = nodeOf(s.to);
+      if (!a || !b) return;
+      const d = bend.wrapDelta(b.p.x, b.p.y, a.p, new THREE.Vector2());
+      const dist = d.length();
+      const color = a.color.clone().lerp(new THREE.Color(0xffffff), 0.35);
+      const head = new THREE.Mesh(headGeo, new THREE.MeshBasicMaterial({ color: 0xfff2c0, toneMapped: false }));
+      warRoot.add(head);
+      items.push({
+        s,
+        from: a.p.clone(),
+        to: b,
+        d,
+        H: Math.min(RADIUS * 0.45, 0.8 + 0.28 * dist),
+        start: 0.2 * i,
+        dur: 1.8 + 0.06 * dist,
+        head,
+        trail: makeTrail(color),
+        shots: s.shots.map((shot, k) => ({ ...shot, at: 0.7 + 0.08 * k, line: null, done: false })),
+        stopAt: s.shots.findIndex((x) => x.success),
+        ended: false,
+      });
+    });
+    setHovered(null);
+    velocity.set(0, 0);
+    dive = null;
+    goalDistance = D_DEFAULT;
+    document.body.classList.add('war-phase');
+    return new Promise((done) => {
+      if (!items.length) {
+        document.body.classList.remove('war-phase');
+        done();
+        return;
+      }
+      war = { items, t: 0, speed: 1, done, after: 0 };
+    });
+  }
+
+  function skipAttack() {
+    if (war) war.speed = 8;
+  }
+
+  function updateWar(dt) {
+    // Bursts grow and fade on their own, even after the phase.
+    for (const m of [...warRoot.children]) {
+      const u = m.userData;
+      if (u.life === undefined) continue;
+      u.age += dt;
+      const k = u.age / u.life;
+      if (!m.isLine) m.scale.setScalar(u.size * (0.3 + 0.7 * Math.min(1, k * 2))); // lines sit in world space: fade only
+      m.material.opacity = Math.max(0, 1 - k);
+      if (k >= 1) {
+        warRoot.remove(m);
+        m.material.dispose();
+      }
+    }
+    if (!war) return;
+    war.t += dt * war.speed;
+    let live = 0;
+    for (const it of war.items) {
+      const u = (war.t - it.start) / it.dur;
+      const fn = (v, out) => arcPoint(it, v, out);
+      if (it.ended) {
+        // The trail drains away from the launch end.
+        it.fade = Math.min(1, (it.fade ?? 0) + dt * war.speed * 1.5);
+        setTrail(it.trail, fn, Math.min(it.endU, it.fade * it.endU), it.endU);
+        it.trail.material.opacity = 0.85 * (1 - it.fade);
+        if (it.fade < 1) live++;
+        continue;
+      }
+      live++;
+      if (u <= 0) {
+        it.head.visible = false;
+        it.trail.visible = false;
+        continue;
+      }
+      it.head.visible = it.trail.visible = true;
+      const uu = Math.min(1, u);
+      arcPoint(it, uu, it.head.position);
+      setTrail(it.trail, fn, Math.max(0, uu - 0.35), uu);
+      // Interceptors climb from the target city toward the missile.
+      for (const [k, shot] of it.shots.entries()) {
+        if (it.stopAt >= 0 && k > it.stopAt) break;
+        if (uu < shot.at - 0.12 || shot.done) continue;
+        if (!shot.line) shot.line = makeTrail(shot.success ? 0x8affd0 : 0x6ad0b0);
+        const v = THREE.MathUtils.clamp((uu - (shot.at - 0.12)) / 0.12, 0, 1);
+        const meet = new THREE.Vector3();
+        arcPoint(it, shot.at, meet);
+        const base = bend.project(it.to.p.x + (shot.x - 0) * 0.04, it.to.p.y + (shot.z - 0) * 0.04, 0.1, new THREE.Vector3());
+        const line = shot.line;
+        const pa = line.geometry.attributes.position;
+        for (let i = 0; i < pa.count; i++) {
+          const f = (v * i) / (pa.count - 1);
+          P.lerpVectors(base, meet, f);
+          if (!shot.success) P.x += Math.sin(f * 9) * 0.04 * f; // a miss wobbles past
+          pa.setXYZ(i, P.x, P.y, P.z);
+        }
+        pa.needsUpdate = true;
+        if (v >= 1) {
+          shot.done = true;
+          line.userData = { life: 0.6, age: 0, size: 1 };
+          if (shot.success) {
+            burst(0x9affe0, 0.35, 0.7).position.copy(meet);
+            it.ended = true;
+            it.endU = shot.at;
+            it.head.visible = false;
+          } else burst(0x6ad0b0, 0.12, 0.4).position.copy(meet);
+        }
+      }
+      if (it.ended) continue;
+      if (u >= 1) {
+        it.ended = true;
+        it.endU = 1;
+        it.head.visible = false;
+        const s = it.s;
+        if (s.hit) {
+          const ground = bend.project(it.to.p.x, it.to.p.y, 0.15, new THREE.Vector3());
+          burst(s.capital !== null ? 0xff3a1a : 0xffa040, s.kind === 'missile2' ? 0.7 : 0.45, 1.1).position.copy(ground);
+          if (s.eliminated) {
+            it.to.group.clear();
+            it.to.group.add(factory.create('crater'));
+            it.to.deadShown = true;
+          }
+          if (s.capital !== null) it.to.hpShown = s.capital;
+          renderLabels();
+        }
+      }
+    }
+    // A short beat after the last landing, then hand back.
+    if (!live) war.after += dt;
+    if (war.after > 0.6) {
+      const done = war.done;
+      for (const it of war.items) {
+        warRoot.remove(it.head, it.trail);
+        it.trail.geometry.dispose();
+        for (const sh of it.shots) if (sh.line) warRoot.remove(sh.line);
+      }
+      war = null;
+      document.body.classList.remove('war-phase');
+      done();
+    }
   }
 
   /** Open centred on `fromId` (the city we came from), starting just above it and pulling back to the planet. */
@@ -1396,8 +1619,11 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, onVi
       return active;
     },
     get busy() {
-      return Boolean(anim) || visiting;
+      return Boolean(anim) || visiting || Boolean(war);
     },
+    playAttack,
+    skipAttack,
+    renderLabels: () => renderLabels(),
     scene,
     camera,
     enter,
