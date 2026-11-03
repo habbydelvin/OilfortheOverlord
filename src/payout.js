@@ -26,7 +26,7 @@ const easeIn = (t) => t * t * t;
 const easeOutBack = (t) => 1 + 2.7 * (t - 1) ** 3 + 1.7 * (t - 1) ** 2;
 
 /** Tile hop: squash, launch, fall, land squish. Phases are fractions of cfg.hopDuration. */
-function hop(t, c) {
+export function tileHop(t, c) {
   const d = c.hopDuration;
   const a = d * 0.19; // anticipation
   const r = d * 0.29; // rise
@@ -182,7 +182,7 @@ export class Payout {
       // the pivot flattens it on the sand instead of sinking it, whatever its height.
       const m = it.tile.mesh;
       if (t < c.hopDuration) {
-        const { y, sx, sy } = hop(t, c);
+        const { y, sx, sy } = tileHop(t, c);
         m.scale.set(sx, sy, sx);
         m.position.y = y;
         alive = true;

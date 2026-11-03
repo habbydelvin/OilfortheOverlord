@@ -363,9 +363,10 @@ body {
 }
 
 #panel .res .pop-text.bump,
-#panel .res .v span.bump {
+#panel .res .v span.bump,
+#panel .res .v span.pop {
   display: inline-block;
-  animation: pop 0.35s ease-out;
+  animation: pop 0.4s ease-out;
 }
 
 #panel .res .pop-text {
@@ -1575,7 +1576,7 @@ body.shopping .ruin-btn {
   box-shadow: 0 0 5px rgba(240, 192, 96, 0.45);
   transform: scaleX(0);
   transform-origin: left center;
-  transition: transform 0.5s cubic-bezier(0.22, 0.9, 0.28, 1);
+  transition: transform 0.45s cubic-bezier(0.22, 0.9, 0.28, 1);
 }
 .factory-bar i.on::after {
   transform: scaleX(1);
@@ -2872,12 +2873,14 @@ body.rival-view #leftcol {
 }
 body.globe-view #mapIcons,
 body.globe-view #ruinBtns,
+body.globe-view #factoryBars,
 body.globe-view #floaters,
 body.globe-view #toast,
 body.globe-view #resTip,
 body.globe-view #inspect,
 body.rival-view #mapIcons,
 body.rival-view #ruinBtns,
+body.rival-view #factoryBars,
 body.rival-view #floaters,
 body.rival-view #toast,
 body.rival-view #resTip,

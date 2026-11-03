@@ -35,7 +35,7 @@ import { queueDrawn, addMissile, missileCount, missileKinds, trimMissiles, reset
 import { CAPITAL_HP, resolve as resolveWar, applyToRival, footprint } from './war.js';
 import { chooseStrikes, noteAttacks } from './rivalAI.js';
 import { INTERCEPT } from './arsenal.js';
-import { Payout } from './payout.js';
+import { Payout, tileHop } from './payout.js';
 import { EVENTS, KIND_LABEL, drawEvent } from './events.js';
 import { Dialogue } from './dialogue.js';
 import { TIERS, TIER_ORDER, REWARDS, LOW_STREAK_LIMIT, rollReward, scaledQuota } from './targets.js';
@@ -1153,16 +1153,131 @@ function updateRuinButtons() {
 
 const factoryBars = new Map();
 const factoryBarV = new THREE.Vector3();
+const FACTORY_FILL_MS = 450;
+const FACTORY_HOP = 0.5;
+const factoryFloaters = [];
+const factoryHops = [];
+const factoryJobs = [];
+const factoryPaid = [];
+
 function previewFactoryBar(x, z) {
-  const rec = factoryBars.get(`${x},${z}`);
   const c = grid.get(x, z);
-  if (!rec || !c) return;
+  if (!c) return;
+  const k = `${x},${z}`;
+  let rec = factoryBars.get(k);
+  if (!rec) {
+    rec = { el: null, filled: -1, need: 0, preview: null };
+    factoryBars.set(k, rec);
+  }
   rec.preview = Math.min(yearLength(), (c.missileProgress ?? 0) + 1);
+}
+
+function hopFactory(cell) {
+  const mesh = cell.mesh ? payoutMesh(cell) : null;
+  if (!mesh) return Promise.resolve();
+  return new Promise((resolve) => factoryHops.push({ mesh, t: 0, done: resolve }));
+}
+
+function updateFactoryHops(dt) {
+  const c = payoutCfg;
+  for (let i = factoryHops.length - 1; i >= 0; i--) {
+    const h = factoryHops[i];
+    h.t += dt;
+    if (h.t >= FACTORY_HOP) {
+      h.mesh.scale.set(1, 1, 1);
+      h.mesh.position.y = 0;
+      factoryHops.splice(i, 1);
+      h.done();
+    } else {
+      const { y, sx, sy } = tileHop(h.t, { ...c, hopDuration: FACTORY_HOP });
+      h.mesh.scale.set(sx, sy, sx);
+      h.mesh.position.y = y;
+    }
+  }
+}
+
+/** Fill the pip, hop the factory, then bump the silo if the bar is full. */
+async function chargeOneFactory(cell) {
+  const idle = idleKeySet();
+  const need = yearLength();
+  const run = runId;
+  if ((cell.missileProgress ?? 0) >= need) {
+    spawnMissileFloater(cell, factoryYield(grid, cell, idle).count);
+    await hopFactory(cell);
+    if (run !== runId) return { count: 0 };
+    return finishFactoryMissile(cell, idle);
+  }
+  previewFactoryBar(cell.x, cell.z);
+  await wait(FACTORY_FILL_MS / 1000);
+  if (run !== runId) return { count: 0 };
+  thud();
+  const completing = (cell.missileProgress ?? 0) + 1 >= need;
+  if (completing) spawnMissileFloater(cell, factoryYield(grid, cell, idle).count);
+  await hopFactory(cell);
+  if (run !== runId) return { count: 0 };
+  factoryPaid.push(cell);
+  cell.missileProgress = (cell.missileProgress ?? 0) + 1;
+  if (cell.missileProgress >= need) return finishFactoryMissile(cell, idle);
+  const rec = factoryBars.get(`${cell.x},${cell.z}`);
+  if (rec) rec.preview = null;
+  return { count: 0 };
+}
+
+function finishFactoryMissile(cell, idle) {
+  const out = deliverFactory(cell, idle);
+  updateHUD();
+  const el = $('resMissile');
+  if (el && out.count) pop(el);
+  return out;
+}
+
+function spawnMissileFloater(cell, n) {
+  const layer = $('floaters');
+  if (!layer) return;
+  const el = document.createElement('div');
+  el.className = 'floater';
+  el.innerHTML = `<div class="row" style="--c:#f0c060"><b>+${n}</b></div>`;
+  layer.appendChild(el);
+  factoryFloaters.push({ el, x: cell.x, z: cell.z, t: 0 });
+}
+
+function updateFactoryFloaters(dt) {
+  const c = payoutCfg;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const v = factoryBarV;
+  for (let i = factoryFloaters.length - 1; i >= 0; i--) {
+    const f = factoryFloaters[i];
+    f.t += dt;
+    if (f.t >= c.labelLife) {
+      f.el.remove();
+      factoryFloaters.splice(i, 1);
+      continue;
+    }
+    const p = Math.min(f.t / c.labelLife, 1);
+    const pt = c.labelPopTime;
+    const easeOut = (t) => 1 - (1 - t) ** 3;
+    const easeOutBack = (t) => 1 + 2.7 * (t - 1) ** 3 + 1.7 * (t - 1) ** 2;
+    const scale = f.t < pt ? (0.2 + 0.8 * easeOutBack(Math.min(f.t / pt, 1))) * c.labelPop : 1;
+    const rise = c.labelStartY + c.labelRise * easeOut(p);
+    const pos = hexToWorld(f.x, f.z);
+    v.set(pos.x, rise, pos.z).project(camera);
+    const px = (v.x * 0.5 + 0.5) * w;
+    const py = (-v.y * 0.5 + 0.5) * h;
+    f.el.style.transform = `translate(${px}px, ${py}px) translate(-50%, -100%) scale(${scale})`;
+    const fs = Math.min(c.fadeStart, 0.999);
+    f.el.style.opacity = p > fs ? 1 - (p - fs) / (1 - fs) : 1;
+  }
 }
 
 function updateFactoryBars() {
   const layer = $('factoryBars');
   if (!layer) return;
+  if (view !== 'board') {
+    layer.style.visibility = 'hidden';
+    return;
+  }
+  layer.style.visibility = '';
   const need = yearLength();
   const live = new Set();
   for (const c of grid.cells.values()) {
@@ -1170,11 +1285,11 @@ function updateFactoryBars() {
     const k = `${c.x},${c.z}`;
     live.add(k);
     let rec = factoryBars.get(k);
-    if (!rec) {
+    if (!rec?.el) {
       const el = document.createElement('div');
       el.className = 'factory-bar';
       layer.appendChild(el);
-      rec = { el, filled: -1, need: 0, preview: null };
+      rec = rec ? Object.assign(rec, { el }) : { el, filled: -1, need: 0, preview: null };
       factoryBars.set(k, rec);
     }
     const filled = rec.preview ?? c.missileProgress ?? 0;
@@ -1388,8 +1503,8 @@ function deliverFactory(cell, idle) {
   }
   if (delivered === 0) return { ...y, count: 0, stuck: true };
   cell.missileProgress = 0;
-  const el = $('resMissile');
-  if (el) bump(el);
+  const rec = factoryBars.get(`${cell.x},${cell.z}`);
+  if (rec) rec.preview = null;
   return { ...y, count: delivered };
 }
 
@@ -1744,12 +1859,19 @@ function endTurn() {
 /** True from End Turn until the attack phase has finished (a second press does nothing). */
 let warPending = false;
 
-/** Oil has landed: factories pay and produce, then the year can wrap up. */
+/** Oil has landed: wait out factory fill/hop/bump, then wrap the year. */
 function finishSeasonFx(e) {
-  turn.stockpile += e.oil;
-  turn.total += e.oil;
-  const factoryWork = runFactories();
-  settleTurn({ ...e, oil: 0, factoryWork });
+  const jobs = factoryJobs.splice(0);
+  Promise.all(jobs.length ? jobs : [Promise.resolve([])]).then((factoryWork) => {
+    turn.stockpile += e.oil;
+    turn.total += e.oil;
+    for (const cell of factoryPaid.splice(0)) {
+      if (turn.stockpile >= FACTORY_OIL) turn.stockpile -= FACTORY_OIL;
+    }
+    showOil(turn.stockpile);
+    document.body.classList.remove('paying');
+    settleTurn({ ...e, oil: 0, factoryWork: factoryWork.flat().filter(Boolean) });
+  });
 }
 
 /** Debug (Space): play the payout sequence without ending the turn or changing anything. */
@@ -1829,9 +1951,12 @@ function runPayout(e, onDone) {
     }
   }
   const tiles = [...parts.values()]
-    .filter((p) => p.food || p.idle || p.oil || EFFECT_TILES.has(p.terrain))
+    .filter((p) => p.terrain !== 'milfactory' && (p.food || p.idle || p.oil || EFFECT_TILES.has(p.terrain)))
     .map((p) => ({ ...p, mesh: payoutMesh(grid.get(p.x, p.z)) }))
     .flatMap(splitTriggers);
+  if (!previewing) {
+    for (const c of grid.cells.values()) if (c.terrain === 'milfactory') factoryJobs.push(chargeOneFactory(c));
+  }
 
   // Oil fills the quota bar; food fills the store bar (up to its capacity).
   let shown = turn.stockpile;
@@ -1851,7 +1976,6 @@ function runPayout(e, onDone) {
       } else if (tile.oil) {
         shown += tile.oil;
         showOil(shown, true);
-        if (tile.terrain === 'milfactory') previewFactoryBar(tile.x, tile.z);
       }
       if (tile.food) {
         store = Math.max(0, Math.min(e.foodCap, store + tile.food));
@@ -2739,7 +2863,7 @@ function debugEnsureFactory() {
   return { cells: [grid.get(x, z)], placed: true };
 }
 
-/** J: put a factory on the board, then play the season settle so missiles fly from it. */
+/** J: put a factory on the board, then play the season settle so a missile is produced. */
 function debugMissileSettle() {
   if (turn.over || striking || shopOpen || eventOpen || payout.active) {
     return L('Finish the current screen first', '请先结束当前界面');
@@ -3383,12 +3507,12 @@ async function firePlayerMissile(cells, fromHand = null) {
     trackCamera: false,
     holdAfter: 0.9,
     onCover: () => {
-      hits.forEach(([x, z]) => (decoy && decoy.x === x && decoy.z === z ? removeDecoy() : demolish(x, z, true)));
+      hits.forEach(([x, z]) => (decoy && decoy.x === x && decoy.z === z ? removeDecoy() : craterAt(x, z)));
     },
   });
   if (run !== runId) return;
   toast(
-    L(`Missile destroyed ${hits.length} building${hits.length === 1 ? '' : 's'}`, `导弹摧毁了 ${hits.length} 座建筑`),
+    L(`Missile left ${hits.length} crater${hits.length === 1 ? '' : 's'}`, `导弹留下了 ${hits.length} 个弹坑`),
     'good',
   );
   updateHUD();
@@ -4219,6 +4343,16 @@ function resetIsland(opts) {
   warPending = false;
   attackLive = false;
   landing = [];
+  for (const h of factoryHops) {
+    h.mesh.scale.set(1, 1, 1);
+    h.mesh.position.y = 0;
+    h.done();
+  }
+  factoryHops.length = 0;
+  factoryJobs.length = 0;
+  factoryPaid.length = 0;
+  for (const f of factoryFloaters) f.el.remove();
+  factoryFloaters.length = 0;
   setAiming(false);
   $('warUI').classList.add('hidden');
   $('warReport').classList.add('hidden');
@@ -4615,6 +4749,8 @@ function frame(now) {
   perf.end('render (cpu)');
   perf.begin('payout');
   payout.update(dt); // after render so labels use this frame's camera
+  updateFactoryHops(dt);
+  updateFactoryFloaters(dt);
   oilFlights.update(dt);
   perf.end('payout');
   perf.frameEnd();
