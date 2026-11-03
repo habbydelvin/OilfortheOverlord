@@ -93,7 +93,6 @@ const HEX_YAW = Math.PI / 6;
 const GLB_ONLY = {
   'MilitaryFactory.glb': 'MissileFactory',
   'MissileMagazine.glb': 'MissileMagazine', // two clips: Idle (loops) and Launch (played when a missile is fired)
-  'WasteRock.glb': 'WasteRock', // the Cliffs tile
   'WasteCamp.glb': 'WasteCamp', // the Raider Hideout
   'WarheadInstitute.glb': 'WarheadInstitute',
   'InterceptNetwork.glb': 'InterceptNetwork', // Idle (with the gun's sweep) and Fire; the game aims the gun (tiles.js)

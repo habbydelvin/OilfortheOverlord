@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import { clone as cloneModel } from 'three/addons/utils/SkeletonUtils.js';
-import { hasBlockout, loadCoreModels, loadBundle, loadWastePieces, pieceCuts } from './models.js';
+import { hasBlockout, loadCoreModels, loadBundle, loadWastePieces } from './models.js';
+import { SHAPES } from './shapes.js';
 import { buildRaiderCamp } from './raiderMesh.js';
 import { buildLabourCamp } from './labourCampMesh.js';
 import { buildInterceptBunker } from './interceptMesh.js';
 import { copySeam } from './seamlessGround.js';
 import { SCALE } from './scalingConfig.js';
 import { L } from './i18n.js';
-import { hexToWorld, hexRound, hexDistance, hexesAround } from './grid.js';
+import { hexToWorld, hexRound, hexDistance, hexesAround, cellSeed, cellsCentre } from './grid.js';
 import { hexPrism } from './hexGeometry.js';
 
 /**
@@ -1007,8 +1008,8 @@ export class TileFactory {
   }
 
   /**
-   * A lone Wasteland cell: one of the 'mono' looks (the Single models and every piece model's cells, see
-   * loadWastePieces), turned any of the six ways, both picked by `seed`; a coloured block until the pieces have loaded.
+   * A lone Wasteland cell: one of the Wasteland looks (the 'mono' list: mostly dunes and sand, see loadWastePieces),
+   * turned any of the six ways, both picked by `seed`; a coloured block until the pieces have loaded.
    */
   fillWaste(holder, terrain, seed = 0) {
     holder.clear();
@@ -1020,20 +1021,36 @@ export class TileFactory {
   }
 
   /**
-   * A cell left over from a Wasteland piece (a building took another of its cells): its own part of the piece's
-   * model, just as it was, so the rest of the piece looks unchanged. piece: { shape, rot, seed } as it was placed;
+   * A cell left over from a Wasteland piece (a building took another of its cells): the look it had in the piece,
+   * turned as it was, so the rest of the piece looks unchanged. piece: { shape, rot, seed } as it was placed;
    * offset: [x, z] from the middle of the piece's cells to this one (world units). Falls back to fillWaste.
    */
   fillWastePart(holder, terrain, piece, offset, seed = 0) {
-    const cuts = pieceCuts(this.#pieceModel(piece.shape, piece.seed));
-    // Where this cell sits in the piece before its turn.
+    // Which of the shape's cells this is: where it sits in the piece before its turn.
     const at = new THREE.Vector3(offset[0], 0, offset[1]).applyAxisAngle(THREE.Object3D.DEFAULT_UP, (piece.rot * Math.PI) / 3);
-    const cut = cuts?.find((c) => Math.hypot(c.q[0] - at.x, c.q[1] - at.z) < 0.25);
-    if (!cut) return this.fillWaste(holder, terrain, seed);
+    const i = this.#pieceCells(piece.shape).findIndex((c) => Math.hypot(c.x - at.x, c.z - at.z) < 0.25);
+    const [look, turn] = i >= 0 ? this.#pieceLook(piece.seed, i) : [null, 0];
+    if (!look) return this.fillWaste(holder, terrain, seed);
     holder.clear();
-    this.#fillWith(holder, cut.root, piece.rot);
+    this.#fillWith(holder, look, piece.rot + turn);
     holder.userData.blockout = true;
     applyTileGap(holder);
+  }
+
+  /** A shape's cells around their middle (world offsets, the piece unturned). */
+  #pieceCells(shape) {
+    const cells = SHAPES[shape]?.cells ?? [];
+    const mid = cellsCentre(cells);
+    return cells.map(([x, z]) => {
+      const w = hexToWorld(x, z);
+      return { x: w.x - mid.x, z: w.z - mid.z };
+    });
+  }
+
+  /** Cell i of the piece with this seed: its look and its turn (sixths), the same every time. */
+  #pieceLook(seed, i) {
+    const h = cellSeed(seed, i);
+    return [this.#pieceModel('mono', h), (h >>> 8) % 6];
   }
 
   #fillWith(holder, source, rot) {
@@ -1046,18 +1063,22 @@ export class TileFactory {
   }
 
   /**
-   * A whole Wasteland piece as one model, turned to the piece's rotation (rot sixths of a turn, like rotateCells).
-   * Centred on the origin: place it at the middle of the piece's cells (cellsCentre in grid.js). seed picks among a
-   * shape's models (the piece's id: its ghost and the placed piece match). Null until the piece models have loaded.
+   * A whole Wasteland piece: a look for each of its cells (mostly dunes and sand, see loadWastePieces), each turned
+   * its own way, all picked by `seed` (the piece's id: its ghost, the placed piece and what a building leaves of it
+   * match). Turned to the piece's rotation (rot sixths of a turn, like rotateCells) and centred on the origin: place
+   * it at the middle of the piece's cells (cellsCentre in grid.js). Null until the piece models have loaded.
    */
   createPiece(shape, rot = 0, seed = 0) {
-    const source = this.#pieceModel(shape, seed);
-    if (!source) return null;
+    if (!SHAPES[shape] || !this.#pieceModel('mono')) return null;
     const group = new THREE.Group();
-    const model = cloneModel(source);
-    group.add(model);
+    this.#pieceCells(shape).forEach((c, i) => {
+      const cell = new THREE.Group();
+      cell.position.set(c.x, 0, c.z);
+      const [look, turn] = this.#pieceLook(seed, i);
+      this.#fillWith(cell, look, turn);
+      group.add(cell);
+    });
     group.rotation.y = (-rot * Math.PI) / 3; // rot sixths of a turn, clockwise on screen
-    if (model.animations.length) this.#animate(model);
     return applyTileGap(group);
   }
 

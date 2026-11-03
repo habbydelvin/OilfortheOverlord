@@ -23,7 +23,7 @@ export const BLOCKOUTS = {
   refinery: 'RefineryCity01.fbx',
   oasis: 'Oasis.fbx',
   tarpit: 'TarPit01.fbx',
-  cliffs: 'WasteRock.glb', // no FBX: a hexagonal .glb (GLB_ONLY in tools/convert-models.mjs), like the camp and pieces
+  cliffs: 'Cliff01.fbx',
   ruins: 'Ruins01.fbx',
   crater: 'ToxicCraterCity01.fbx',
   labourcamp: 'LaborCampCity01.fbx',
@@ -54,7 +54,7 @@ const FINISHED = {
   oasis: { yaw: 0, fit: 'WasteOasis_HiveCity' },
   labourcamp: { yaw: 0, fit: 'LaborCamp_HiveCity' },
   // Ruins: its hexagonal ground plate is the footprint.
-  cliffs: { yaw: 0, fit: 'WasteRock_HiveCity' },
+  cliffs: { yaw: 0, fit: 'SandCliffs_HiveCity' },
   ruins: { yaw: 0, fit: 'WasteRuins_Ground' },
   crater: { yaw: 0, fit: 'ToxicCrater_HiveCity' },
   raider: { yaw: 0, fit: 'RaiderCampBrown_HiveCity' },
@@ -77,7 +77,7 @@ const USE_FBX = typeof location !== 'undefined' && new URLSearchParams(location.
 const MODEL_URL = USE_FBX ? '/art/models/' : '/models/glb/';
 const TEX_URL = '/models/tex/';
 // Bump after re-running the conversion (or re-exporting a model under the same name), so browsers drop cached copies.
-const MODEL_VERSION = '20261103-1900';
+const MODEL_VERSION = '20261103-2000';
 const ATLAS_URL = '/models/Atlas.jpg?v=20261026-1640';
 // Footprints measure about 96 × 97 cm. One board cell is 1 unit across.
 const CELL = 1; // full cell: the seam between tiles is TILE.gap, applied live by applyTileGap (tiles.js)
@@ -395,8 +395,8 @@ function drawAfterGround(root) {
 /**
  * The Wasteland piece models (art/models/hex/WasteHex_<Name>.glb). Each spans a whole piece; which piece shape it
  * is goes by the cells its ground covers (measured offline, see pieceCells in tools/convert-models.mjs), not by its
- * name: fitHexPiece matches them to SHAPES (shapes.js). A shape with two models picks one per piece; a shape with
- * none uses the mirror image of one that matches it mirrored (loadWastePieces).
+ * name: fitHexPiece matches them to SHAPES (shapes.js). Their cells, cut out, are the looks Wasteland cells are
+ * built from (loadWastePieces).
  */
 export const WASTE_PIECE_FILES = ['Single', 'Pair', 'Line3', 'Bend3', 'Tri3', 'Bar', 'Diamond', 'Pistol', 'PistolM', 'Spiral', 'Zigzag', 'ZigzagM', 'Arch', 'HookM', 'Snake'];
 const ROW = Math.sqrt(3) / 2;
@@ -1529,8 +1529,10 @@ function splitCiws(root) {
 }
 
 /**
- * The Wasteland piece models by piece shape (Map shape -> roots, ready to clone; one or more per shape). A shape no
- * model matches takes the mirror image of one that does once mirrored (none: its pieces show single cells).
+ * The Wasteland piece models by piece shape (Map shape -> roots, ready to clone; one or more per shape; a shape no
+ * model matches takes the mirror image of one that does once mirrored), and under 'mono' the looks every Wasteland
+ * cell picks from (list[seed % n]): their cells cut out (cellModels) and sorted by kind, weighted by LOOK_SHARES.
+ * Pieces are built from those looks cell by cell (TileFactory.createPiece in tiles.js).
  */
 export async function loadWastePieces() {
   const byShape = new Map();
@@ -1554,45 +1556,75 @@ export async function loadWastePieces() {
     add(copy);
     parts.set(copy, parts.get(root));
   }
-  // Every model's cells on their own: a cell a building leaves keeps its part (pieceCuts), and lone cells (the
-  // 'mono' list: the Single models, then every cell with enough on it that wasn't cut through) show any of them.
-  const kinds = { pit: [...(byShape.get('mono') ?? [])], spires: [], other: [] };
+  // Every model's cells on their own, as the looks each Wasteland cell picks from (the 'mono' list, by kind:
+  // LOOK_SHARES), and a few made from them: a cell's dunes on their own, its sand with only the flat bits on it.
+  // (Cells cut through a prop, and the pit cells' ground with its hole, don't stand on their own.)
+  const kinds = { pit: [...(byShape.get('mono') ?? [])], dunes: [], sand: [], spires: [], other: [] };
   for (const [shape, list] of byShape) {
     for (const root of list) {
       const cuts = cellModels(root, parts.get(root));
       PIECE_CUTS.set(root, cuts);
       if (shape === 'mono') continue;
-      for (const c of cuts) if (c.props >= LONE_DETAIL && !c.clipped) kinds[lookKind(c)].push(c.root);
+      for (const c of cuts) {
+        if (c.clipped) continue;
+        if (c.props >= WORM_DETAIL) {
+          kinds.pit.push(c.root);
+          continue;
+        }
+        const tris = cellTriangles(c.root);
+        const dune = (m) => SAND_PART.test(m) && m !== c.ground;
+        const amount = (test) => [...tris].reduce((n, [m, t]) => n + (test(m) ? t : 0), 0);
+        if (amount(dune) >= DUNE_DETAIL) kinds.dunes.push(cellVariant(c, (m) => m === c.ground || dune(m), 'dunes'));
+        kinds.sand.push(cellVariant(c, (m) => !dune(m) && !SPIRE_PART.test(m), 'sand'));
+        if (amount((m) => SPIRE_PART.test(m)) >= SPIRE_DETAIL) kinds.spires.push(c.root);
+        else if (amount((m) => m !== c.ground) > 0) kinds.other.push(c.root);
+      }
     }
   }
   byShape.set('mono', mixLooks(kinds));
   const missing = Object.keys(SHAPES).filter((k) => !byShape.has(k));
   if (missing.length) console.warn(`[models] no Wasteland model for ${missing.join(', ')}: those pieces show single cells`);
-  const looks = [...byShape].reduce((n, [shape, l]) => n + (shape === 'mono' ? 0 : l.length), 0);
   const count = Object.entries(kinds).map(([k, l]) => `${l.length} ${k}`).join(', ');
-  console.info(`[models] Wasteland: ${roots.length} piece models, ${looks} piece looks; lone cells: ${count} (cut in ${Math.round(ms)} ms)`);
+  console.info(`[models] Wasteland: ${roots.length} piece models; cell looks: ${count} (cut in ${Math.round(ms)} ms)`);
   return byShape;
 }
 
 /**
- * How often each kind of look comes up on lone cells. Every model has one worm pit and most cells are clusters of
- * petrified spires, so drawn evenly a patch of lone cells would be all pits and spires: the rest (rocks, salt, tan
- * bands, dunes) come up as often as the spires, and the pits (the boldest look) one cell in five.
+ * How often each kind of look comes up on a Wasteland cell: mostly dunes, and sand with only small, flat bits on it
+ * (pebbles, salt, tan streaks); the worm pits, the petrified spire clusters and the other cells as modelled (rocks,
+ * mixed) each now and then. (The models alone would give a pit in one cell in four and spires in most of the rest.)
  */
-const LOOK_SHARES = { pit: 0.2, spires: 0.4, other: 0.4 };
+const LOOK_SHARES = { pit: 0.1, dunes: 0.35, sand: 0.35, spires: 0.1, other: 0.1 };
+const SPIRE_PART = /Petrified/; // the petrified spires' material
+const DUNE_DETAIL = 90; // triangles of dune that make a cell a dunes look
+const SPIRE_DETAIL = 300; // triangles of spires that make a cluster
 
-/** A cell's kind of look: its worm pit, or whichever part covers most of it (by triangles, ground aside). */
-function lookKind(cut) {
-  if (cut.props >= WORM_DETAIL) return 'pit';
+/** Triangles per material in a cell look (Map name -> count). */
+function cellTriangles(root) {
   const by = new Map();
-  cut.root.traverse((o) => {
+  root.traverse((o) => {
     if (!o.isMesh) return;
     const name = [o.material].flat()[0]?.name ?? '';
     by.set(name, (by.get(name) ?? 0) + (o.geometry.index?.count ?? o.geometry.attributes.position.count) / 3);
   });
-  by.delete([...by.keys()].find((n) => n === cut.ground)); // (its ground)
-  const top = [...by].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
-  return /Petrified/.test(top) ? 'spires' : 'other';
+  return by;
+}
+
+/** A copy of a cell look with only the parts whose material passes `keep` (shared geometry; nothing animated). */
+function cellVariant(cut, keep, tag) {
+  const cell = new THREE.Group();
+  cell.name = `${cut.root.name}:${tag}`;
+  cell.position.copy(cut.root.position);
+  cell.quaternion.copy(cut.root.quaternion);
+  cell.scale.copy(cut.root.scale);
+  for (const o of cut.root.children) {
+    if (!o.isMesh || !keep([o.material].flat()[0]?.name ?? '')) continue;
+    const mesh = new THREE.Mesh(o.geometry, o.material);
+    Object.assign(mesh, { name: o.name, castShadow: o.castShadow, receiveShadow: o.receiveShadow, renderOrder: o.renderOrder });
+    cell.add(mesh);
+  }
+  cell.animations = [];
+  return cell;
 }
 
 /** One list for the seeded picks (list[seed % n]): each look repeated so each kind comes up its LOOK_SHARES share. */
@@ -1604,8 +1636,6 @@ function mixLooks(kinds) {
 }
 
 const PIECE_CUTS = new WeakMap(); // fitted piece root -> cellModels
-/** How much a cell needs on it (triangles besides its ground) to be a lone cell's look: bare sand reads as no tile. */
-const LONE_DETAIL = 150;
 const WORM_DETAIL = 1000; // a cell's worm counts this much (splitPieceCells): it has the pit
 /** A piece model's cells as models of their own ([{ q, root, clipped }], see cellModels), or null. */
 export const pieceCuts = (root) => PIECE_CUTS.get(root) ?? null;

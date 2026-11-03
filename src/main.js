@@ -458,7 +458,7 @@ function removeMesh(mesh) {
 
 // ---------- Wasteland pieces ----------
 /**
- * A Wasteland piece lands as one model spanning all its cells (one model per piece shape, turned with the piece).
+ * A Wasteland piece lands as one group spanning all its cells (a look per cell, see factory.createPiece).
  * Every cell still gets its own (empty) holder, so the board rules work per cell as before. Each holder points
  * at the piece record: { shape, rot, cells: keys, lead: key of the first cell in reading order, group, broken }.
  * Before the piece models have loaded, the cells get coloured blocks and adoptWastePieces upgrades them later.
