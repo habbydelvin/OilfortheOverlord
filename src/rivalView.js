@@ -16,8 +16,10 @@ const BG = 0x000000;
  *
  * fogSettings(): the board's fog settings (shared, so the Game Debug sliders apply here too); read on first visit.
  * fogQuality(): the Graphics fog quality preset.
+ * stackAims: tiles already aimed can be aimed again (combat test): the reticle shows over them too, and setAimed
+ * marks how many strikes land on a tile (×2, ×3).
  */
-export function createRivalView({ renderer, factory, rig, fogSettings, fogQuality }) {
+export function createRivalView({ renderer, factory, rig, fogSettings, fogQuality, stackAims = false }) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(BG);
   scene.fog = new THREE.Fog(BG, 22, 60);
@@ -166,7 +168,18 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
 
   function dropReticle(g) {
     marks.remove(g);
-    for (const [m] of g.userData.mats) m.dispose();
+    if (g.userData.stack) g.material.dispose();
+    else for (const [m] of g.userData.mats) m.dispose();
+  }
+
+  /** Fade-in / fade-out progress of a mark (reticle or stack label): its opacity factor, or -1 once it's gone. */
+  function fadeStep(g, dt) {
+    const u = g.userData;
+    if (u.fade < 0) return (u.appear = Math.min(1, u.appear + dt / APPEAR_TIME));
+    u.fade += dt / FADE_TIME;
+    if (u.fade < 1) return (1 - u.fade) * u.appear;
+    dropReticle(g);
+    return -1;
   }
 
   function animateReticles(dt) {
@@ -174,6 +187,11 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     const f = glide(dt);
     for (const g of [...marks.children]) {
       const u = g.userData;
+      if (u.stack) {
+        const k = fadeStep(g, dt);
+        if (k >= 0) g.material.opacity = k;
+        continue;
+      }
       u.rotor.rotation.y = -markClock * 1.1;
       u.ring.position.x += (u.goal.x - u.ring.position.x) * f;
       u.ring.position.z += (u.goal.z - u.ring.position.z) * f;
@@ -182,19 +200,8 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
         t.position.x += (t.userData.goal.x - t.position.x) * f;
         t.position.z += (t.userData.goal.z - t.position.z) * f;
       }
-      let k;
-      if (u.fade < 0) {
-        u.appear = Math.min(1, u.appear + dt / APPEAR_TIME);
-        k = u.appear;
-      } else {
-        u.fade += dt / FADE_TIME;
-        if (u.fade >= 1) {
-          dropReticle(g);
-          continue;
-        }
-        k = (1 - u.fade) * u.appear;
-      }
-      for (const [m, base] of u.mats) m.opacity = base * k;
+      const k = fadeStep(g, dt);
+      if (k >= 0) for (const [m, base] of u.mats) m.opacity = base * k;
     }
   }
   // While aiming: a thin unbroken trail from where Hive City lies (off past the horizon) down onto each target tile,
@@ -345,7 +352,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   function setMarkers(aimed, hover = null, at = null) {
     const done = new Set(aimed.flat().map(([x, z]) => key(x, z)));
     const isAimed = (cells) => cells.every(([x, z]) => done.has(key(x, z)));
-    const want = hover?.length && !isAimed(hover) ? groupKey(hover, at) : null;
+    const want = hover?.length && (stackAims || !isAimed(hover)) ? groupKey(hover, at) : null;
     if (hoverMark && hoverMark.key !== want) {
       if (isAimed(hoverMark.cells)) {
         hoverMark.g.userData.fade = 0;
@@ -433,7 +440,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   function setArcs(groups, dir, aimed = [], at = null) {
     const done = new Set(aimed.map(([x, z]) => key(x, z)));
     const isAimed = (cells) => cells.every(([x, z]) => done.has(key(x, z)));
-    const want = new Map(dir ? groups.filter((cells) => cells?.length && !isAimed(cells)).map((cells) => [groupKey(cells, at), cells]) : []);
+    const want = new Map(dir ? groups.filter((cells) => cells?.length && (stackAims || !isAimed(cells))).map((cells) => [groupKey(cells, at), cells]) : []);
     const spare = [];
     for (const [k, line] of arcByKey) {
       if (want.has(k)) continue;
@@ -478,6 +485,56 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
       marks.add(g);
       arcs.add(line);
       aimedMarks.set(k, { g, line });
+    }
+    setStacks(groups);
+  }
+
+  // How many queued strikes land on a tile, over its red hex when it's more than one.
+  const stacks = new Map(); // "x,z" -> sprite
+  const stackTextures = new Map(); // n -> texture
+  function stackTexture(n) {
+    if (stackTextures.has(n)) return stackTextures.get(n);
+    const c = document.createElement('canvas');
+    c.width = 128;
+    c.height = 64;
+    const ctx = c.getContext('2d');
+    ctx.font = 'bold 44px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = 'rgba(40, 12, 6, 0.9)';
+    ctx.strokeText(`×${n}`, 64, 34);
+    ctx.fillStyle = '#ffd23a';
+    ctx.fillText(`×${n}`, 64, 34);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    stackTextures.set(n, tex);
+    return tex;
+  }
+
+  function setStacks(groups) {
+    const count = new Map();
+    for (const gr of groups) for (const k of new Set(gr.cells.map(([x, z]) => key(x, z)))) count.set(k, (count.get(k) ?? 0) + 1);
+    for (const [k, sprite] of stacks) {
+      if ((count.get(k) ?? 0) >= 2) continue;
+      sprite.userData.fade = 0;
+      stacks.delete(k);
+    }
+    for (const [k, n] of count) {
+      if (!stackAims || n < 2) continue;
+      let sprite = stacks.get(k);
+      if (!sprite) {
+        sprite = new THREE.Sprite(new THREE.SpriteMaterial({ ...markOpts, opacity: 0 }));
+        const [x, z] = k.split(',').map(Number);
+        const w = hexToWorld(x, z);
+        sprite.position.set(w.x, MARK_Y, w.z);
+        sprite.scale.set(0.5, 0.25, 1);
+        sprite.renderOrder = 22;
+        sprite.userData = { appear: 0, fade: -1, stack: true };
+        marks.add(sprite);
+        stacks.set(k, sprite);
+      }
+      sprite.material.map = stackTexture(n);
     }
   }
 
@@ -525,6 +582,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     for (const line of [...arcs.children]) dropArc(line);
     arcByKey.clear();
     aimedMarks.clear();
+    stacks.clear();
     active = false;
     shown = null;
     fog?.setVisible(false);

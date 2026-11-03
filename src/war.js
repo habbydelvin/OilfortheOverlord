@@ -20,18 +20,20 @@ export const CAPITAL_HP = 5;
 /** Rivals hold their fire at the player before this year (the tutorial and first year stay calm). */
 export const GRACE_ROUNDS = 1;
 
-export function footprint(kind, [x, z], size, grid) {
+export function footprint(kind, [x, z], size, grid, taken) {
   const extra = size ?? (kind === 'missile2' ? 1 : 0);
   const n = Math.max(1, 1 + extra);
   const around = hexesAround(x, z, 5);
   if (!grid || n <= 1) return around.slice(0, n);
   const origin = around[0];
   const rest = around.slice(1);
+  const marked = (cx, cz) => taken?.has(key(cx, cz));
   const rank = ([cx, cz]) => {
     const t = grid.get(cx, cz)?.terrain;
-    if (t && isBuilding(t)) return 0;
-    if (t) return 1;
-    return 2;
+    if (t && isBuilding(t) && !marked(cx, cz)) return 0;
+    if (t && isBuilding(t)) return 1;
+    if (t) return 2;
+    return 3;
   };
   rest.sort((a, b) => rank(a) - rank(b));
   return [origin, ...rest].slice(0, n);
@@ -83,7 +85,7 @@ export function resolve(strikes, cities, rng = Math.random) {
   for (const s of order) {
     const def = byId.get(s.to);
     const st = state.get(s.to);
-    const rec = { ...s, cells: footprint(s.kind, s.at, s.size, st.grid), shots: [], hit: false, lost: [], capital: null, eliminated: false };
+    const rec = { ...s, cells: s.cells ?? footprint(s.kind, s.at, s.size, st.grid), shots: [], hit: false, lost: [], capital: null, eliminated: false };
     out.push(rec);
     // Every missile is already in the air: one whose own city falls this phase still lands.
     if (!def || !st || !st.alive) {

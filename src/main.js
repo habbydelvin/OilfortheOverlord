@@ -4185,7 +4185,7 @@ function updateAimBar() {
   $('rivalAim').classList.toggle('hidden', !rival || rival.alive === false || (!q && !cards));
   $('rivalQueue').textContent = L(`${q} aimed · ${cards} in hand · fires after End Turn`, `已瞄准 ${q} · 手牌 ${cards} · 结束回合后发射`);
   const aimed = rival ? queuedStrikes(rival.id) : [];
-  const aimedCells = aimed.map((s) => footprint(s.kind, s.at, s.size, rival.grid));
+  const aimedCells = aimed.map((s) => s.cells ?? footprint(s.kind, s.at, s.size, rival.grid));
   rivalView.setMarkers(aimedCells, aimHover, aimAt);
   rivalView.setArcs(aimHover ? [aimHover] : [], rival ? homeBearing(rival) : null, aimedCells.flat(), aimAt);
   globe?.setQueued(queuedStrikes().map((s) => ({ from: 'player', to: s.to })));
@@ -4233,9 +4233,14 @@ function aimAtPointer() {
     if (piece.terrain === 'salvo') aimSalvo(rival, at);
     else {
       const size = blastExtra(grid, idleKeySet());
-      queueDrawn(rival.id, at, piece.terrain, size, { vis: true });
+      const taken = new Set();
+      for (const s of queuedStrikes(rival.id)) {
+        for (const [x, z] of s.cells ?? footprint(s.kind, s.at, s.size, rival.grid)) taken.add(plotKey(x, z));
+      }
+      const cells = footprint(piece.terrain, at, size, rival.grid, taken);
+      queueDrawn(rival.id, at, piece.terrain, size, { vis: true, cells });
       hand.consume();
-      playOutgoingRival(rival, footprint('missile', at, size, rival.grid), piece.terrain);
+      playOutgoingRival(rival, cells, piece.terrain);
     }
     confirm();
   }
@@ -4279,8 +4284,15 @@ function aimSalvo(rival, at) {
   const cells = spreadFrom(rival.grid, at, ammo.length);
   if (!cells.length) return toast(L('Aim at one of their tiles', '请瞄准对方的地块'), 'bad');
   const size = blastExtra(grid, idleKeySet());
-  for (let i = 0; i < cells.length; i++) queueDrawn(rival.id, cells[i], ammo[i].terrain, size, { vis: true });
-  playOutgoingRival(rival, cells.flatMap((at) => footprint('missile', at, size, rival.grid)), 'missile');
+  const taken = new Set();
+  const vis = [];
+  for (let i = 0; i < cells.length; i++) {
+    const blast = footprint(ammo[i].terrain, cells[i], size, rival.grid, taken);
+    for (const [x, z] of blast) taken.add(plotKey(x, z));
+    queueDrawn(rival.id, cells[i], ammo[i].terrain, size, { vis: true, cells: blast });
+    vis.push(...blast);
+  }
+  playOutgoingRival(rival, vis, 'missile');
   const used = new Set(ammo.slice(0, cells.length));
   hand.cards = hand.cards.filter((p) => p.terrain !== 'salvo' && !used.has(p));
   hand.selected = -1;
@@ -4293,7 +4305,13 @@ function updateAimHover() {
   const c = piece ? rivalCell() : null;
   let next = null;
   if (c && piece.terrain === 'salvo') next = spreadFrom(rivalShown.grid, [c[0], c[1]], missileAmmoInHand().length);
-  else if (c) next = footprint(piece.terrain, [c[0], c[1]], blastExtra(grid, idleKeySet()), rivalShown.grid);
+  else if (c) {
+    const taken = new Set();
+    for (const s of queuedStrikes(rivalShown.id)) {
+      for (const [x, z] of s.cells ?? footprint(s.kind, s.at, s.size, rivalShown.grid)) taken.add(plotKey(x, z));
+    }
+    next = footprint(piece.terrain, [c[0], c[1]], blastExtra(grid, idleKeySet()), rivalShown.grid, taken);
+  }
   const at = c ? [c[0], c[1]] : null;
   if (JSON.stringify(next) === JSON.stringify(aimHover) && JSON.stringify(at) === JSON.stringify(aimAt)) return;
   aimHover = next;
@@ -4546,7 +4564,7 @@ async function runAttackPhase() {
   globe.setQueued([]); // the aimed arcs become real flights now
   const mine = takeQueue()
     .filter((q) => rivals.find((r) => r.id === q.to)?.alive !== false)
-    .map((q) => ({ from: 'player', to: q.to, at: q.at, kind: q.kind, vis: q.vis, size: q.size }));
+    .map((q) => ({ from: 'player', to: q.to, at: q.at, kind: q.kind, vis: q.vis, size: q.size, cells: q.cells }));
   const theirs = rivals.filter((r) => r.alive !== false).flatMap((r) => chooseStrikes(r, cities, { round: turn.round, chance: INTERCEPT.chance, playerArmed: [...MILITARY].some((k) => turn.unlocked.has(k)) }));
   const strikes = [...mine, ...theirs];
   if (!strikes.length) return false;

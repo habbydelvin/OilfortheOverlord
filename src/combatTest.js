@@ -444,7 +444,7 @@ const globe = createGlobeView({
   onApproach: (s) => approach(s),
   approachLead: () => missileCfg.followFlight,
 });
-const rivalView = createRivalView({ renderer, factory, rig, fogSettings: () => fogCfg, fogQuality: () => gfxCfg.fogQuality });
+const rivalView = createRivalView({ renderer, factory, rig, fogSettings: () => fogCfg, fogQuality: () => gfxCfg.fogQuality, stackAims: true });
 // Our missiles coming down on a rival city, played in its own scene when you're looking at it.
 const rivalMissiles = new MissileStrike(rivalView.scene, camera, missileCfg);
 
@@ -630,15 +630,15 @@ function homeBearing(r) {
 function drawAims(hover = null, at = null) {
   if (!shown) return;
   const mine = queue.filter((q) => q.to === shown.id);
-  const aimed = mine.map((q) => footprint(q.kind, q.at, q.size ?? blastN(), shown.grid));
+  const aimed = mine.map((q) => q.cells ?? footprint(q.kind, q.at, q.size ?? blastN(), shown.grid));
   rivalView.setMarkers(aimed, hover, at);
   rivalView.setArcs(hover ? [hover] : [], homeBearing(shown), aimed.flat(), at);
   // What's queued keeps its reticle and path until End turn fires it: one per card played (a salvo's tiles together).
   const cards = new Map();
   for (const q of mine) {
-    const k = q.card ?? key(q.at[0], q.at[1]);
+    const k = q.card;
     if (!cards.has(k)) cards.set(k, { key: k, cells: [], at: q.centre ?? q.at });
-    cards.get(k).cells.push(...footprint(q.kind, q.at, q.size ?? blastN(), shown.grid));
+    cards.get(k).cells.push(...(q.cells ?? footprint(q.kind, q.at, q.size ?? blastN(), shown.grid)));
   }
   rivalView.setAimed([...cards.values()], homeBearing(shown));
 }
@@ -695,7 +695,7 @@ function rivalCellAt(x, y) {
 }
 
 let drag = null;
-let salvos = 0; // names each salvo played, so its queued tiles share one reticle
+let cardsPlayed = 0; // names each card played, so its queued tiles share one set of marks
 function startDrag(e) {
   if (view !== 'rival' || busy || e.button !== 0) return;
   e.preventDefault();
@@ -714,7 +714,16 @@ function moveDrag(e) {
   const c = onCanvas ? rivalCellAt(e.clientX, e.clientY) : null;
   let hover = null;
   if (c && shown?.grid.has(c[0], c[1])) {
-    hover = drag.kind === 'salvo' ? spreadFrom(shown.grid, c, silo) : footprint('missile', c, blastN(), shown.grid);
+    hover =
+      drag.kind === 'salvo'
+        ? spreadFrom(shown.grid, c, silo)
+        : footprint(
+            'missile',
+            c,
+            blastN(),
+            shown.grid,
+            new Set(queue.filter((q) => q.to === shown.id).flatMap((q) => footprint(q.kind, q.at, q.size ?? blastN(), shown.grid)).map(([x, z]) => key(x, z))),
+          );
   }
   drawAims(hover, c);
 }
@@ -728,20 +737,23 @@ window.addEventListener('pointerup', (e) => {
   const onCanvas = document.elementFromPoint(e.clientX, e.clientY) === renderer.domElement;
   const c = onCanvas ? rivalCellAt(e.clientX, e.clientY) : null;
   if (c && shown?.grid.has(c[0], c[1]) && silo > 0) {
-    const taken = (at) => queue.some((q) => q.to === shown.id && q.at[0] === at[0] && q.at[1] === at[1]);
-    // Aimed only: everything queued fires together at End turn.
+    // Aimed only: everything queued fires together at End turn. A tile already aimed can take more (they stack).
+    const card = `card${++cardsPlayed}`;
+    const taken = new Set(
+      queue.filter((q) => q.to === shown.id).flatMap((q) => q.cells ?? footprint(q.kind, q.at, q.size ?? blastN(), shown.grid)).map(([x, z]) => key(x, z)),
+    );
+    const lock = (at, centre) => {
+      const cells = footprint('missile', at, blastN(), shown.grid, taken);
+      for (const [x, z] of cells) taken.add(key(x, z));
+      queue.push({ to: shown.id, at, kind: 'missile', size: blastN(), card, centre, cells });
+      silo--;
+    };
     if (kind === 'salvo') {
-      const card = `salvo${++salvos}`;
       for (const at of spreadFrom(shown.grid, c, silo)) {
         if (silo <= 0) break;
-        if (taken(at)) continue;
-        queue.push({ to: shown.id, at, kind: 'missile', size: blastN(), card, centre: [c[0], c[1]] });
-        silo--;
+        lock(at, [c[0], c[1]]);
       }
-    } else if (!taken(c)) {
-      queue.push({ to: shown.id, at: [c[0], c[1]], kind: 'missile', size: blastN() });
-      silo--;
-    }
+    } else lock([c[0], c[1]]);
   }
   renderHand();
   drawAims();
