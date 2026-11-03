@@ -1,6 +1,7 @@
 /**
  * Offline model conversion: art/models/*.fbx -> public/models/glb/*.glb + public/models/tex/*.webp
- * (models with a hexagonal version in art/models/hex/ take their geometry and textures from it: see HEX)
+ * (models with a hexagonal version in art/models/hex/ take their geometry and textures from it: see HEX; models that
+ * only exist as a hexagonal .glb, with their own animation, are listed in GLB_ONLY)
  *
  *   npm run models            (re-run whenever an FBX is re-exported, then bump MODEL_VERSION in src/models.js)
  *
@@ -80,6 +81,14 @@ const HEX = {
   'Camp05.fbx': 'RaiderCampGray',
 };
 const HEX_YAW = Math.PI / 6;
+/**
+ * Hexagonal models with no FBX at all (newer Blender exports that carry their own animation): art/models/hex/<file>
+ * -> public/models/glb/<file>, the same treatment as HEX (shared WebP images, three.js UVs, HEX_YAW, only the vertex
+ * attributes the game reads) and only the animation channels that actually move. Value: the parts' name prefix.
+ */
+const GLB_ONLY = {
+  'MilitaryFactory.glb': 'MissileFactory',
+};
 const OUT_GLB = path.join(ROOT, 'public/models/glb');
 const OUT_TEX = path.join(ROOT, 'public/models/tex');
 const MAX_SIZE = Number(process.env.MAX_SIZE ?? 2048); // the game never shows a texture larger than this
@@ -291,7 +300,7 @@ function generatedUvs(node, p, material, fbx, prefix) {
   const nv = new THREE.Vector3();
   const N3 = new THREE.Matrix3().getNormalMatrix(W);
   const el = [];
-  if (PAINTED.test(material)) {
+  if (PAINTED.test(material) && fbx) {
     // Least squares u, v = a x + b z + c over the FBX pad (in this .glb's world: same place, root at the origin).
     let src = null;
     fbx.traverse((o) => o.isMesh && !src && [o.material].flat().some((m) => m.name === material) && o.geometry.attributes.uv && (src = o));
@@ -527,6 +536,94 @@ async function convertHex(file, src) {
   return { name, bytes: out.byteLength, dust: 0, tracks: anim.channels, note };
 }
 
+/** A .glb-only model (GLB_ONLY): convertHex without the FBX; its own animation, trimmed to the channels that move. */
+async function convertGlbOnly(file) {
+  const prefix = GLB_ONLY[file];
+  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).setVertexLayout(VertexLayout.SEPARATE);
+  const doc = await io.read(path.join(HEX_SRC, file));
+  const root = doc.getRoot();
+  const scene = root.getDefaultScene() ?? root.listScenes()[0];
+
+  const textured = new Set();
+  for (const m of root.listMaterials()) {
+    if (m.getBaseColorTexture()) textured.add(m);
+    const spec = describeGltf(m, file);
+    m.setName(spec.name).setExtras({ spec });
+    m.setBaseColorTexture(null).setNormalTexture(null).setEmissiveTexture(null).setMetallicRoughnessTexture(null).setOcclusionTexture(null);
+  }
+  for (const t of root.listTextures()) t.dispose();
+
+  const flipped = new Set();
+  const buffer = root.listBuffers()[0];
+  let generated = 0;
+  for (const node of root.listNodes()) {
+    const mesh = node.getMesh();
+    if (!mesh) continue;
+    for (const p of mesh.listPrimitives()) {
+      for (const sem of p.listSemantics()) if (!['POSITION', 'NORMAL', 'TEXCOORD_0'].includes(sem)) p.setAttribute(sem, null);
+      for (const t of p.listTargets()) t.dispose();
+      const uv = p.getAttribute('TEXCOORD_0');
+      if (!uv) {
+        const m = p.getMaterial();
+        if (m && textured.has(m) && !/(_Sand|SandTrim)$/.test(m.getName())) {
+          p.setAttribute('TEXCOORD_0', doc.createAccessor().setType('VEC2').setArray(generatedUvs(node, p, plainName(m.getName()), null, prefix)).setBuffer(buffer));
+          flipped.add(p.getAttribute('TEXCOORD_0'));
+          generated++;
+        }
+        continue;
+      }
+      if (flipped.has(uv)) continue;
+      flipped.add(uv);
+      const el = [];
+      for (let i = 0; i < uv.getCount(); i++) {
+        uv.getElement(i, el);
+        el[1] = 1 - el[1];
+        uv.setElement(i, el);
+      }
+    }
+  }
+
+  // Animation channels that never move just set the node's pose (Blender bakes a key on every animated object).
+  let channels = 0;
+  let still = 0;
+  const pathSetter = { translation: 'setTranslation', rotation: 'setRotation', scale: 'setScale' };
+  for (const anim of root.listAnimations()) {
+    for (const ch of anim.listChannels()) {
+      const values = ch.getSampler().getOutput().getArray();
+      const n = ch.getTargetPath() === 'rotation' ? 4 : 3;
+      const node = ch.getTargetNode();
+      const moves = values.some((v, i) => Math.abs(v - values[i % n]) > 1e-5);
+      if (!moves && node && pathSetter[ch.getTargetPath()]) {
+        node[pathSetter[ch.getTargetPath()]]([...values.slice(0, n)]);
+        ch.dispose();
+        still++;
+      } else channels++;
+    }
+    if (!anim.listChannels().length) anim.dispose();
+  }
+
+  // Turn every top-level part HEX_YAW about the origin, under one root (the game's model root). Top-level parts must
+  // not be animated themselves (their keys would undo the turn): their children carry the motion.
+  const animated = new Set(root.listAnimations().flatMap((a) => a.listChannels().map((c) => c.getTargetNode())));
+  const wrap = doc.createNode(`${prefix}_Hex`);
+  const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), HEX_YAW);
+  for (const n of scene.listChildren()) {
+    if (animated.has(n)) throw new Error(`${file}: top-level part ${n.getName()} is animated`);
+    n.setTranslation(new THREE.Vector3(...n.getTranslation()).applyQuaternion(qy).toArray());
+    n.setRotation(qy.clone().multiply(new THREE.Quaternion(...n.getRotation())).toArray());
+    scene.removeChild(n);
+    wrap.addChild(n);
+  }
+  scene.addChild(wrap);
+  for (const n of root.listNodes()) n.setExtras({ n: n.getName() });
+
+  await doc.transform(prune({ keepAttributes: true, keepLeaves: true }), dedup(), weld());
+  const out = await io.writeBinary(doc);
+  fs.writeFileSync(path.join(OUT_GLB, file), out);
+  const note = `glb only, own animation (${still} still channels dropped)${generated ? `, ${generated} parts given UVs` : ''}`;
+  return { name: file, bytes: out.byteLength, dust: 0, tracks: channels, note };
+}
+
 async function writeImage(id, { bytes, use }) {
   const normal = use.has('normal');
   const out = path.join(OUT_TEX, `${id}.webp`);
@@ -553,6 +650,12 @@ for (const f of files) {
   const r = hex && fs.existsSync(hex) ? await convertHex(f, hex) : await convert(f);
   glbBytes += r.bytes;
   console.log(`${f.padEnd(26)} -> ${r.name.padEnd(26)} ${(r.bytes / 1e6).toFixed(2).padStart(6)} MB  ${r.tracks} tracks${r.dust ? `, ${r.dust} dust parts removed` : ''}${r.note ? `  (${r.note})` : ''}`);
+}
+for (const f of Object.keys(GLB_ONLY)) {
+  srcBytes += fs.statSync(path.join(HEX_SRC, f)).size;
+  const r = await convertGlbOnly(f);
+  glbBytes += r.bytes;
+  console.log(`${f.padEnd(26)} -> ${r.name.padEnd(26)} ${(r.bytes / 1e6).toFixed(2).padStart(6)} MB  ${r.tracks} tracks  (${r.note})`);
 }
 
 let rawImg = 0;

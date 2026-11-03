@@ -39,6 +39,8 @@ const VIEWS = {
   oasis: { elevation: 90, tile: true, margin: 0 },
   // The crater's glowing pool sits below its rim: look down into it a little more.
   crater: { elevation: 28 },
+  // A wide layout (dome, rail cart, launch tower): a little closer, so it fills the slot like the other buildings.
+  milfactory: { closeUp: 0.82 },
 };
 
 /** Card key -> model key. The four Wasteland cards share the single-cell Wasteland piece. */
@@ -52,6 +54,7 @@ const SNAPSHOT_MODELS = {
   oasis: 'oasis',
   tarpit: 'tarpit',
   labourcamp: 'labourcamp',
+  milfactory: 'milfactory',
   cliffs: 'cliffs',
   ruins: 'ruins',
   crater: 'crater',
