@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { createGround, createLights } from './scene.js';
-import { hexToWorld, key } from './grid.js';
+import { HEX_RADIUS, hexToWorld, key } from './grid.js';
+import { hexPlane } from './hexGeometry.js';
 import { FogOfWar } from './fogOfWar.js';
 import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
@@ -30,19 +31,27 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   scene.add(root);
   // Target reticles while aiming (First Strike style): two rings of slanted yellow dashes (parallelograms, the inner
   // ring set in the outer ring's gaps) and a wide faint outer circle. Only while aiming: it wraps the picked card's
-  // footprint under the cursor (a salvo fan too) and fades out once that strike is aimed.
+  // footprint under the cursor (a salvo fan too) and fades out once that strike is aimed. Each tile it will hit gets a
+  // red hex on the ground: the reticle says where you aim, the red tiles what gets hit.
   const marks = new THREE.Group();
   marks.renderOrder = 20;
   scene.add(marks);
   const markOpts = { transparent: true, depthTest: false, depthWrite: false, toneMapped: false, fog: false };
   const faintMat = new THREE.MeshBasicMaterial({ color: 0xcfe6ff, opacity: 0.35, ...markOpts });
   const dashMat = new THREE.MeshBasicMaterial({ color: 0xffd23a, opacity: 0.95, side: THREE.DoubleSide, ...markOpts });
+  const HIT_COLOUR = 0xb0482e; // a dull brick red, so it marks the tiles without shouting over them
+  // The hit tile's border draws over everything (buildings included); its fill stays on the ground, under buildings.
+  const hitEdgeMat = new THREE.MeshBasicMaterial({ color: HIT_COLOUR, opacity: 0.7, ...markOpts });
+  const hitFillMat = new THREE.MeshBasicMaterial({ color: HIT_COLOUR, opacity: 0.12, ...markOpts, depthTest: true });
+  const HIT_Y = 0.06; // just above the tiles' ground
   const MARK_Y = 0.6;
   const DASHES = 7; // per ring
   const DASH_SHARE = 0.5; // share of each slot that is dash
   const DASH_SLANT = 0.07; // radians the outer edge runs ahead of the inner one: the parallelogram lean
   const FADE_TIME = 0.4; // seconds for an aimed reticle to fade out
   const APPEAR_TIME = 0.25; // seconds for the reticle to fade in when a card first goes over a tile
+  const GLIDE = 16; // 1/s: how fast the reticle, its tiles and its path catch up when the cursor moves to another tile
+  const glide = (dt) => 1 - Math.exp(-GLIDE * dt);
   let hoverMark = null; // { key, cells, g }: the reticle under the cursor
   let markClock = 0;
 
@@ -80,45 +89,98 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   const innerDashGeo = dashRing(1.0, 1.09, slot / 2);
   const outerDashGeo = dashRing(1.2, 1.29, 0);
 
+  const hitEdgeGeo = new THREE.RingGeometry(HEX_RADIUS * 0.8, HEX_RADIUS * 0.9, 6, 1, Math.PI / 2).rotateX(-Math.PI / 2);
+  const hitFillGeo = hexPlane(0.8);
+
+  function addMesh(parent, geo, mat, order) {
+    const m = new THREE.Mesh(geo, mat);
+    m.renderOrder = order;
+    m.frustumCulled = false;
+    parent.add(m);
+  }
+
   /** One reticle around `cells` ([[x, z]]), centred on cell `at` (or their middle), with its own materials so it can fade alone. */
   function makeReticle(cells, at = null) {
-    const pts = cells.map(([x, z]) => hexToWorld(x, z));
-    const { x: cx, z: cz } = centreOf(cells, at);
-    const radius = Math.max(...pts.map((p) => Math.hypot(p.x - cx, p.z - cz))) + 0.55;
     const g = new THREE.Group();
-    g.position.set(cx, MARK_Y, cz);
-    const add = (parent, geo, mat, order) => {
-      const m = new THREE.Mesh(geo, mat);
-      m.renderOrder = order;
-      m.frustumCulled = false;
-      parent.add(m);
-    };
+    const ring = new THREE.Group(); // at the centre, in the reticle's plane
     const body = new THREE.Group(); // scaled to the target
-    body.scale.setScalar(radius);
     const faint = faintMat.clone();
     const dash = dashMat.clone();
-    add(body, outerGeo, faint, 20);
+    addMesh(body, outerGeo, faint, 20);
     const rotor = new THREE.Group();
-    add(rotor, innerDashGeo, dash, 21);
-    add(rotor, outerDashGeo, dash, 21);
+    addMesh(rotor, innerDashGeo, dash, 21);
+    addMesh(rotor, outerDashGeo, dash, 21);
     body.add(rotor);
-    g.add(body);
-    faint.opacity = 0;
-    dash.opacity = 0;
-    g.userData = { rotor, mats: [faint, dash], appear: 0, fade: -1 };
+    ring.add(body);
+    g.add(ring);
+    const edge = hitEdgeMat.clone();
+    const fill = hitFillMat.clone();
+    const mats = [
+      [faint, faintMat.opacity],
+      [dash, dashMat.opacity],
+      [edge, hitEdgeMat.opacity],
+      [fill, hitFillMat.opacity],
+    ];
+    for (const [m] of mats) m.opacity = 0;
+    g.userData = { ring, body, rotor, mats, edge, fill, tiles: [], goal: null, appear: 0, fade: -1 };
+    aimReticle(g, cells, at, true);
     return g;
+  }
+
+  /**
+   * Point reticle `g` at `cells` (centred as centreOf). `snap`: jump there (a new reticle); otherwise the ring and its
+   * red tiles glide over in animateReticles, each tile from the nearest old one (extra tiles start at the centre).
+   */
+  function aimReticle(g, cells, at, snap) {
+    const u = g.userData;
+    const pts = cells.map(([x, z]) => hexToWorld(x, z));
+    const c = centreOf(cells, at);
+    u.goal = { x: c.x, z: c.z, r: Math.max(...pts.map((p) => Math.hypot(p.x - c.x, p.z - c.z))) + 0.55 };
+    if (snap) {
+      u.ring.position.set(c.x, MARK_Y, c.z);
+      u.body.scale.setScalar(u.goal.r);
+    }
+    const old = u.tiles;
+    u.tiles = [];
+    for (const p of pts) {
+      let best = -1;
+      for (let i = 0; i < old.length; i++) {
+        if (best < 0 || Math.hypot(old[i].position.x - p.x, old[i].position.z - p.z) < Math.hypot(old[best].position.x - p.x, old[best].position.z - p.z)) best = i;
+      }
+      let tile;
+      if (best >= 0) tile = old.splice(best, 1)[0];
+      else {
+        tile = new THREE.Group();
+        addMesh(tile, hitFillGeo, u.fill, 19);
+        addMesh(tile, hitEdgeGeo, u.edge, 19);
+        tile.position.set(u.ring.position.x, HIT_Y, u.ring.position.z);
+        g.add(tile);
+      }
+      tile.userData.goal = p;
+      if (snap) tile.position.set(p.x, HIT_Y, p.z);
+      u.tiles.push(tile);
+    }
+    for (const t of old) g.remove(t);
   }
 
   function dropReticle(g) {
     marks.remove(g);
-    for (const m of g.userData.mats) m.dispose();
+    for (const [m] of g.userData.mats) m.dispose();
   }
 
   function animateReticles(dt) {
     markClock += dt;
+    const f = glide(dt);
     for (const g of [...marks.children]) {
       const u = g.userData;
       u.rotor.rotation.y = -markClock * 1.1;
+      u.ring.position.x += (u.goal.x - u.ring.position.x) * f;
+      u.ring.position.z += (u.goal.z - u.ring.position.z) * f;
+      u.body.scale.setScalar(u.body.scale.x + (u.goal.r - u.body.scale.x) * f);
+      for (const t of u.tiles) {
+        t.position.x += (t.userData.goal.x - t.position.x) * f;
+        t.position.z += (t.userData.goal.z - t.position.z) * f;
+      }
       let k;
       if (u.fade < 0) {
         u.appear = Math.min(1, u.appear + dt / APPEAR_TIME);
@@ -131,8 +193,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
         }
         k = (1 - u.fade) * u.appear;
       }
-      u.mats[0].opacity = faintMat.opacity * k;
-      u.mats[1].opacity = dashMat.opacity * k;
+      for (const [m, base] of u.mats) m.opacity = base * k;
     }
   }
   // While aiming: a thin unbroken trail from where Hive City lies (off past the horizon) down onto each target tile,
@@ -277,25 +338,28 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   /**
    * The aiming reticle. `aimed`: [[[x, z], ...]] one footprint per queued strike; `hover`: the cells the picked card
    * would hit under the cursor, or null; `at`: the cell under the cursor, to centre on (a salvo fans out unevenly
-   * around it), or null for the middle of `hover`. When the hover cells turn up among the aimed ones (the card was just played)
-   * the reticle fades out; otherwise a reticle that's no longer wanted goes at once. None over cells already aimed.
+   * around it), or null for the middle of `hover`. Moving to other cells, the reticle glides there. When the hover
+   * cells turn up among the aimed ones (the card was just played) it fades out; with no hover it goes at once. None
+   * over cells already aimed.
    */
   function setMarkers(aimed, hover = null, at = null) {
     const done = new Set(aimed.flat().map(([x, z]) => key(x, z)));
     const isAimed = (cells) => cells.every(([x, z]) => done.has(key(x, z)));
     const want = hover?.length && !isAimed(hover) ? groupKey(hover, at) : null;
-    let carry = 0; // moving tile to tile: the new reticle picks up where the old one's fade-in was
     if (hoverMark && hoverMark.key !== want) {
-      if (isAimed(hoverMark.cells)) hoverMark.g.userData.fade = 0;
-      else {
-        carry = hoverMark.g.userData.appear;
+      if (isAimed(hoverMark.cells)) {
+        hoverMark.g.userData.fade = 0;
+        hoverMark = null;
+      } else if (want) {
+        aimReticle(hoverMark.g, hover, at, false);
+        Object.assign(hoverMark, { key: want, cells: hover });
+      } else {
         dropReticle(hoverMark.g);
+        hoverMark = null;
       }
-      hoverMark = null;
     }
     if (want && !hoverMark) {
       const g = makeReticle(hover, at);
-      g.userData.appear = carry;
       marks.add(g);
       hoverMark = { key: want, cells: hover, g };
     }
@@ -310,16 +374,20 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     return { x: pts.reduce((a, p) => a + p.x, 0) / pts.length, z: pts.reduce((a, p) => a + p.z, 0) / pts.length };
   }
 
-  /** One flight path onto the centre of the reticle around `cells` (see centreOf), coming in from `dir`, with its own material so it can fade alone. */
-  function makeArc(cells, dir, at = null) {
-    const end = centreOf(cells, at);
+  /** Points along the flight path onto ground point `end` ({x, z}), coming in from `dir`. */
+  function arcPoints(end, dir) {
     const p0 = new THREE.Vector3(end.x + dir.x * 22, 9, end.z + dir.z * 22);
     const p2 = new THREE.Vector3(end.x, MARK_Y, end.z); // in the reticle's plane, so it meets the reticle's centre
     const p1 = p0.clone().lerp(p2, 0.55).add(new THREE.Vector3(0, 6, 0));
-    const curve = new THREE.QuadraticBezierCurve3(p0, p1, p2);
+    return new THREE.QuadraticBezierCurve3(p0, p1, p2).getPoints(ARC_POINTS);
+  }
+
+  /** One flight path onto the centre of the reticle around `cells` (see centreOf), coming in from `dir`, with its own material so it can fade alone. */
+  function makeArc(cells, dir, at = null) {
+    const end = centreOf(cells, at);
     const pos = [];
     const col = [];
-    for (const [i, p] of curve.getPoints(ARC_POINTS).entries()) {
+    for (const [i, p] of arcPoints(end, dir).entries()) {
       const t = i / ARC_POINTS; // 0 at the horizon, 1 at the tile
       const k = THREE.MathUtils.smoothstep(t, 0, 0.12) * (1 - 0.65 * t); // still visible where it meets the centre
       pos.push(p.x, p.y, p.z);
@@ -333,8 +401,20 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     const line = new Line2(geo, mat);
     line.renderOrder = 21;
     line.frustumCulled = false;
-    line.userData = { cells, appear: 0, fade: -1 };
+    line.userData = { cells, dir, end: { ...end }, goal: { ...end }, appear: 0, fade: -1 };
     return line;
+  }
+
+  /** Bend `line` to end at its current `end`, writing its segments in place. */
+  function reshapeArc(line) {
+    const u = line.userData;
+    const pts = arcPoints(u.end, u.dir);
+    const buf = line.geometry.attributes.instanceStart.data;
+    for (let i = 0; i < ARC_POINTS; i++) {
+      pts[i].toArray(buf.array, i * 6);
+      pts[i + 1].toArray(buf.array, i * 6 + 3);
+    }
+    buf.needsUpdate = true;
   }
 
   function dropArc(line) {
@@ -347,36 +427,41 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
    * Flight paths while aiming: one onto the centre of each of `groups` ([[[x, z], ...]], as a reticle wraps them:
    * the picked card's cells under the cursor; centred on cell `at` if given, as setMarkers), coming in from `dir` (unit {x, z}: where Hive City lies from this city
    * on the War Map), or none if `dir` is null. A path whose cells all turn up in `aimed` ([[x, z]], the queued
-   * strikes' cells: the card was just played) fades out; any other path that's no longer wanted goes at once.
+   * strikes' cells: the card was just played) fades out; a path no longer wanted glides over to a new one, or goes
+   * at once if there's none.
    */
   function setArcs(groups, dir, aimed = [], at = null) {
     const done = new Set(aimed.map(([x, z]) => key(x, z)));
     const isAimed = (cells) => cells.every(([x, z]) => done.has(key(x, z)));
     const want = new Map(dir ? groups.filter((cells) => cells?.length && !isAimed(cells)).map((cells) => [groupKey(cells, at), cells]) : []);
-    let carry = 0; // moving tile to tile: new paths pick up where the old ones' fade-in was
+    const spare = [];
     for (const [k, line] of arcByKey) {
       if (want.has(k)) continue;
       arcByKey.delete(k);
       if (isAimed(line.userData.cells)) line.userData.fade = 0;
-      else {
-        carry = Math.max(carry, line.userData.appear);
-        dropArc(line);
-      }
+      else spare.push(line);
     }
     for (const [k, c] of want) {
       if (arcByKey.has(k)) continue;
-      const line = makeArc(c, dir, at);
-      line.userData.appear = carry;
-      arcs.add(line);
+      let line = spare.pop();
+      if (line) Object.assign(line.userData, { cells: c, dir, goal: centreOf(c, at) });
+      else arcs.add((line = makeArc(c, dir, at)));
       arcByKey.set(k, line);
     }
+    for (const line of spare) dropArc(line);
   }
 
   function animateArcs(dt) {
     renderer.getSize(arcSize);
+    const f = glide(dt);
     for (const line of [...arcs.children]) {
       const u = line.userData;
       line.material.resolution.copy(arcSize);
+      if (Math.hypot(u.goal.x - u.end.x, u.goal.z - u.end.z) > 1e-3) {
+        u.end.x += (u.goal.x - u.end.x) * f;
+        u.end.z += (u.goal.z - u.end.z) * f;
+        reshapeArc(line);
+      }
       let k;
       if (u.fade < 0) {
         u.appear = Math.min(1, u.appear + dt / APPEAR_TIME);
