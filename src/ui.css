@@ -1135,7 +1135,8 @@ body:has(#debugDock) #leftcol {
 
 /* ---------- shop (full screen) ---------- */
 #shop,
-#cardPick {
+#cardPick,
+#blackMarket {
   position: fixed;
   inset: 0;
   z-index: 45;
@@ -1149,6 +1150,7 @@ body:has(#debugDock) #leftcol {
 
 #shop.hidden,
 #cardPick.hidden,
+#blackMarket.hidden,
 #cityStrike.hidden {
   display: none;
 }
@@ -1246,14 +1248,16 @@ body.city-strike #hand {
 }
 
 #shop .shop-head,
-#cardPick .shop-head {
+#cardPick .shop-head,
+#blackMarket .shop-head {
   flex: 0 0 auto;
   padding: 42px 20px 26px;
   text-align: center;
 }
 
 #shop .title,
-#cardPick .title {
+#cardPick .title,
+#blackMarket .title {
   font-size: 15px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
@@ -1261,7 +1265,8 @@ body.city-strike #hand {
 }
 
 #shop .coins,
-#cardPick .coins {
+#cardPick .coins,
+#blackMarket .coins {
   margin-top: 6px;
   font-size: 56px;
   font-weight: 600;
@@ -1270,7 +1275,8 @@ body.city-strike #hand {
 }
 
 #shop p,
-#cardPick p {
+#cardPick p,
+#blackMarket p {
   margin: 8px 0 0;
   font-size: 16px;
   color: var(--muted);
@@ -1278,7 +1284,8 @@ body.city-strike #hand {
 
 /* The cards sit on a darker band running the full width, ruled above and below. */
 #shop .shop-band,
-#cardPick .shop-band {
+#cardPick .shop-band,
+#blackMarket .shop-band {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
@@ -1293,7 +1300,8 @@ body.city-strike #hand {
 }
 
 #shopCards,
-#pickCards {
+#pickCards,
+#bmCards {
   display: flex;
   gap: 56px;
   justify-content: center;
@@ -1301,25 +1309,30 @@ body.city-strike #hand {
 
 /* Shop cards: the hand card, scaled up (everything inside follows --w). */
 #shopCards .card,
-#pickCards .card {
+#pickCards .card,
+#bmCards .card {
   --w: 205px;
 }
 
-#shopCards .card.cant {
+#shopCards .card.cant,
+#bmCards .card.cant {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-#shopCards .card.cant:hover {
+#shopCards .card.cant:hover,
+#bmCards .card.cant:hover {
   transform: none;
 }
 
 #shop .shop-item,
-#cardPick .shop-item {
+#cardPick .shop-item,
+#blackMarket .shop-item {
   text-align: center;
 }
 
-#shop .price {
+#shop .price,
+#blackMarket .price {
   margin-top: 18px;
   font-size: 26px;
   font-weight: 600;
@@ -1327,14 +1340,16 @@ body.city-strike #hand {
 }
 
 #shop .tag,
-#cardPick .tag {
+#cardPick .tag,
+#blackMarket .tag {
   margin-top: 4px;
   font-size: 14px;
   color: var(--muted);
 }
 
 #shop .shop-foot,
-#cardPick .shop-foot {
+#cardPick .shop-foot,
+#blackMarket .shop-foot {
   flex: 0 0 auto;
   display: flex;
   justify-content: center;
@@ -1349,7 +1364,8 @@ body.city-strike #hand {
 
 /* Shop opening: the backdrop fades in, the box drops in, the cards deal in one by one. */
 #shop.opening,
-#cardPick.opening {
+#cardPick.opening,
+#blackMarket.opening {
   animation: shopFade 0.25s ease-out both;
 }
 
@@ -1357,8 +1373,11 @@ body.city-strike #hand {
 #shop.opening .shop-band,
 #shop.opening .shop-foot,
 #cardPick.opening .shop-head,
+#blackMarket.opening .shop-head,
 #cardPick.opening .shop-band,
-#cardPick.opening .shop-foot {
+#blackMarket.opening .shop-band,
+#cardPick.opening .shop-foot,
+#blackMarket.opening .shop-foot {
   animation: shopDrop 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
 }
 
@@ -1403,26 +1422,32 @@ body.shopping #hand {
 }
 
 /* Tighter shop layout, leaving the bottom strip for the hand. */
-#shop {
+#shop,
+#blackMarket {
   padding-bottom: 300px;
 }
-#shop .shop-head {
+#shop .shop-head,
+#blackMarket .shop-head {
   padding: 14px 20px 10px;
 }
-#shop .coins {
+#shop .coins,
+#blackMarket .coins {
   font-size: 36px;
 }
-#shop .shop-band {
+#shop .shop-band,
+#blackMarket .shop-band {
   gap: 12px;
   padding: 12px 0;
 }
-#shop #shopCards .card {
+#shop #shopCards .card,
+#blackMarket #bmCards .card {
   --w: 175px;
 }
 #shop #btnShopReroll {
   margin-top: 14px; /* a little more room below the prices */
 }
-#shop .shop-foot {
+#shop .shop-foot,
+#blackMarket .shop-foot {
   padding: 12px 20px 6px;
 }
 #shop #btnShopDone {
@@ -2881,8 +2906,6 @@ body.rival-view #leftcol {
 body.globe-view #mapIcons,
 body.globe-view #ruinBtns,
 body.globe-view #factoryBars,
-body.globe-view #floaters,
-body.globe-view #toast,
 body.globe-view #resTip,
 body.globe-view #inspect,
 body.rival-view #mapIcons,
@@ -3216,3 +3239,147 @@ body.rival-view.rival-hand #hand {
 #warTimer b { font-size: 17px; color: #ffb08a; letter-spacing: 0.03em; }
 #warTimer .bad { color: #ff8a6a; }
 #warTimer .good { color: #9fd38a; }
+
+#btnBmLeave {
+  width: 320px;
+  font-size: 24px;
+  border-radius: 3px;
+}
+#blackMarket .title {
+  color: #c8453a;
+}
+#blackMarket .price small {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: #c8453a;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Black Market: the two aisles of the Crawler's hold (Military / Resource), before any cards. */
+#bmCards .bm-aisle {
+  width: 300px;
+  min-height: 330px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 30px 22px 24px;
+  border: 0;
+  color: var(--ink, #e8dcc0);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  background:
+    var(--dp-rivet) left 8px top 8px / 9px 9px no-repeat,
+    var(--dp-rivet) right 8px top 8px / 9px 9px no-repeat,
+    var(--ih-metal);
+  box-shadow: var(--ih-rim), inset 0 -16px 24px rgba(0, 0, 0, 0.4), 0 10px 26px rgba(0, 0, 0, 0.5);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px));
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+#bmCards .bm-aisle:hover {
+  transform: translateY(-6px);
+  filter: brightness(1.18);
+}
+#bmCards .bm-aisle.deal {
+  animation: bm-aisle-in 0.4s ease-out both;
+}
+@keyframes bm-aisle-in {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: none; }
+}
+#bmCards .bm-aisle-icon svg {
+  width: 84px;
+  height: 84px;
+  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.6));
+}
+#bmCards .bm-aisle-name {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gold, #e8bf68);
+}
+#bmCards .bm-aisle-blurb {
+  font-size: 16px;
+}
+#bmCards .bm-aisle-list {
+  font-size: 13px;
+  color: var(--muted, #a89a80);
+}
+#bmCards .bm-aisle-count {
+  margin-top: auto;
+  padding: 2px 10px;
+  border-radius: 9px;
+  background: rgba(40, 10, 6, 0.85);
+  box-shadow: inset 0 0 0 1px #c8453a;
+  color: #ffb08a;
+  font-size: 13px;
+}
+#blackMarket .shop-foot {
+  gap: 16px;
+}
+#btnBmBack {
+  width: 240px;
+  font-size: 20px;
+}
+#btnBmBack.hidden {
+  display: none;
+}
+
+/* Payout watched from the War Map: the oil each tile pays rises as a number above Hive City. */
+.globe-oil-number {
+  position: fixed;
+  z-index: 30;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  font-size: 22px;
+  font-weight: 700;
+  color: #ffc860;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85), 0 0 10px rgba(255, 160, 40, 0.6);
+  white-space: nowrap;
+  animation: globe-oil-rise 1.3s ease-out forwards;
+}
+.globe-oil-number svg.ico { width: 1em; height: 1em; vertical-align: -0.12em; }
+@keyframes globe-oil-rise {
+  0% { opacity: 0; transform: translate(-50%, -30%) scale(0.7); }
+  15% { opacity: 1; transform: translate(-50%, -60%) scale(1.1); }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -260%) scale(1); }
+}
+
+/* A rival city clears the side panel, but End Turn stays on screen (bottom right) so a turn can be ended from
+   anywhere; greyed and blurred while the hand still has to be cleared. */
+body.rival-view #btnNext {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  width: 300px;
+  z-index: 30;
+  opacity: 1;
+  pointer-events: auto;
+  translate: none;
+  visibility: visible;
+}
+body.rival-view #panel {
+  opacity: 1;
+  translate: none; /* a translated parent would carry the fixed button off screen with it */
+  pointer-events: none;
+  background: none;
+  box-shadow: none;
+  border: 0;
+}
+body.rival-view #panel > *:not(#btnNext) {
+  visibility: hidden;
+}
+#btnNext.disabled {
+  filter: grayscale(1) blur(1.2px);
+}
+
+/* Season in progress: End Turn can't start another turn until this one is settled. */
+#btnNext.running {
+  filter: grayscale(0.8) brightness(0.8);
+  cursor: progress;
+}

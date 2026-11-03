@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import { clone as cloneModel } from 'three/addons/utils/SkeletonUtils.js';
-import { hasBlockout, loadCoreModels, loadBundle } from './models.js';
+import { hasBlockout, loadCoreModels, loadBundle, loadWastePieces } from './models.js';
+import { SHAPES } from './shapes.js';
 import { buildRaiderCamp } from './raiderMesh.js';
 import { buildLabourCamp } from './labourCampMesh.js';
 import { buildInterceptBunker } from './interceptMesh.js';
 import { copySeam } from './seamlessGround.js';
 import { SCALE } from './scalingConfig.js';
 import { L } from './i18n.js';
-import { hexToWorld, hexRound, hexDistance, hexesAround } from './grid.js';
+import { hexToWorld, hexRound, hexDistance, hexesAround, cellSeed, cellsCentre } from './grid.js';
 import { hexPrism } from './hexGeometry.js';
 
 /**
@@ -633,6 +634,12 @@ export const SHOP_ITEMS = [
   ['overtime', 3],
 ];
 
+/** Military buildings (and the Overtime action that runs them): the Black Market's stock; rivals value them too. */
+export const MILITARY = new Set(['milfactory', 'missilelab', 'warhead', 'intercept', 'magazine']);
+export const BLACK_MARKET = new Set([...MILITARY, 'overtime', 'militia']);
+/** The Black Market's other aisle: every non-military shop card except the basics (those come up in every deal). */
+export const BLACK_MARKET_RESOURCE = new Set(['pump', 'oasis', 'tarpit', 'labourcamp', 'refinery', 'spark', 'demolish', 'demolish2']);
+
 /** Basic tiles sold in the shop. They are never locked and never offered as a free tile pick. */
 export const BASIC_SHOP = new Set(['station', 'farm', 'settlement']);
 
@@ -654,11 +661,11 @@ export const shopReady = (key, unlocked) => {
  * Card pictures: front renders of each tile model (public/cards/snapshots, made by tools/card-snapshots.html).
  * Card key -> image; the four Wasteland colours share one. Bump SNAPSHOT_VERSION after re-rendering.
  */
-const SNAPSHOT_VERSION = '20261103-magazine';
+const SNAPSHOT_VERSION = '20261103-recipelab';
 const SNAPSHOTS = {
   capital: 'capital', settlement: 'settlement', farm: 'farm', pump: 'pump', station: 'station', refinery: 'refinery',
   oasis: 'oasis', tarpit: 'tarpit', labourcamp: 'labourcamp', cliffs: 'cliffs', ruins: 'ruins', crater: 'crater',
-  milfactory: 'milfactory', magazine: 'magazine',
+  milfactory: 'milfactory', magazine: 'magazine', warhead: 'warhead', intercept: 'intercept', missilelab: 'missilelab',
   raider: 'raider', bandit_raider: 'bandit_raider', bandit_siphon: 'bandit_siphon', bandit_scav: 'bandit_scav',
   wasteland1: 'wasteland', wasteland2: 'wasteland', wasteland3: 'wasteland', wasteland4: 'wasteland',
 };
@@ -668,8 +675,13 @@ export const TERRAIN_KEYS = Object.keys(TERRAINS);
 
 export const isBuilding = (terrain) => TERRAINS[terrain]?.category === 'building';
 
-/** Model clips that never loop: they play on cue (TileFactory.cue), like the Missile Magazine's Launch. */
-const EVENT_CLIPS = new Set(['Launch']);
+/**
+ * Model clips that never loop: they play on cue, like the Missile Magazine's Launch (TileFactory.cue) and the
+ * Intercept Network's Fire (its gun rig, TileFactory.#ciwsRig).
+ */
+const EVENT_CLIPS = new Set(['Launch', 'Fire']);
+/** Seconds an Intercept Network's gun takes to swing back into its idle sweep after firing. */
+const CIWS_EASE_BACK = 0.8;
 
 export const TILE = {
   gap: 0, // seam between tiles (world units); Game Debug → Graphics → Tile gap
@@ -706,7 +718,7 @@ export class TileFactory {
   /** @type {Map<string, THREE.Object3D> | null} */
   models = null;
   ready;
-  /** Wasteland piece models by shape key, loaded in the background after the buildings. */
+  /** Wasteland piece models by shape key (each a list: a shape can have several), loaded after the core models. */
   pieces = null;
   piecesReady;
 
@@ -734,8 +746,8 @@ export class TileFactory {
         this.models = new Map();
       });
     this.piecesReady = this.ready
-      .then(() => loadBundle('waste'))
-      .then((roots) => (this.pieces = new Map([...roots].map(([key, root]) => [key.slice('waste-'.length), root]))))
+      .then(() => loadWastePieces())
+      .then((byShape) => (this.pieces = byShape))
       .catch((error) => {
         console.error('Wasteland piece models failed to load; Wasteland stays as coloured blocks.', error);
         return null;
@@ -769,6 +781,7 @@ export class TileFactory {
 
   /**
    * bare: an empty holder, for a cell covered by a whole-piece Wasteland model (the model is added separately).
+   * seed: a lone Wasteland cell's look (cellSeed in grid.js: the same cell always looks the same).
    * rot: the card's rotation, sixths of a turn clockwise on screen (like createPiece). The models are hexagons
    * like the cells, so every turn still fits; it goes on the model, inside the holder the board moves around.
    */
@@ -776,11 +789,11 @@ export class TileFactory {
     return applyTileGap(this.#create(terrain, opts));
   }
 
-  #create(terrain, { bare = false, rot = 0 } = {}) {
+  #create(terrain, { bare = false, rot = 0, seed = 0 } = {}) {
     if (bare) return new THREE.Group();
     if (terrain.startsWith('wasteland')) {
       const holder = new THREE.Group();
-      this.fillWaste(holder, terrain);
+      this.fillWaste(holder, terrain, seed);
       return holder;
     }
     const tagSoil = (g) => (g.traverse((o) => o.geometry === this.soilGeo && fitFull(o)), g);
@@ -819,9 +832,80 @@ export class TileFactory {
       // Start each copy at a random point so two copies never fly in sync.
       action.time = Math.random() * clip.duration;
     }
-    const entry = { mixer, root: model, idle: 0, cues: [] };
+    const entry = { mixer, root: model, idle: 0, cues: [], rig: null };
     model.userData.anim = entry;
+    if (model.userData.ciwsParts) entry.rig = this.#ciwsRig(model, entry);
     this.#mixers.add(entry);
+  }
+
+  /**
+   * A model's CIWS gun (models.js splitCiws), for the attack phase: missiles.js fireCIWS turns `turret` and lifts
+   * `pivot` itself between begin() and end(). Meanwhile the idle sweep (the 'Aim' clip) holds where it was, fire(s)
+   * plays the Fire clip (barrels spinning, muzzle flash, tracers) over about s seconds, and afterwards the gun eases
+   * back into its sweep. Kept as model.userData.ciws, where findCiws (interceptMesh.js) finds it.
+   */
+  #ciwsRig(model, entry) {
+    const parts = model.userData.ciwsParts;
+    const turret = model.getObjectByName(parts.turret);
+    const pivot = model.getObjectByName(parts.gun);
+    if (!turret || !pivot) return null;
+    const aimClip = model.animations.find((c) => c.name === 'Aim');
+    const fireClip = model.animations.find((c) => c.name === 'Fire');
+    const sweep = aimClip ? entry.mixer.clipAction(aimClip) : null;
+    // The sweep's pose at any moment, to ease back into it.
+    const poses = (aimClip?.tracks ?? [])
+      .filter((t) => THREE.PropertyBinding.parseTrackName(t.name).propertyName === 'quaternion')
+      .map((t) => ({ node: model.getObjectByName(THREE.PropertyBinding.parseTrackName(t.name).nodeName), it: t.createInterpolant() }))
+      .filter((p) => p.node);
+    const q = new THREE.Quaternion();
+    const rig = {
+      turret,
+      pivot,
+      muzzles: [model.getObjectByName(parts.muzzle) ?? pivot],
+      busy: 0,
+      back: null,
+      clock: 0, // the sweep's time while it's paused
+      get active() {
+        return rig.busy > 0 || rig.back !== null;
+      },
+      begin() {
+        if (rig.busy++ > 0) return;
+        rig.back = null;
+        if (!sweep?.isRunning()) return;
+        rig.clock = sweep.time;
+        const held = poses.map((p) => p.node.quaternion.clone());
+        sweep.stop(); // (that puts the rest pose back: hold the sweep's instead)
+        poses.forEach((p, i) => p.node.quaternion.copy(held[i]));
+      },
+      fire(seconds = 0.9) {
+        if (!fireClip) return;
+        const a = entry.mixer.clipAction(fireClip);
+        a.reset().setLoop(THREE.LoopOnce, 1);
+        a.clampWhenFinished = false;
+        a.timeScale = 1 / Math.max(0.3, seconds); // its second of muzzle flash, over the burst
+        a.play();
+        a.time = 0.2; // straight into the firing
+      },
+      end() {
+        if (rig.busy === 0 || --rig.busy > 0 || !sweep) return;
+        rig.back = { t: 0, from: poses.map((p) => p.node.quaternion.clone()) };
+      },
+      update(dt) {
+        if (!rig.active) return;
+        rig.clock += dt;
+        if (!rig.back) return;
+        rig.back.t += dt;
+        const k = Math.min(1, rig.back.t / CIWS_EASE_BACK);
+        const time = rig.clock % aimClip.duration;
+        poses.forEach((p, i) => p.node.quaternion.copy(rig.back.from[i]).slerp(q.fromArray(p.it.evaluate(time)), k * k * (3 - 2 * k)));
+        if (k < 1) return;
+        rig.back = null;
+        sweep.reset().play();
+        sweep.time = time;
+      },
+    };
+    model.userData.ciws = rig;
+    return rig;
   }
 
   /** Whether a tile's model has the cue clip `name` (a stand-in, or a model without it, doesn't). */
@@ -835,10 +919,11 @@ export class TileFactory {
    * Play a cue clip (EVENT_CLIPS) once on a tile; when it ends the model is back in its rest pose and onEnd runs.
    * At `cutAt` seconds into the clip `cut(i)` runs (e.g. reads where a part is), and the `hide` parts vanish (scale 0)
    * from then on. With `repeat`, the clip then jumps back from `repeatFrom` to `repeatAt` that many times (the parts
-   * come back) and cuts again each time. Resolves at the last cut with what `cut` returned, or null (no such clip,
-   * or the tile went away first).
+   * come back) and cuts again each time. With `hold` (seconds), the clip instead stops at the cut with everything
+   * still showing, and after that long onResume runs, the `hide` parts vanish and it plays on. Resolves at the last
+   * cut with what `cut` returned, or null (no such clip, or the tile went away first).
    */
-  cue(holder, name, { speed = 1, cutAt = null, cut = null, hide = [], repeat = 0, repeatFrom = null, repeatAt = 0, onEnd = null } = {}) {
+  cue(holder, name, { speed = 1, cutAt = null, cut = null, hide = [], repeat = 0, repeatFrom = null, repeatAt = 0, hold = 0, onResume = null, onEnd = null } = {}) {
     let entry = null;
     holder.traverse((o) => (entry ??= o.userData.anim ?? null));
     const clip = entry?.root.animations.find((c) => c.name === name);
@@ -865,14 +950,24 @@ export class TileFactory {
     });
     return new Promise((resolve) => {
       if (cutAt == null) resolve(null);
-      entry.cues.push({ action, cutAt, cut, parts, left: repeat, repeatFrom, repeatAt, onEnd, resolve, n: 0, phase: cutAt == null ? 'after' : 'before' });
+      entry.cues.push({ action, cutAt, cut, parts, left: repeat, repeatFrom, repeatAt, hold, onResume, onEnd, resolve, n: 0, phase: cutAt == null ? 'after' : 'before' });
     });
   }
 
-  /** After the mixer has posed the model this frame: cuts, repeats, hidden parts and finished cues. */
-  #runCues(entry) {
+  /** After the mixer has posed the model this frame: cuts, holds, repeats, hidden parts and finished cues. */
+  #runCues(entry, dt) {
     for (let i = entry.cues.length - 1; i >= 0; i--) {
       const c = entry.cues[i];
+      if (c.phase === 'hold') {
+        // (a paused action doesn't count as running)
+        if ((c.hold -= dt) > 0) continue;
+        c.action.paused = false;
+        c.phase = 'after';
+        c.hidden = true;
+        c.onResume?.();
+        for (const p of c.parts) p.o.scale.setScalar(0);
+        continue;
+      }
       if (!c.action.isRunning()) {
         c.action.stop();
         entry.cues.splice(i, 1);
@@ -889,6 +984,12 @@ export class TileFactory {
       }
       if (c.phase === 'before' && t >= c.cutAt) {
         const value = c.cut?.(c.n++) ?? null;
+        if (c.hold > 0) {
+          c.phase = 'hold';
+          c.action.paused = true;
+          c.resolve(value);
+          continue;
+        }
         if (c.left > 0) c.phase = 'repeat';
         else {
           c.phase = 'after';
@@ -916,9 +1017,10 @@ export class TileFactory {
       }
       if (node.isScene) {
         entry.idle = 0;
-        // A cue (a magazine's launch) plays out even on an idle building.
-        if (!frozen || entry.cues.length) entry.mixer.update(dt);
-        if (entry.cues.length) this.#runCues(entry);
+        // A cue (a magazine's launch) or a gun in action plays out even on an idle building.
+        if (!frozen || entry.cues.length || entry.rig?.active) entry.mixer.update(dt);
+        if (entry.cues.length) this.#runCues(entry, dt);
+        entry.rig?.update(dt);
       } else if (++entry.idle > 120) {
         // About two seconds detached. The copy has been thrown away.
         for (const c of entry.cues) {
@@ -926,6 +1028,7 @@ export class TileFactory {
           c.onEnd?.();
         }
         entry.cues.length = 0;
+        if (entry.root.userData.ciws === entry.rig) delete entry.root.userData.ciws;
         entry.mixer.stopAllAction();
         entry.mixer.uncacheRoot(entry.root);
         this.#mixers.delete(entry);
@@ -933,38 +1036,90 @@ export class TileFactory {
     }
   }
 
-  /** A lone Wasteland cell: the Single wasteland model, or a coloured block until the pieces have loaded. */
-  fillWaste(holder, terrain) {
+  /** One of a shape's piece models (null: none loaded). seed: the same piece always gets the same one. */
+  #pieceModel(shape, seed = 0) {
+    const list = this.pieces?.get(shape);
+    return list?.length ? list[Math.abs(Math.round(seed)) % list.length] : null;
+  }
+
+  /**
+   * A lone Wasteland cell: one of the Wasteland looks (the 'mono' list: mostly dunes and sand, see loadWastePieces),
+   * turned any of the six ways, both picked by `seed`; a coloured block until the pieces have loaded.
+   */
+  fillWaste(holder, terrain, seed = 0) {
     holder.clear();
-    const source = this.pieces?.get('mono');
-    if (source) {
-      const model = cloneModel(source);
-      holder.add(model);
-      if (model.animations.length) this.#animate(model);
-    } else holder.add(this.#block(terrain));
+    const source = this.#pieceModel('mono', seed);
+    if (source) this.#fillWith(holder, source, (seed >>> 8) % 6);
+    else holder.add(this.#block(terrain));
     holder.userData.blockout = Boolean(source);
     applyTileGap(holder);
   }
 
   /**
-   * A whole Wasteland piece as one model, turned to the piece's rotation (rot quarter turns clockwise from
-   * above, like rotateCells). Centred on the origin: place it at the centre of the piece's cells.
-   * Null until the piece models have loaded.
+   * A cell left over from a Wasteland piece (a building took another of its cells): the look it had in the piece,
+   * turned as it was, so the rest of the piece looks unchanged. piece: { shape, rot, seed } as it was placed;
+   * offset: [x, z] from the middle of the piece's cells to this one (world units). Falls back to fillWaste.
    */
-  createPiece(shape, rot = 0) {
-    const source = this.pieces?.get(shape);
-    if (!source) return null;
-    const group = new THREE.Group();
+  fillWastePart(holder, terrain, piece, offset, seed = 0) {
+    // Which of the shape's cells this is: where it sits in the piece before its turn.
+    const at = new THREE.Vector3(offset[0], 0, offset[1]).applyAxisAngle(THREE.Object3D.DEFAULT_UP, (piece.rot * Math.PI) / 3);
+    const i = this.#pieceCells(piece.shape).findIndex((c) => Math.hypot(c.x - at.x, c.z - at.z) < 0.25);
+    const [look, turn] = i >= 0 ? this.#pieceLook(piece.seed, i) : [null, 0];
+    if (!look) return this.fillWaste(holder, terrain, seed);
+    holder.clear();
+    this.#fillWith(holder, look, piece.rot + turn);
+    holder.userData.blockout = true;
+    applyTileGap(holder);
+  }
+
+  /** A shape's cells around their middle (world offsets, the piece unturned). */
+  #pieceCells(shape) {
+    const cells = SHAPES[shape]?.cells ?? [];
+    const mid = cellsCentre(cells);
+    return cells.map(([x, z]) => {
+      const w = hexToWorld(x, z);
+      return { x: w.x - mid.x, z: w.z - mid.z };
+    });
+  }
+
+  /** Cell i of the piece with this seed: its look and its turn (sixths), the same every time. */
+  #pieceLook(seed, i) {
+    const h = cellSeed(seed, i);
+    return [this.#pieceModel('mono', h), (h >>> 8) % 6];
+  }
+
+  #fillWith(holder, source, rot) {
+    const turn = new THREE.Group();
+    turn.rotation.y = (-rot * Math.PI) / 3;
     const model = cloneModel(source);
-    group.add(model);
-    group.rotation.y = (-rot * Math.PI) / 3; // rot sixths of a turn, clockwise on screen
+    turn.add(model);
+    holder.add(turn);
     if (model.animations.length) this.#animate(model);
+  }
+
+  /**
+   * A whole Wasteland piece: a look for each of its cells (mostly dunes and sand, see loadWastePieces), each turned
+   * its own way, all picked by `seed` (the piece's id: its ghost, the placed piece and what a building leaves of it
+   * match). Turned to the piece's rotation (rot sixths of a turn, like rotateCells) and centred on the origin: place
+   * it at the middle of the piece's cells (cellsCentre in grid.js). Null until the piece models have loaded.
+   */
+  createPiece(shape, rot = 0, seed = 0) {
+    if (!SHAPES[shape] || !this.#pieceModel('mono')) return null;
+    const group = new THREE.Group();
+    this.#pieceCells(shape).forEach((c, i) => {
+      const cell = new THREE.Group();
+      cell.position.set(c.x, 0, c.z);
+      const [look, turn] = this.#pieceLook(seed, i);
+      this.#fillWith(cell, look, turn);
+      group.add(cell);
+    });
+    group.rotation.y = (-rot * Math.PI) / 3; // rot sixths of a turn, clockwise on screen
     return applyTileGap(group);
   }
 
   /** Ghost copy of a whole Wasteland piece for the placement preview. */
-  previewPiece(shape, rot = 0) {
-    const group = this.createPiece(shape, rot);
+  previewPiece(shape, rot = 0, seed = 0) {
+    const group = this.createPiece(shape, rot, seed);
     return group && this.#ghost(group);
   }
 

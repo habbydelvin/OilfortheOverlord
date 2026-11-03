@@ -8,7 +8,7 @@ export const MYSTERY_POOL = [
   ['refinery', 2],
   ['pump', 2],
   ['ruins', 4], // Pre-war Ruins: build next to them to clear and refill your hand
-  ['missile', 1], // Unexploded Missile: not a tile; it launches from the site at your nearest building
+  ['missile', 1], // Unexploded Missile: an old Missile Magazine surfaces (and stays) and fires at your nearest building
 ];
 
 /**

@@ -211,10 +211,19 @@ export class Payout {
             ? lerp(0.2, 1, easeOutBack(a / pt)) * c.labelPop
             : lerp(c.labelPop, 1, Math.min((a - pt) / 0.2, 1));
         const rise = c.labelStartY + c.labelRise * easeOut(p);
-        const pos = hexToWorld(it.tile.x, it.tile.z); // not `w`: that is the screen width used just below
-        this.v.set(pos.x, rise, pos.z).project(this.camera);
-        const px = (this.v.x * 0.5 + 0.5) * w;
-        const py = (-this.v.y * 0.5 + 0.5) * h;
+        // anchor(): a screen point every label rises from instead (the city on the War Map), or null for the board.
+        const at = this.anchor?.();
+        let px;
+        let py;
+        if (at) {
+          px = at[0];
+          py = at[1] - 60 - (rise - c.labelStartY) * 40;
+        } else {
+          const pos = hexToWorld(it.tile.x, it.tile.z); // not `w`: that is the screen width used just below
+          this.v.set(pos.x, rise, pos.z).project(this.camera);
+          px = (this.v.x * 0.5 + 0.5) * w;
+          py = (-this.v.y * 0.5 + 0.5) * h;
+        }
         const wobTime = pt * 1.8;
         const wobble = a < wobTime ? Math.sin(a * 40) * (1 - a / wobTime) * c.labelWobble : 0;
         it.el.style.transform = `translate(${px}px, ${py}px) translate(-50%, -100%) scale(${scale}) rotate(${wobble}deg)`;

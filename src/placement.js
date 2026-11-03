@@ -134,12 +134,10 @@ export class Placement {
     const world = this.offsets.map(([ox, oz]) => hexToWorld(ox, oz)); // offsets on the board (cell offsets convert linearly)
     this.spinCentre.set(world.reduce((a, w) => a + w.x, 0) / world.length, 0, world.reduce((a, w) => a + w.z, 0) / world.length);
     const blockout = hasBlockout(piece.terrain) && this.factory?.models?.has(piece.terrain);
-    // Wasteland previews as its whole-piece model, centred on the piece's cells.
-    const wholePiece = piece.terrain.startsWith('wasteland') ? this.factory?.previewPiece(piece.shape, piece.rot) : null;
+    // Wasteland previews as its whole-piece model (the one the piece will land as), centred on the piece's cells.
+    const wholePiece = piece.terrain.startsWith('wasteland') ? this.factory?.previewPiece(piece.shape, piece.rot, piece.id) : null;
     if (wholePiece) {
-      const xs = world.map((w) => w.x);
-      const zs = world.map((w) => w.z);
-      wholePiece.position.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...zs) + Math.max(...zs)) / 2);
+      wholePiece.position.copy(this.spinCentre);
       this.blocks.add(wholePiece);
     }
     for (const w of world) {

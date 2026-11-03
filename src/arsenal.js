@@ -9,11 +9,13 @@ export const OVERTIME_OIL = 2;
  * Intercept Network tuning, read live (combat-test.html's debug panel changes it; saved to localStorage).
  * range: cells covered in the attack phase · chance: one shot stops a strike · oil: cost per shot.
  */
-export const INTERCEPT_DEFAULTS = { range: 2, chance: 0.65, oil: 3 };
+export const INTERCEPT_DEFAULTS = { range: 2, chance: 0.65, oil: 2 };
 const INTERCEPT_KEY = 'oto.intercept';
 export const INTERCEPT = { ...INTERCEPT_DEFAULTS };
 try {
-  Object.assign(INTERCEPT, JSON.parse(localStorage.getItem(INTERCEPT_KEY) ?? '{}'));
+  const saved = JSON.parse(localStorage.getItem(INTERCEPT_KEY) ?? '{}');
+  delete saved.oil; // the shot cost is a design value now (2): an old saved 3 no longer overrides it
+  Object.assign(INTERCEPT, saved);
 } catch {
   /* keep defaults */
 }
@@ -22,7 +24,7 @@ export const clearIntercept = () => {
   localStorage.removeItem(INTERCEPT_KEY);
   Object.assign(INTERCEPT, INTERCEPT_DEFAULTS);
 };
-export const INTERCEPT_OIL = 3;
+export const INTERCEPT_OIL = 2;
 /** Chance one Intercept Network shot stops an incoming strike. */
 export const INTERCEPT_CHANCE = 0.65;
 /** Seasons of paid work to finish one missile (a default year). */

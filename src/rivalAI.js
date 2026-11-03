@@ -1,5 +1,5 @@
 import { DIRS, key, hexDistance } from './grid.js';
-import { TERRAINS } from './tiles.js';
+import { TERRAINS, MILITARY } from './tiles.js';
 import { SHAPES, ROTATIONS, rotateCells } from './pieces.js';
 import { computeEconomy } from './economy.js';
 import { GRACE_ROUNDS } from './war.js';
@@ -23,7 +23,6 @@ const isWaste = (t) => t.startsWith('wasteland');
 
 /** Shop cards that start locked for the player too; a rival unlocks one each year, in its own order. */
 const LOCKED = ['pump', 'oasis', 'tarpit', 'labourcamp', 'refinery', 'milfactory', 'missilelab', 'warhead', 'intercept', 'magazine'];
-const MILITARY = new Set(['milfactory', 'missilelab', 'warhead', 'intercept', 'magazine']);
 
 /**
  * draw: extra draw weight per card (× the card's normal weight).

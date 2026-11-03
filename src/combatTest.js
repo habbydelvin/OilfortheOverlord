@@ -206,7 +206,6 @@ const SLIDERS = [
   { label: 'Intercept range (cells)', min: 1, max: 8, step: 1, get: () => INTERCEPT.range, set: (v) => (INTERCEPT.range = v), save: true },
   { label: 'Hit chance per shot', min: 0, max: 1, step: 0.05, get: () => INTERCEPT.chance, set: (v) => (INTERCEPT.chance = v), save: true },
   { label: 'Oil per shot', min: 0, max: 10, step: 1, get: () => INTERCEPT.oil, set: (v) => (INTERCEPT.oil = v), save: true },
-  { label: 'City oil (stockpile)', min: 0, max: 60, step: 1, get: () => oil, set: (v) => (oil = v) },
   { label: 'CIWS rounds / s', min: 5, max: 120, step: 1, get: () => MissileStrike.RATE, set: (v) => (MissileStrike.RATE = v) },
   { label: 'Round speed', min: 6, max: 60, step: 1, get: () => MissileStrike.ROUND_SPEED, set: (v) => (MissileStrike.ROUND_SPEED = v) },
   { label: 'Turret slew (s)', min: 0, max: 1, step: 0.02, get: () => MissileStrike.SLEW, set: (v) => (MissileStrike.SLEW = v) },
@@ -436,6 +435,8 @@ const globe = createGlobeView({
   onVisit: (id) => (id === 'player' ? goHome() : enterRival(id)),
   onDive: (k) => !switching && clouds.setPeek(k),
   onArrive: (s) => arrive(s),
+  onApproach: (s) => approach(s),
+  approachLead: () => missileCfg.followFlight,
 });
 const rivalView = createRivalView({ renderer, factory, rig, fogSettings: () => fogCfg, fogQuality: () => gfxCfg.fogQuality });
 // Our missiles coming down on a rival city, played in its own scene when you're looking at it.
@@ -507,8 +508,43 @@ function playRival(r, rec) {
   });
 }
 
-function arrive(rec) {
+const played = new Set(); // strikes already playing in a city view (started at approach)
+/** Hive City's Missile Magazines fire the salvo up and away as the countdown starts (camera untouched). */
+function launchSalvo(count) {
+  const silos = [...grid.cells.values()].filter((c) => c.terrain === 'magazine');
+  if (!count || !silos.length) return;
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  dir.y = 0;
+  dir.normalize();
+  for (let k = 0; k < count; k++) {
+    const c = silos[k % silos.length];
+    const w = hexToWorld(c.x, c.z);
+    const side = (Math.random() - 0.5) * 4;
+    const from = { x: w.x, y: 0.6, z: w.z };
+    setTimeout(() => {
+      missiles.fire([{ x: w.x, z: w.z, from, away: true, lean: { x: dir.x * 5 - dir.z * side, z: dir.z * 5 + dir.x * side }, flight: 1.6, accel: 1.9 }]);
+      boom();
+    }, k * 350);
+  }
+}
+
+function approach(rec) {
   if (rec.fizzled) return;
+  if (rec.to === 'player' && view === 'home') {
+    played.add(rec);
+    landing.push(play([rec]));
+    return;
+  }
+  const r = rivals.find((x) => x.id === rec.to);
+  if (r && view === 'rival' && shown === r && rec.from === 'player') {
+    played.add(rec);
+    landing.push(playRival(r, rec));
+  }
+}
+
+function arrive(rec) {
+  if (rec.fizzled || played.has(rec)) return;
   if (rec.to === 'player') {
     if (view === 'home') landing.push(play([rec]));
     else {
@@ -746,14 +782,36 @@ async function nextTurn() {
   if (busy || !alive) return;
   busy = true;
   nextBtn.disabled = true;
+  try {
+    await runTurn();
+  } catch (err) {
+    console.error('End turn failed', err);
+    say(`End turn failed: ${err?.message ?? err}`);
+  } finally {
+    busy = false;
+    nextBtn.disabled = !alive;
+    if (!alive) nextBtn.textContent = 'City fell';
+    renderHand();
+    paint();
+  }
+}
+
+async function runTurn() {
   const cities = [
-    { id: 'player', grid, oil, hp, alive: true, buildings: playerBuildings() },
+    { id: 'player', grid, oil: Infinity, hp, alive: true, buildings: playerBuildings() }, // the test city never runs dry
     ...rivals.filter((r) => r.alive !== false).map((r) => ({ id: r.id, grid: r.grid, oil: r.oil ?? 0, hp: r.capitalHp, alive: true, buildings: r.stats.buildings })),
   ];
   const strikes = [
     ...queue.map((q) => ({ from: 'player', ...q })),
     ...rivals.filter((r) => r.alive !== false).flatMap((r) => chooseStrikes(r, cities, { round: 99, chance: INTERCEPT.chance })),
   ];
+  // Testing: every End Turn is a real attack. A rival that held back (its AI keeps a reserve) still fires at you.
+  if (!strikes.some((s) => s.to === 'player')) {
+    const shooter = rivals.find((r) => r.alive !== false);
+    const pool = [...grid.cells.values()].filter((c) => TERRAINS[c.terrain]?.category === 'building' && c.terrain !== 'capital');
+    pool.sort(() => Math.random() - 0.5);
+    if (shooter) for (const c of pool.slice(0, RIVAL_MISSILES)) strikes.push({ from: shooter.id, to: 'player', at: [c.x, c.z], kind: 'missile' });
+  }
   queue = [];
   if (!strikes.length) {
     say('Nobody fired this turn.');
@@ -763,7 +821,9 @@ async function nextTurn() {
     globe.setQueued([]);
     drawAims();
     landing = [];
-    await globe.playAttack(res);
+    played.clear();
+    if (view === 'home') launchSalvo(strikes.filter((s) => s.from === 'player').length);
+    await globe.playAttack(res, rivals);
     await Promise.all(landing);
     for (const r of rivals) {
       applyToRival(r, results.get(r.id));
@@ -775,14 +835,10 @@ async function nextTurn() {
       say(`You → ${name}: ${rec.hit ? `hit${rec.lost.length ? ` (${rec.lost.map((c) => c.name).join(', ')})` : ''}${rec.capital != null ? `, Capital ${rec.capital}/${CAPITAL_HP}` : ''}${rec.eliminated ? ' · DESTROYED' : ''}` : 'intercepted'}`);
     }
     globe.renderLabels();
-    oil = Math.max(0, oil - (results.get('player')?.oilSpent ?? 0));
   }
   armRivals();
   rearm();
   turn += 1;
-  busy = false;
-  nextBtn.disabled = !alive;
-  if (!alive) nextBtn.textContent = 'City fell';
   if (rivals.every((r) => r.alive === false)) say('Every rival has fallen. Victory.');
   paint();
 }

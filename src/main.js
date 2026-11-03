@@ -8,10 +8,10 @@ import { createScene } from './scene.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
 import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws } from './sfx.js';
 import { CameraRig } from './controls.js';
-import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance } from './grid.js';
+import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
 import { preloadCardArt } from './tiles.js';
-import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, shopReady, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
+import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, BLACK_MARKET, BLACK_MARKET_RESOURCE, shopReady, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
 import { hasBlockout, loadProgress, breathe, decodeImage } from './models.js';
 import { Frontier } from './frontier.js';
 import { Placement, GHOST_LAYER, PREVIEW_PARAMS, PREVIEW_DEFAULTS, loadPreviewConfig, savePreviewConfig, clearPreviewConfig } from './placement.js';
@@ -44,7 +44,7 @@ import { createDebugPanel } from './debugPanel.js';
 import { CameraShake, SHAKE_PARAMS, SHAKE_DEFAULTS, loadShakeConfig, saveShakeConfig, clearShakeConfig } from './cameraShake.js';
 import { SCALE, SCALE_PARAMS, SCALE_DEFAULTS, loadScaleConfig, saveScaleConfig, clearScaleConfig, eventPct, P } from './scalingConfig.js';
 import { Traffic } from './traffic.js';
-import { ZoomIcons, ICON_PARAMS, ICON_DEFAULTS, loadIconConfig, saveIconConfig, clearIconConfig } from './zoomIcons.js';
+import { ZoomIcons, MAP_ICONS, ICON_PARAMS, ICON_DEFAULTS, loadIconConfig, saveIconConfig, clearIconConfig } from './zoomIcons.js';
 import { Perf } from './perfOverlay.js';
 import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig, applyGfx } from './graphics.js';
 import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
@@ -122,6 +122,8 @@ const boostHints = new BoostHints(scene); // outlines where the hovered / placed
 setupLegend(document.getElementById('btnLegend'), document.getElementById('legend')); // icon legend window
 const payoutCfg = loadPayoutConfig();
 const payout = new Payout(camera, document.getElementById('floaters'), payoutCfg);
+// On the War Map the tile labels (+oil, +food, ...) all rise above Hive City instead of their board tiles.
+payout.anchor = () => (view === 'globe' ? globe?.screenOf('player') : null);
 const audioCfg = { music: getMusicVolume(), sfx: getSfxVolume() };
 const AUDIO_DEFAULTS = { music: MUSIC_VOLUME_DEFAULT, sfx: SFX_VOLUME_DEFAULT };
 const AUDIO_PARAMS = [
@@ -258,7 +260,7 @@ let piecesPlaced = 0;
 // Turn state: a turn is a season, a round is four seasons, tribute after Winter.
 /** Food in the store at the start, so a bad first year isn't an instant loss. */
 const STARTING_FOOD = 5;
-const turn = { strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, event: null, metStreak: 0, lastMissed: false, unlocked: new Set(), pinned: [], coins: 0, total: 0, food: STARTING_FOOD, population: 0, quota: FIRST_QUOTA, capitalHp: CAPITAL_HP, ...freshTargetState() };
+const turn = { bmCooldown: 0, bmMet: false, strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, event: null, metStreak: 0, lastMissed: false, unlocked: new Set(), pinned: [], coins: 0, total: 0, food: STARTING_FOOD, population: 0, quota: FIRST_QUOTA, capitalHp: CAPITAL_HP, ...freshTargetState() };
 
 /**
  * Yearly target state (see targets.js).
@@ -315,9 +317,11 @@ hand.onBlocked = () => tutorial.nudge();
 placement.guard = (cells, piece) => tutorial.placeGuard(cells, piece);
 /** Debug tools and shortcuts are off during the tutorial (it has to stay on script). */
 /** True while something owns the screen (dialogue, missiles, shop, payout). */
-const screenBusy = () => eventOpen || striking || shopOpen || payout.active || turn.over;
+const screenBusy = () => eventOpen || striking || shopOpen || blackMarketOpen || payout.active || turn.over;
 /** The War Map stays shut while the screen is busy, and during the tutorial (except on its own trip to the planet). */
-const mapBlocked = () => (screenBusy() && !attackLive) || (tutorial.active && !tutorial.allows('globe'));
+/** Only the payout is running (no screen up): the War Map may open, the season keeps paying out there. */
+const onlyPaying = () => payout.active && !(eventOpen || striking || shopOpen || blackMarketOpen || turn.over || previewing);
+const mapBlocked = () => (screenBusy() && !attackLive && !onlyPaying()) || (tutorial.active && !tutorial.allows('globe'));
 /** Also true off the board, so the hand, the ghost and placement ignore the War Map and rival cities. (Not the
     tutorial: its guard decides which cards it lets through.) */
 const busy = () => screenBusy() || view !== 'board';
@@ -421,7 +425,7 @@ function addTile(x, z, terrain, delay = 0, instant = false, { bare = false, rot 
   const onRuins = old?.terrain === 'ruins' || (old?.onRuins ?? false);
   if (old) removeMesh(old.mesh);
 
-  const mesh = factory.create(terrain, { bare, rot });
+  const mesh = factory.create(terrain, { bare, rot, seed: cellSeed(x, z) });
   mesh.userData.rot = rot; // kept for the stand-in -> model swap (factory.upgrade)
   const w = hexToWorld(x, z);
   mesh.position.set(w.x, 0, w.z);
@@ -458,15 +462,15 @@ function removeMesh(mesh) {
 
 // ---------- Wasteland pieces ----------
 /**
- * A Wasteland piece lands as one model spanning all its cells (one model per piece shape, turned with the piece).
+ * A Wasteland piece lands as one group spanning all its cells (a look per cell, see factory.createPiece).
  * Every cell still gets its own (empty) holder, so the board rules work per cell as before. Each holder points
  * at the piece record: { shape, rot, cells: keys, lead: key of the first cell in reading order, group, broken }.
  * Before the piece models have loaded, the cells get coloured blocks and adoptWastePieces upgrades them later.
  */
 function addWastePiece(piece, cells) {
   const [lx, lz] = [...cells].sort((a, b) => a[1] - b[1] || a[0] - b[0])[0];
-  const rec = { shape: piece.shape, rot: piece.rot, cells: cells.map(([x, z]) => plotKey(x, z)), lead: plotKey(lx, lz), group: null, broken: false };
-  const group = factory.createPiece(piece.shape, piece.rot);
+  const rec = { shape: piece.shape, rot: piece.rot, seed: piece.id, cells: cells.map(([x, z]) => plotKey(x, z)), lead: plotKey(lx, lz), group: null, broken: false };
+  const group = factory.createPiece(piece.shape, piece.rot, piece.id);
   cells.forEach(([x, z], i) => {
     addTile(x, z, piece.terrain, i * 0.05, Boolean(group), { bare: Boolean(group) });
     grid.get(x, z).mesh.userData.piece = rec;
@@ -477,10 +481,8 @@ function addWastePiece(piece, cells) {
 /** Put a piece's model over its cells; `drop` makes it stomp in like a placed tile, with dust under every cell. */
 function placeWasteGroup(rec, group, drop) {
   const pts = rec.cells.map((k) => k.split(',').map(Number));
-  const world = pts.map(([x, z]) => hexToWorld(x, z));
-  const xs = world.map((w) => w.x);
-  const zs = world.map((w) => w.z);
-  group.position.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...zs) + Math.max(...zs)) / 2);
+  const mid = cellsCentre(pts);
+  group.position.set(mid.x, 0, mid.z);
   rec.group = group;
   tiles.add(group);
   if (drop) {
@@ -489,7 +491,10 @@ function placeWasteGroup(rec, group, drop) {
   }
 }
 
-/** A cell of the piece was removed or replaced: the whole-piece model goes, the cells left become single Wasteland. */
+/**
+ * A cell of the piece was removed or replaced: the whole-piece model goes, and each cell left shows its own part of
+ * it, just where it was (so the rest of the piece looks the same).
+ */
 function breakWastePiece(rec, removed) {
   rec.broken = true;
   if (rec.group) {
@@ -500,9 +505,16 @@ function breakWastePiece(rec, removed) {
   for (const k of rec.cells) {
     const c = grid.cells.get(k);
     if (!c || c.mesh === removed || c.mesh.userData.piece !== rec) continue;
-    if (rec.group) factory.fillWaste(c.mesh, c.terrain); // (without a model the cells already show blocks)
+    if (rec.group) fillLeftover(c, rec); // (without a model the cells already show blocks)
     c.mesh.visible = true;
   }
+}
+
+/** A cell left of a broken Wasteland piece: its part of the piece's model (factory.fillWastePart). */
+function fillLeftover(c, rec) {
+  const mid = cellsCentre(rec.cells.map((k) => k.split(',').map(Number)));
+  const w = hexToWorld(c.x, c.z);
+  factory.fillWastePart(c.mesh, c.terrain, rec, [w.x - mid.x, w.z - mid.z], cellSeed(c.x, c.z));
 }
 
 /** The mesh that hops for a cell in the payout: a whole Wasteland piece hops once, on its first cell. */
@@ -521,18 +533,21 @@ function adoptWastePieces() {
     if (rec && !rec.broken) {
       if (rec.group || done.has(rec)) continue;
       done.add(rec);
-      const group = factory.createPiece(rec.shape, rec.rot);
+      const group = factory.createPiece(rec.shape, rec.rot, rec.seed);
       if (!group) {
-        // No whole-piece model for this shape (hex pieces, until they're modelled): each cell gets the single one.
+        // No whole-piece model for this shape: each cell gets a lone cell's look.
         for (const k of rec.cells) {
           const c = grid.cells.get(k);
-          if (c && !c.mesh.userData.blockout) factory.fillWaste(c.mesh, c.terrain);
+          if (c && !c.mesh.userData.blockout) factory.fillWaste(c.mesh, c.terrain, cellSeed(c.x, c.z));
         }
         continue;
       }
       for (const k of rec.cells) grid.cells.get(k)?.mesh.clear();
       placeWasteGroup(rec, group, false);
-    } else if (!cell.mesh.userData.blockout) factory.fillWaste(cell.mesh, cell.terrain);
+    } else if (!cell.mesh.userData.blockout) {
+      if (rec) fillLeftover(cell, rec); // broken before the models came: its part of the piece all the same
+      else factory.fillWaste(cell.mesh, cell.terrain, cellSeed(cell.x, cell.z));
+    }
   }
   if (hand.piece) placement.setPiece(hand.piece);
 }
@@ -561,6 +576,10 @@ function nukeRandomTile(quiet = false) {
 let runId = 0;
 /** True while the strike cinematic plays (camera locked, game keys ignored). */
 let striking = false;
+/** Black Market: open from the click until the Smuggler has left (dialogue and stall). Stock: [[key, price, sold]]. */
+let blackMarketOpen = false;
+let bmStock = { military: [], resource: [] }; // each aisle: [[key, price, sold]]
+let bmCategory = null; // null: choosing an aisle
 /** True while the attack phase's missiles are in the air: you can look around (board, War Map, rivals) but not play. */
 let attackLive = false;
 const wait = (s) => new Promise((r) => setTimeout(r, s * 1000));
@@ -886,28 +905,40 @@ function followCamera(pos, distance, rate) {
 }
 
 /**
- * A missile launches from the ground at `spot` and hits `target` (Show of Force's ruins, and an
- * Unexploded Missile). Resolves with the names of the tiles lost, or null if the run was reset meanwhile.
+ * A missile launches from the ground at `spot` and hits `target` (Show of Force's ruins, and the old Missile
+ * Magazine of a "?" site). silo: a Missile Magazine cell on the spot, which opens and fires it (otherwise the
+ * missile stands upright on the spot). Resolves with the names of the tiles lost, or null if the run was reset meanwhile.
  */
-async function groundStrike(spot, target, lostText = (l) => L(`The silo's missile destroyed your ${l}`, `发射井的导弹摧毁了你的${l}`)) {
+async function groundStrike(spot, target, lostText = (l) => L(`The silo's missile destroyed your ${l}`, `发射井的导弹摧毁了你的${l}`), silo = null) {
   const run = runId;
   eventOpen = true; // locked from the moment it is called, through the lead-in
   hand.select(-1);
   await wait(0.3);
   if (run !== runId) return null;
-  // The missile stands upright on the spot; the camera closes in, it shakes, then launches and is followed.
-  const at = hexToWorld(spot.x, spot.z); // missiles.js works in world positions
-  const standing = missiles.showUpright(at.x, at.z);
-  const prelude = async () => {
-    standing.rumble();
-    camShake.add(0.3);
-    await wait(1.2);
-    standing.remove();
-    boom();
-    dust.burst(spot.x, spot.z, 1.6);
-  };
-  const lost = await playMissileStrike([{ ...target, from: spot, flight: 2.6, accel: 1.1 }], { follow: true, prelude });
-  standing.remove();
+  // The camera closes in on the spot; the missile rises (out of the silo, or standing up and shaking), launches and
+  // is followed.
+  const t = { ...target, from: spot, flight: 2.6, accel: 1.1 };
+  let standing = null;
+  let prelude;
+  if (silo) {
+    prelude = async () => {
+      const from = await siloLaunch(silo, 1, (f) => f);
+      if (from) t.from = from; // on from the silo's mouth
+    };
+  } else {
+    const at = hexToWorld(spot.x, spot.z); // missiles.js works in world positions
+    standing = missiles.showUpright(at.x, at.z);
+    prelude = async () => {
+      standing.rumble();
+      camShake.add(0.3);
+      await wait(1.2);
+      standing.remove();
+      boom();
+      dust.burst(spot.x, spot.z, 1.6);
+    };
+  }
+  const lost = await playMissileStrike([t], { follow: true, prelude });
+  standing?.remove();
   if (run !== runId) return null;
   eventOpen = false;
   reportStrike(lost);
@@ -928,29 +959,83 @@ function nearestBuilding(x, z) {
 }
 
 /**
- * A "?" site was an Unexploded Missile: it launches from the site into `target` (default: the nearest
- * building). The site stays empty ground.
+ * A "?" site was an old Missile Magazine with a missile still in it (an Unexploded Missile). The magazine surfaces on
+ * the site and stays there, a working one like one you build; it opens and fires at `target` (default: your nearest
+ * building). With nothing to hit, the missile gets stuck in the silo's mouth and a second later blows up there,
+ * harming nothing.
  */
-function unexplodedMissile(site, target = nearestBuilding(site.x, site.z)) {
+async function unexplodedMissile(site, target = nearestBuilding(site.x, site.z)) {
+  const run = runId;
+  if (target) {
+    eventOpen = true; // locked through the magazine's landing, then the strike
+    hand.select(-1);
+  }
+  addTile(site.x, site.z, 'magazine', 0.1);
   dust.burst(site.x, site.z, 1.4);
   camShake.add(0.6);
-  if (!target) {
-    // A dud: it stands up, wobbles, and falls over.
-    const run = runId;
-    const at = hexToWorld(site.x, site.z); // missiles.js works in world positions
-    const dud = missiles.showUpright(at.x, at.z);
-    toast(L('Uncovered an Unexploded Missile... it fizzled into the sand', '发现一枚未爆导弹……它在沙地里哑火了'), 'good', 2400);
-    setTimeout(() => run === runId && dud.topple(), 900);
-    setTimeout(() => {
-      dud.remove();
-      if (run === runId) dust.burst(site.x, site.z, 1);
-    }, 2600);
-    return;
-  }
-  eventOpen = true;
-  hand.select(-1);
-  toast(L('Uncovered an Unexploded Missile!', '发现一枚未爆导弹！'), 'bad', 2400);
-  groundStrike({ x: site.x, z: site.z }, target, (l) => L(`The unexploded missile destroyed your ${l}`, `未爆导弹摧毁了你的${l}`));
+  frontier.rebuild(grid);
+  placement.cell = null; // force ghost revalidation
+  shadeIdle();
+  updateHUD();
+  toast(
+    target
+      ? L('Uncovered an old Missile Magazine, and its missile launched!', '发现一座旧储弹仓，里面的导弹发射了！')
+      : L('Uncovered an old Missile Magazine... its missile blew up in the silo', '发现一座旧储弹仓……里面的导弹在发射井里炸了'),
+    target ? 'bad' : 'good',
+    2400,
+  );
+  await wait(0.9); // it lands
+  if (run !== runId) return;
+  const cell = grid.get(site.x, site.z);
+  // (its model may not have loaded yet: the missile then stands on the site as before)
+  const silo = cell?.terrain === 'magazine' && !cell.mesh.userData.launching && factory.canCue(cell.mesh, 'Launch') ? cell : null;
+  if (target) {
+    groundStrike({ x: site.x, z: site.z }, target, (l) => L(`The old magazine's missile destroyed your ${l}`, `旧储弹仓的导弹摧毁了你的${l}`), silo);
+  } else if (silo) siloDud(silo);
+  else uprightDud(site);
+}
+
+/** How long a missile with nothing to hit sits in place before it blows up (seconds). */
+const DUD_HOLD = 1;
+
+/** A magazine's missile with nothing to hit: it rises into the silo's mouth, sits there, and blows up in place. */
+function siloDud(cell) {
+  const mesh = cell.mesh;
+  mesh.userData.launching = true;
+  return factory.cue(mesh, 'Launch', {
+    speed: SILO_SPEED,
+    cutAt: SILO_STUCK,
+    hide: SILO_PARTS,
+    hold: DUD_HOLD,
+    cut: () => camShake.add(0.15),
+    onResume: () => {
+      const missile = mesh.getObjectByName(SILO_PARTS[0]);
+      dudBurst(missile ? missile.getWorldPosition(new THREE.Vector3()).add(DUD_MIDDLE) : null, cell);
+    },
+    onEnd: () => (mesh.userData.launching = false),
+  });
+}
+
+/** The same with no magazine model to fire it (not loaded yet): it stands up on the site, shakes, and blows up. */
+function uprightDud(site) {
+  const run = runId;
+  const at = hexToWorld(site.x, site.z); // missiles.js works in world positions
+  const dud = missiles.showUpright(at.x, at.z);
+  dud.rumble();
+  setTimeout(() => {
+    dud.remove();
+    if (run === runId) dudBurst(new THREE.Vector3(at.x, 0.35, at.z), site);
+  }, (0.5 + DUD_HOLD) * 1000); // (it takes half a second to stand up)
+}
+
+const DUD_MIDDLE = new THREE.Vector3(0, 0.15, 0); // from a magazine missile's tail to its middle (world units)
+
+/** A missile blowing up where it is: flash, fire and smoke, a jolt; nothing around it is harmed. */
+function dudBurst(pos, cell) {
+  if (pos) missiles.airBurst(pos, true);
+  boom();
+  camShake.add(0.5);
+  dust.burst(cell.x, cell.z, 1.4);
 }
 
 /** Reveals: real tiles drop in; missiles launch. `delay(i)` staggers the drops. Returns the tiles found. */
@@ -1154,6 +1239,24 @@ function updateRuinButtons() {
 
 const factoryBars = new Map();
 const factoryBarV = new THREE.Vector3();
+/**
+ * The highest points of a tile's model (smoke aside), in its holder's own space: what a label above it has to clear
+ * on screen. A few dozen vertices off the top, so projecting them each frame costs next to nothing.
+ */
+function topPoints(holder) {
+  holder.updateMatrixWorld(true);
+  const toHolder = new THREE.Matrix4().copy(holder.matrixWorld).invert();
+  const pts = [];
+  holder.traverse((o) => {
+    if (!o.isMesh || o.isSkinnedMesh) return;
+    for (let q = o; q && q !== holder; q = q.parent) if (/Smoke|Steam/.test(q.name)) return;
+    const m = new THREE.Matrix4().multiplyMatrices(toHolder, o.matrixWorld);
+    const p = o.geometry.attributes.position;
+    const step = Math.max(1, Math.floor(p.count / 300));
+    for (let i = 0; i < p.count; i += step) pts.push(new THREE.Vector3().fromBufferAttribute(p, i).applyMatrix4(m));
+  });
+  return pts.sort((a, b) => b.y - a.y).slice(0, 48);
+}
 const FACTORY_FILL_MS = 450;
 const FACTORY_HOP = 0.5;
 const factoryFloaters = [];
@@ -1208,8 +1311,13 @@ async function chargeOneFactory(cell) {
     if (run !== runId) return { count: 0 };
     return finishFactoryMissile(cell, idle);
   }
+  // Its oil is paid out of the gauge: a red "-N oil" over the factory, and barrels fly from the gauge into it.
+  // The pip fills as they land.
+  spawnFactoryFloater(cell, `<div class="row neg" style="--c:#ff5a44"><b>-${FACTORY_OIL}</b>${ICONS.oil}</div>`);
+  await flyOilToFactory(cell, FACTORY_OIL);
+  if (run !== runId) return { count: 0 };
   previewFactoryBar(cell.x, cell.z);
-  await wait(FACTORY_FILL_MS / 1000);
+  await wait(FACTORY_FILL_MS / 2000);
   if (run !== runId) return { count: 0 };
   thud();
   const completing = (cell.missileProgress ?? 0) + 1 >= need;
@@ -1233,13 +1341,50 @@ function finishFactoryMissile(cell, idle) {
 }
 
 function spawnMissileFloater(cell, n) {
+  spawnFactoryFloater(cell, `<div class="row" style="--c:#f0c060"><b>+${n}</b></div>`);
+}
+
+function spawnFactoryFloater(cell, html) {
   const layer = $('floaters');
   if (!layer) return;
   const el = document.createElement('div');
   el.className = 'floater';
-  el.innerHTML = `<div class="row" style="--c:#f0c060"><b>+${n}</b></div>`;
+  el.innerHTML = html;
   layer.appendChild(el);
   factoryFloaters.push({ el, x: cell.x, z: cell.z, t: 0 });
+}
+
+/** Barrels fly from the oil gauge down into a factory (board only). Resolves when the last one lands. */
+function flyOilToFactory(cell, oil) {
+  const dur = FACTORY_FILL_MS * 1.6;
+  if (view !== 'board') return wait(dur / 1000);
+  const src = $('quotaBarrels').getBoundingClientRect();
+  const w = hexToWorld(cell.x, cell.z);
+  const v = new THREE.Vector3(w.x, 0.5, w.z).project(camera);
+  const tx = (v.x * 0.5 + 0.5) * window.innerWidth - 13;
+  const ty = (-v.y * 0.5 + 0.5) * window.innerHeight - 13;
+  const n = Math.max(1, Math.min(4, oil));
+  const flights = [];
+  for (let k = 0; k < n; k++) {
+    const el = document.createElement('div');
+    el.className = 'oil-flight';
+    el.innerHTML = ICONS.oil;
+    document.body.appendChild(el);
+    const sx = src.left + src.width * (0.25 + 0.5 * Math.random()) - 13;
+    const sy = src.top + src.height / 2 - 13;
+    const mx = (sx + tx) / 2 + (Math.random() - 0.5) * 80;
+    const my = Math.min(sy, ty) - 40;
+    const anim = el.animate(
+      [
+        { transform: `translate(${sx}px, ${sy}px) scale(0.8)`, opacity: 0 },
+        { transform: `translate(${mx}px, ${my}px) scale(1.1)`, opacity: 1, offset: 0.4 },
+        { transform: `translate(${tx}px, ${ty}px) scale(0.6)`, opacity: 1 },
+      ],
+      { duration: dur, delay: k * 90, easing: 'ease-in', fill: 'both' },
+    );
+    flights.push(anim.finished.then(() => el.remove(), () => el.remove()));
+  }
+  return Promise.all(flights);
 }
 
 function updateFactoryFloaters(dt) {
@@ -1305,10 +1450,18 @@ function updateFactoryBars() {
       rec.el.classList.toggle('snap', filled === 0 && prev === need);
       [...rec.el.children].forEach((pip, i) => pip.classList.toggle('on', i < filled));
     }
-    factoryBarV.set(c.x, 0.15, c.z).project(camera);
+    // Centred over its cell, just above the factory as it shows on screen (the highest of its top points).
+    if (rec.mesh !== c.mesh) {
+      rec.mesh = c.mesh;
+      rec.top = topPoints(c.mesh);
+    }
+    const w = hexToWorld(c.x, c.z);
+    factoryBarV.set(w.x, 0, w.z).project(camera);
     const px = (factoryBarV.x * 0.5 + 0.5) * window.innerWidth;
-    const py = (-factoryBarV.y * 0.5 + 0.5) * window.innerHeight;
-    const tf = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px) translate(-50%, 120%)`;
+    let top = factoryBarV.y;
+    for (const p of rec.top) top = Math.max(top, factoryBarV.copy(p).applyMatrix4(c.mesh.matrixWorld).project(camera).y);
+    const py = (-top * 0.5 + 0.5) * window.innerHeight;
+    const tf = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px) translate(-50%, calc(-100% - 4px))`;
     if (rec.el._tf !== tf) rec.el.style.transform = rec.el._tf = tf;
   }
   for (const [k, rec] of factoryBars) {
@@ -1545,6 +1698,7 @@ function updateHUD() {
     `第 ${turn.round} 年 · ${SEASONS[turn.season]} · ${left ? `${left} 季后缴纳贡品` : '本季缴纳贡品'}`,
   );
   seasonClock.set(turn.season, yearLength() - 1);
+  updateBlackMarketButton();
   const ev = turn.event;
   $('eventLabel').classList.toggle('hidden', !ev);
   if (ev) {
@@ -1631,6 +1785,7 @@ function updateHUD() {
   // Greyed out while Wasteland that still fits must be placed (endTurn refuses then, with a toast).
   const blocking = hand.placeableForced.length;
   $('btnNext').classList.toggle('disabled', blocking > 0);
+  $('btnNext').title = blocking > 0 ? L(`Clear your hand first: ${blocking} Wasteland left to place`, `请先清空手牌：还有 ${blocking} 张荒地要放置`) : '';
   $('btnNextSub').textContent =
     turn.season === yearLength() - 1
       ? L(`collect oil, pay ${quota} tribute`, `采油，缴纳 ${quota} 桶贡品`)
@@ -1828,8 +1983,16 @@ function updateInspect(cell) {
 // ---------- turns ----------
 /** Next turn: tiles hop and flash what they produce, then the turn is settled. */
 function endTurn() {
-  if (view !== 'board') return; // the HUD stays up on the War Map, but turns are played on the board
-  if (turn.over || shopOpen || eventOpen || strikeOpen || warPending) return;
+  // Turns can be ended from the board, the War Map or a rival city: the missiles fly wherever you are, and you
+  // can scroll out (or dive into a city) to follow them while they're in the air.
+  if (switching) return;
+  if (turn.over || shopOpen || blackMarketOpen || eventOpen || strikeOpen || warPending) return;
+  // The season is wrapping up (last barrels, factories, the trip home): a click only hurries it along,
+  // it never starts a second turn on the same season.
+  if (turnRunning && !payout.active) {
+    oilFlights.finish();
+    return;
+  }
   if (payout.active) {
     if (previewing) cancelPreview();
     else {
@@ -1850,18 +2013,32 @@ function endTurn() {
   // Combat first: every city's missiles fly, then the season is scored on what's left standing.
   const run = runId;
   warPending = true;
+  setTurnRunning(true);
   runAttackPhase().then((over) => {
     warPending = false;
-    if (run !== runId || over) return;
+    if (run !== runId) return;
+    if (over) return setTurnRunning(false);
     const e = economyNow();
     runPayout(e, () => finishSeasonFx(e));
   });
 }
 /** True from End Turn until the attack phase has finished (a second press does nothing). */
 let warPending = false;
+/** True from End Turn until the season is settled (new hand dealt, or the shop / a scene has taken over). */
+let turnRunning = false;
+let settledSeason = null; // guard: one settle per season
+function setTurnRunning(on) {
+  turnRunning = on;
+  $('btnNext').classList.toggle('running', on);
+  if (on) $('btnNext').title = L('Season in progress…', '季节结算中…');
+  else updateHUD();
+}
 
 /** Oil has landed: wait out factory fill/hop/bump, then wrap the year. */
 function finishSeasonFx(e) {
+  const key = `${turn.round}:${turn.season}`;
+  if (settledSeason === key) return; // never settle the same season twice
+  settledSeason = key;
   const jobs = factoryJobs.splice(0);
   Promise.all(jobs.length ? jobs : [Promise.resolve([])]).then((factoryWork) => {
     turn.stockpile += e.oil;
@@ -1872,6 +2049,8 @@ function finishSeasonFx(e) {
     showOil(turn.stockpile);
     document.body.classList.remove('paying');
     settleTurn({ ...e, oil: 0, factoryWork: factoryWork.flat().filter(Boolean) });
+    // From here the shop, scenes or the new hand hold the screen themselves.
+    setTurnRunning(false);
   });
 }
 
@@ -1968,7 +2147,19 @@ function runPayout(e, onDone) {
     tiles,
     (tile) => {
       chimeTile(tile);
-      if (tile.oil > 0) {
+      const fromGlobe = tile.oil > 0 && view === 'globe' ? globe.screenOf('player') : null;
+      if (fromGlobe) {
+        // On the War Map: the labels rise above Hive City (payout.anchor) and the gauge fills
+        // on its own (no flying barrels), at the board's pace.
+        shown += tile.oil;
+        showOil(shown, true);
+        barrel(Math.min(1, shown / Math.max(1, turn.quota)));
+      } else if (tile.oil > 0 && view !== 'board') {
+        // In a rival city (or Hive City round the far side of the planet): straight into the gauge.
+        shown += tile.oil;
+        showOil(shown, true);
+        barrel(Math.min(1, shown / Math.max(1, turn.quota)));
+      } else if (tile.oil > 0) {
         // The oil flies up into the gauge; each barrel fills it as it lands.
         const w = hexToWorld(tile.x, tile.z);
         tileV.set(w.x, 0.6, w.z).project(camera);
@@ -1984,7 +2175,11 @@ function runPayout(e, onDone) {
       }
     },
     () => {
-      oilFlights.whenIdle(() => {
+      oilFlights.whenIdle(async () => {
+        // Watched from the War Map (or a rival city): fly back to Hive City for the rest of the season.
+        const run = runId;
+        await backToHive();
+        if (run !== runId) return;
         document.body.classList.remove('paying');
         onDone();
       });
@@ -1992,6 +2187,26 @@ function runPayout(e, onDone) {
   );
 }
 const tileV = new THREE.Vector3();
+
+
+/** Back to the board from the War Map or a rival city (the season's wrap-up needs it). Resolves once there. */
+async function backToHive() {
+  for (let i = 0; i < 80 && (switching || (view === 'globe' && globe.busy)); i++) await wait(0.1);
+  if (view === 'globe') await closeGlobe();
+  else if (view === 'rival') {
+    await swapView(() => {
+      closeRivalHand();
+      rivalView.exit();
+      rivalShown = null;
+      document.body.classList.remove('rival-view');
+      setBoardFraming(true);
+      view = 'board';
+      rig.release();
+      rig.resetOverscroll();
+    });
+  }
+  for (let i = 0; i < 40 && switching; i++) await wait(0.1);
+}
 
 /**
  * A tile triggered twice (next to a Capital) hops twice, each time showing one trigger's output,
@@ -2379,6 +2594,7 @@ function settleTurn(e) {
     if (!final) {
       turn.season = 0;
       turn.round++;
+      tickBlackMarket();
       growRivals();
     }
     turn.coins = 0;
@@ -2409,6 +2625,7 @@ function settleTurn(e) {
 
   turn.season = yearEnds ? 0 : turn.season + 1;
   if (yearEnds) turn.round++;
+  tickBlackMarket();
   growRivals();
   toast(() => msg.map(textOf).join(''), kind, 3200);
   // A new year opens with the shop; the hand is dealt when it closes.
@@ -2721,7 +2938,7 @@ function applyYearEvent(key, ev, choiceIdx) {
       if (!found) return '';
       if (found.terrain === 'missile') {
         later.push(async () => unexplodedMissile(found));
-        return L('The map led you to an Unexploded Missile.', '地图把你引向了一枚未爆导弹。');
+        return L('The map led you to an old Missile Magazine.', '地图把你引向了一座旧储弹仓。');
       }
       addTile(found.x, found.z, found.terrain, 0.25);
       frontier.rebuild(grid);
@@ -3037,6 +3254,239 @@ const PICK_SLOTS = 3;
 let pickResolve = null;
 let pickOptions = [];
 
+// ---------- the Black Market: the Smuggler sells military cards for oil from the stockpile, once a year ----------
+const BM_MARKUP = 2; // oil per barrel of the market price
+const BM_SLOTS = 3;
+const BM_SPEAKER = 'The Smuggler';
+
+/** Seasons until the Smuggler comes back (one full year from a visit). */
+function tickBlackMarket() {
+  if (turn.bmCooldown > 0) turn.bmCooldown--;
+}
+
+$('btnBlackMarket').querySelector('.bm-icon').innerHTML = MAP_ICONS.crate;
+
+function updateBlackMarketButton() {
+  const btn = $('btnBlackMarket');
+  const wait = turn.bmCooldown;
+  btn.classList.toggle('cooling', wait > 0);
+  btn.classList.toggle('ready', wait <= 0);
+  $('bmWait').classList.toggle('hidden', wait <= 0);
+  $('bmWait').textContent = L(`${wait} season${wait === 1 ? '' : 's'}`, `${wait} 季`);
+  btn.title = wait > 0
+    ? L(`Black Market: the Smuggler is back in ${wait} season${wait === 1 ? '' : 's'}`, `黑市：走私贩将在 ${wait} 季后回来`)
+    : L('Black Market: military cards for oil', '黑市：用石油购买军事卡牌');
+}
+
+// First visit: a field report announces the Dune Crawler at the gates, then the Smuggler reports in to the Overseer.
+const BM_ARRIVAL = [
+  () => L('A Dune Crawler has appeared at the city gates. Large, armoured, no markings. It is flying no colours.', '一辆巨型沙丘爬行车出现在城门外。体型庞大，装甲厚重，没有任何标识，也未挂任何旗帜。'),
+  () => L('Its crew requests an audience with the Overseer. The gate guard is holding them at the outer wall.', '车上的人请求面见总督。守门卫兵已将他们拦在外墙。'),
+];
+const BM_INTRO = [
+  () => L('*salutes* Overseer. An honour. Forgive the size of the Crawler. Business has been good.', '*敬礼* 总督。荣幸之至。请原谅这辆爬行车的块头，最近生意不错。'),
+  () => L("They call me the Smuggler. I run cargo across the dunes, the kind the Overlord's convoys don't carry and his ledgers don't list.", '大家叫我走私贩。我在沙丘间跑货，跑的是霸主的车队不运、账本上也不记的那种。'),
+  () => L('Two aisles in the hold. Military: factories, interceptors, warheads, magazines. Everything a city needs to bite back.', '货舱分两排。军事：军工厂、拦截网、弹头、弹药库。一座城反咬一口所需的一切。'),
+  () => L('And Resource: pumps, refineries, oases, labour camps. The things that keep the oil flowing.', '还有资源：油泵、炼油厂、绿洲、劳工营。让石油源源不断的东西。'),
+  () => L("Payment in oil, from your stockpile. And yes, double the Overlord's price. Discretion costs extra.", '用石油付款，直接从你的储备里扣。没错，是霸主价格的两倍。保密可是要另算的。'),
+];
+const BM_ASK_FIRST = () => L('The Crawler makes this run once a year, Overseer. Shall I open the hold?', '这辆爬行车一年只跑一趟，总督。要我打开货舱吗？');
+// Later visits: a one-line report, then a fresh greeting.
+const BM_RETURNS = [
+  () => L('The Dune Crawler is back at the city gates.', '那辆沙丘爬行车又回到了城门外。'),
+  () => L('Dust on the horizon: the Smuggler\'s Crawler is approaching the gates.', '地平线上扬起沙尘：走私贩的爬行车正驶向城门。'),
+  () => L('The gate guard reports a familiar Crawler at the outer wall, asking for the Overseer.', '守门卫兵报告：一辆熟悉的爬行车停在外墙，请求面见总督。'),
+];
+const BM_GREETINGS = [
+  () => L("*salutes* Overseer. The convoy was light this year, but I kept the good stuff for you.", '*敬礼* 总督。今年车队货不多，但好东西我给你留着。'),
+  () => L("Overseer. Quick, before the Overlord's patrol swings round. What do you need?", '总督。快点，霸主的巡逻队要绕回来了。你要什么？'),
+  () => L("Fresh crates, barely scorched. Oil first, questions never.", '新到的货箱，只烧焦了一点。先付油，别多问。'),
+  () => L("Rivals have been buying. If you want to keep up, you'd better buy too.", '你的对手们一直在买。想不落后，最好也买点。'),
+  () => L("The Overlord's men searched my truck twice this season. Found nothing. Want to see why?", '霸主的人这季搜了我的车两次，什么也没找到。想知道为什么吗？'),
+  () => L("Missiles don't build themselves. Well, the factories do. But you need the factories.", '导弹不会自己造出来。好吧，工厂会造。但你得先有工厂。'),
+];
+const BM_FAREWELLS = [
+  () => L("*salutes* A pleasure, Overseer. You never saw the Crawler.", '*敬礼* 合作愉快，总督。您从没见过这辆爬行车。'),
+  () => L("Same time next year. Try to still be standing.", '明年同一时间。尽量别倒下。'),
+  () => L("Keep your head down, and your interceptors up.", '低调做人，拦截网可要立着。'),
+];
+const pickLine = (lines) => lines[Math.floor(Math.random() * lines.length)];
+
+async function openBlackMarket() {
+  if (blackMarketOpen) return;
+  if (turn.bmCooldown > 0) return toast(L(`The Smuggler is gone. Back in ${turn.bmCooldown} season${turn.bmCooldown === 1 ? '' : 's'}.`, `走私贩已离开，${turn.bmCooldown} 季后回来。`), 'bad');
+  if (view !== 'board') return toast(L('Return to Hive City first', '请先返回蜂巢城'));
+  if (screenBusy() || strikeOpen || warPending || previewing) return toast(L('Finish the current screen first', '请先完成当前界面'));
+  if (tutorial.active) return toast(L('Finish the tutorial first', '请先完成教程'));
+  const run = runId;
+  blackMarketOpen = true;
+  hand.select(-1);
+  dialogue.open({ kind: 'choice', kindLabel: () => L('Black Market', '黑市'), title: () => L('A Dune Crawler at the gates', '城门外的沙丘爬行车') });
+  // The field report first (the Dune Crawler at the gates), then the Smuggler himself.
+  for (const line of turn.bmMet ? [pickLine(BM_RETURNS)] : BM_ARRIVAL) {
+    await dialogue.say('Field Report', line);
+    if (run !== runId) return;
+  }
+  if (!turn.bmMet) {
+    for (const line of BM_INTRO) {
+      await dialogue.say(BM_SPEAKER, line);
+      if (run !== runId) return;
+    }
+  }
+  const choice = await dialogue.ask(BM_SPEAKER, turn.bmMet ? pickLine(BM_GREETINGS) : BM_ASK_FIRST, [
+    { text: () => L('Show me the goods.', '让我看看货。') },
+    { text: () => L('Not today.', '今天不用了。') },
+  ]);
+  if (run !== runId) return;
+  turn.bmMet = true;
+  if (choice !== 0) {
+    await dialogue.say(BM_SPEAKER, () => L("As you wish, Overseer. The Crawler stays at the gates a while... for now.", '遵命，总督。爬行车会在城门外再停一阵……暂时。'));
+    if (run !== runId) return;
+    await dialogue.leave();
+    blackMarketOpen = false; // no sale, no cooldown
+    return;
+  }
+  await dialogue.leave();
+  if (run !== runId) return;
+  // The visit counts: the Smuggler won't be back for a year, bought or not.
+  turn.bmCooldown = yearLength();
+  updateBlackMarketButton();
+  // Both aisles are stocked once per visit: browsing back and forth never rerolls them.
+  const roll = (set) =>
+    SHOP_ITEMS.filter(([k]) => set.has(k) && shopReady(k, turn.unlocked))
+      .sort(() => Math.random() - 0.5)
+      .slice(0, BM_SLOTS)
+      .map(([k, price]) => [k, price * BM_MARKUP, false]);
+  bmStock = { military: roll(BLACK_MARKET), resource: roll(BLACK_MARKET_RESOURCE) };
+  bmCategory = null;
+  renderBlackMarket(true);
+  const el = $('blackMarket');
+  el.classList.remove('hidden', 'opening');
+  void el.offsetWidth;
+  el.classList.add('opening');
+  document.body.classList.add('shopping');
+}
+
+const BM_AISLES = {
+  military: {
+    icon: () => MAP_ICONS.missile,
+    name: () => L('Military', '军事'),
+    blurb: () => L('Weapons, defences and war production', '武器、防御与军工生产'),
+    list: () => L('Factories · Interceptors · Warheads · Magazines · Militia', '军工厂 · 拦截网 · 弹头 · 弹药库 · 民兵'),
+    hint: () => L('Military cards, paid in oil from your stockpile at double the price. Bought cards go straight into your hand and unlock for good.', '军事卡牌，用储备石油按双倍价格支付。买下的卡牌直接加入手牌，并永久解锁。'),
+    empty: () => L('Nothing in this crate today, Overseer.', '这只箱子今天是空的，总督。'),
+  },
+  resource: {
+    icon: () => ICONS.oil,
+    name: () => L('Resource', '资源'),
+    blurb: () => L('Oil, food, labour and the tools to run them', '石油、粮食、劳力及其配套工具'),
+    list: () => L('Pumps · Refineries · Oases · Labour Camps · Demolition', '油泵 · 炼油厂 · 绿洲 · 劳工营 · 拆除'),
+    hint: () => L('Resource cards, paid in oil from your stockpile at double the price. Bought cards go straight into your hand and unlock for good.', '资源卡牌，用储备石油按双倍价格支付。买下的卡牌直接加入手牌，并永久解锁。'),
+    empty: () => L('Nothing in this crate today, Overseer.', '这只箱子今天是空的，总督。'),
+  },
+};
+
+function renderBlackMarket(animate = false) {
+  $('bmOil').textContent = L(`${turn.stockpile} oil in the stockpile`, `储备石油 ${turn.stockpile}`);
+  $('btnBmBack').classList.toggle('hidden', !bmCategory);
+  if (!bmCategory) {
+    // First the aisle: two crates in the Crawler's hold.
+    $('bmHint').textContent = L('The hold has two aisles. Pick one to see what the Smuggler brought.', '货舱分两排。选一排，看看走私贩带了什么。');
+    $('bmCards').innerHTML = Object.entries(BM_AISLES).map(([id, a], i) => {
+      const left = bmStock[id].filter((it) => !it[2]).length;
+      return `
+        <button class="bm-aisle${animate ? ' deal' : ''}" data-cat="${id}" style="animation-delay:${0.15 + i * 0.1}s">
+          <span class="bm-aisle-icon">${a.icon()}</span>
+          <span class="bm-aisle-name">${a.name()}</span>
+          <span class="bm-aisle-blurb">${a.blurb()}</span>
+          <span class="bm-aisle-list">${a.list()}</span>
+          <span class="bm-aisle-count">${L(`${left} offer${left === 1 ? '' : 's'}`, `${left} 件货`)}</span>
+        </button>`;
+    }).join('');
+    return;
+  }
+  const aisle = BM_AISLES[bmCategory];
+  $('bmHint').textContent = aisle.hint();
+  $('bmCards').innerHTML = bmStock[bmCategory].map(([k, price, sold], i) => {
+    const t = cardDef(k);
+    const can = !sold && turn.stockpile >= price;
+    return `
+      <div class="shop-item">
+        <div class="card${can ? '' : ' cant'}${animate ? ' deal' : ''}" data-k="${k}" data-i="${i}" style="--top:${hex(t.top)};--edge:${hex(t.edge)};animation-delay:${0.15 + i * 0.07}s">
+          <div class="art">${cardArtHTML(k)}</div>
+          ${snapHTML(t)}
+          <div class="name">${t.name}</div>
+          <div class="rule">${cardText(t)}</div>
+        </div>
+        <div class="price">${sold ? L('Sold', '已售') : L(`${price} oil`, `${price} 石油`)}<small>${L(`black market ×${BM_MARKUP}`, `黑市 ×${BM_MARKUP}`)}</small></div>
+        <div class="tag">${unlockTag(k)}</div>
+      </div>`;
+  }).join('') || `<p>${aisle.empty()}</p>`;
+}
+
+$('bmCards').addEventListener('click', (e) => {
+  if (!blackMarketOpen) return;
+  const pick = e.target.closest('.bm-aisle[data-cat]');
+  if (pick) {
+    pick.blur();
+    bmCategory = pick.dataset.cat;
+    tick();
+    renderBlackMarket(true);
+    return;
+  }
+  const card = e.target.closest('.card[data-i]');
+  if (!card || !bmCategory) return;
+  const item = bmStock[bmCategory][Number(card.dataset.i)];
+  const [k, price, sold] = item;
+  if (sold) return;
+  if (turn.stockpile < price) return deny();
+  turn.stockpile -= price;
+  item[2] = true;
+  turn.unlocked.add(k);
+  hand.addPinned(k); // kept through the next deal until played
+  showOil(turn.stockpile, true);
+  coin();
+  renderBlackMarket();
+  updateHUD();
+});
+
+$('btnBmBack').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  bmCategory = null;
+  tick();
+  renderBlackMarket(true);
+});
+
+/** `farewell` false (a reset): close at once, no parting line. */
+async function closeBlackMarket(farewell = true) {
+  const wasOpen = !$('blackMarket').classList.contains('hidden');
+  $('blackMarket').classList.add('hidden');
+  if (!shopOpen) document.body.classList.remove('shopping');
+  if (!farewell) {
+    blackMarketOpen = false;
+    return;
+  }
+  if (!wasOpen) return;
+  const run = runId;
+  dialogue.open();
+  await dialogue.say(BM_SPEAKER, pickLine(BM_FAREWELLS));
+  if (run !== runId) return;
+  await dialogue.leave();
+  blackMarketOpen = false;
+  updateHUD();
+}
+
+$('btnBlackMarket').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  openBlackMarket();
+});
+$('btnBmLeave').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  closeBlackMarket();
+});
+onLangChange(() => blackMarketOpen && !$('blackMarket').classList.contains('hidden') && renderBlackMarket());
+
+
 /** Show 3 random market tiles; the clicked one is unlocked and put in the next hand for free. */
 function openCardPick() {
   pickOptions = SHOP_ITEMS.filter(([k]) => !BASIC_SHOP.has(k) && shopReady(k, turn.unlocked)).sort(() => Math.random() - 0.5).slice(0, PICK_SLOTS);
@@ -3323,6 +3773,37 @@ function tryPlace() {
   if (economyNow().idle > idleBefore)
     toast(L('No free workers: this building sits idle until you add housing', '没有空闲人力：这座建筑将一直闲置，直到你建造更多住房'), 'bad', 2400);
   tutorial.notify('placed', cells);
+  if (piece.terrain === 'milfactory' && !turn.seenMilFactory && !tutorial.active) {
+    turn.seenMilFactory = true;
+    playMilFactoryScene();
+  }
+}
+
+/** The first Military Factory goes up: the Overlord takes notice, and dangles a promotion. Once per run. */
+async function playMilFactoryScene() {
+  const run = runId;
+  await wait(0.9); // let the building land first
+  if (run !== runId) return;
+  const prevEvent = eventOpen;
+  eventOpen = true;
+  hand.select(-1);
+  const rivalCount = rivals.filter((r) => r.alive !== false).length;
+  dialogue.open({ kind: 'fortune', kindLabel: () => L('Field Report', '前线报告'), title: () => L('The first Military Factory', '第一座军工厂') });
+  const lines = [
+    ['Field Report', () => L('The Military Factory is running, Overseer. Its first missile will be ready in a year.', '军工厂已经投产，总督。第一枚导弹将在一年后造好。')],
+    ['The Overlord', () => L('A missile factory. So my Overseer has grown teeth.', '一座导弹工厂。看来我的总督长出獠牙了。')],
+    ['The Overlord', () => L(`Look at the War Map. ${rivalCount} cities squat on my sands, pumping oil that should be mine.`, `看看战争地图。${rivalCount} 座城市盘踞在我的沙漠上，抽着本该属于我的石油。`)],
+    ['The Overlord', () => L('Wipe them off it, every last one, and I may find you something grander than a Hive City to run.', '把它们从地图上抹掉，一座不留，我或许会给你一个比蜂巢城更宏伟的位置。')],
+    ['The Overlord', () => L('Call it a promotion. Just never forget whose oil pays for those missiles.', '就当是一次晋升吧。只是永远别忘了，这些导弹是用谁的石油造的。')],
+  ];
+  for (const [who, line] of lines) {
+    await dialogue.say(who, line);
+    if (run !== runId) return;
+  }
+  await dialogue.leave();
+  if (run !== runId) return;
+  eventOpen = prevEvent;
+  updateHUD();
 }
 
 /**
@@ -3363,7 +3844,9 @@ function launchSilo(aim) {
 // The magazine's Launch clip (seconds): the petals are open by SILO_RELOAD; the missile reaches the silo's mouth at
 // SILO_CUT, and the flight takes over from there (the model's own missile and flame vanish; its launch smoke plays
 // on, and the petals close). A magazine firing several jumps back from SILO_AGAIN to SILO_RELOAD: the next one rises.
+// A missile that won't launch (nothing to hit) stops at SILO_STUCK: risen into the mouth, before its flame lights.
 const SILO_CUT = 3;
+const SILO_STUCK = 2.5;
 const SILO_AGAIN = 3.6;
 const SILO_RELOAD = 1.5;
 const SILO_SPEED = 1.6;
@@ -3431,14 +3914,7 @@ async function launchSalvo(count) {
     .slice(0, count);
   if (!count || !silos.length) return;
   const run = runId;
-  document.body.classList.add('striking'); // the UI slides away, as for a strike
-  const mid = new THREE.Vector3();
-  const spots = silos.map((c) => hexToWorld(c.x, c.z));
-  for (const w of spots) mid.x += w.x / spots.length, mid.z += w.z / spots.length;
-  const spread = Math.max(...spots.map((w) => Math.hypot(w.x - mid.x, w.z - mid.z)));
-  followCamera(mid.setY(1.2), SALVO_CLOSE + spread * 2.2, 3);
-  await wait(0.5);
-  if (run !== runId) return;
+  // No camera move, no UI change: the magazines fire wherever you're looking, while the countdown runs.
   camera.getWorldDirection(camDir);
   camDir.y = 0;
   camDir.normalize();
@@ -3549,7 +4025,7 @@ function showPlacementCost(piece, cells) {
   const rows = [];
   if (workers) rows.push(`<div class="row neg"><b>-${workers}</b>${ICONS.manpower}</div>`);
   if (food) rows.push(`<div class="row neg"><b>-${food}</b>${ICONS.food}<span>${L('/ season', '/ 季')}</span></div>`);
-  if (oil && piece.terrain === 'milfactory') rows.push(`<div class="row neg"><b>-${oil}</b>${ICONS.oil}<span>${L('/ season', '/ 季')}</span></div>`);
+  if (oil && piece.terrain === 'milfactory') rows.push(`<div class="row neg" style="--c:#ff5a44"><b>-${oil}</b>${ICONS.oil}<span>${L('/ season', '/ 季')}</span></div>`);
   if (!rows.length) return;
   const world = cells.map(([x, z]) => hexToWorld(x, z));
   const cx = world.reduce((s, w) => s + w.x, 0) / cells.length;
@@ -3896,10 +4372,10 @@ function playOutgoingRival(r, cells, kind = 'missile') {
 }
 
 /** Our missile into the rival city on screen: their interceptors' flak meets it (or misses) on the way down. */
-function playRivalStrike(r, rec) {
+function playRivalStrike(r, rec, flight = missileCfg.followFlight) {
   rivalMissiles ??= new MissileStrike(rivalView.scene, camera, missileCfg);
   const w = hexToWorld(rec.at[0], rec.at[1]);
-  const t = { x: w.x, z: w.z, rec, shots: rec.shots, flight: missileCfg.followFlight, fired: 0 };
+  const t = { x: w.x, z: w.z, rec, shots: rec.shots, flight, fired: 0 };
   return rivalMissiles.fire([t], {
     onMove: (_pos, tt, u) => {
       while (tt.fired < tt.shots.length && u >= CIWS_START + CIWS_GAP * tt.fired) {
@@ -3920,8 +4396,40 @@ function playRivalStrike(r, rec) {
 }
 
 /** A flight's countdown ran out: play it in the city on screen, or settle it quietly if that city isn't shown. */
+const played = new Set(); // strikes already playing in a city view (started at approach)
+/** A flight is a missile's flight time from landing: if its city is on screen, the missile sets off now. */
+function approach(rec, flight = missileCfg.followFlight) {
+  if (rec.fizzled || played.has(rec)) return;
+  if (rec.to === 'player' && view === 'board') {
+    played.add(rec);
+    landing.push(
+      playMissileStrike([{ x: rec.at[0], z: rec.at[1], rec, shots: rec.shots, flight, mustStop: !rec.hit && rec.shots.some((q) => q.success) }], {
+        free: true,
+        onCover: (_cell, t) => {
+          for (const c of t?.rec?.lost ?? []) craterAt(c.x, c.z);
+        },
+      }),
+    );
+    return;
+  }
+  const r = rivals.find((x) => x.id === rec.to);
+  if (r && view === 'rival' && rivalShown === r) {
+    played.add(rec);
+    landing.push(playRivalStrike(r, rec, flight));
+  }
+}
+
+/**
+ * Just arrived in a city mid attack phase (scrolled in from the planet): any missile already on its final
+ * approach to it comes in now, timed to land when its countdown runs out, so it never lands unseen or late.
+ */
+function joinFlights() {
+  if (!attackLive) return;
+  for (const f of globe.inFlight()) if (f.approached) approach(f.s, Math.max(0.6, f.eta));
+}
+
 function arrive(rec) {
-  if (rec.fizzled) return;
+  if (rec.fizzled || played.has(rec)) return;
   if (rec.to === 'player') {
     if (view === 'board') {
       landing.push(
@@ -3945,7 +4453,7 @@ function arrive(rec) {
   }
   const r = rivals.find((x) => x.id === rec.to);
   if (!r) return;
-  if (view === 'rival' && rivalShown === r && rec.from === 'player' && !rec.vis) landing.push(playRivalStrike(r, rec));
+  if (view === 'rival' && rivalShown === r && !rec.vis) landing.push(playRivalStrike(r, rec));
   else craterRival(r, rec);
 }
 
@@ -4019,9 +4527,16 @@ async function runAttackPhase() {
   attackLive = true;
   hand.select(-1);
   landing = [];
+  played.clear();
   warTimer.classList.remove('hidden');
-  announceIncoming(theirs);
-  await globe.playAttack(res);
+  const phase = globe.playAttack(res, rivals);
+  // Everyone fires at once: on Hive City your magazines open and the salvo climbs away as the countdown starts.
+  if (view === 'board' && mine.length) launchSalvo(mine.length);
+  // The first time missiles fly each way, the Field Report briefs you with everything frozen in the air.
+  const briefed = await briefAttack(mine, theirs);
+  if (run !== runId) return true;
+  if (!briefed.incoming) announceIncoming(theirs);
+  await phase;
   await Promise.all(landing);
   attackLive = false;
   warTimer.classList.add('hidden');
@@ -4057,6 +4572,51 @@ async function runAttackPhase() {
 }
 
 /** Incoming! A banner naming who is firing at Hive City, before the missiles fly. */
+async function briefAttack(mine, theirs) {
+  const at = theirs.filter((x) => x.to === 'player');
+  const launch = mine.length > 0 && !turn.seenLaunch;
+  const incoming = at.length > 0 && !turn.seenIncoming;
+  if (!launch && !incoming) return { launch, incoming };
+  const run = runId;
+  const etaTo = (pred) => Math.ceil(Math.min(...globe.arrivals().filter(pred).map((f) => f.eta), 99));
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  globe.pauseAttack(true);
+  const lines = [];
+  if (launch) {
+    turn.seenLaunch = true;
+    const targets = [...new Set(mine.map((s) => s.to))].map(cityName).join(L(', ', '、'));
+    const eta = etaTo((f) => f.from === 'player');
+    lines.push(
+      () => L(`Missiles away, Overseer. ${plural(mine.length, 'warhead')} on course for ${targets}.`, `导弹已发射，总督。${mine.length} 枚弹头正飞向${targets}。`),
+      () => L(`Time to impact: about ${eta} seconds. Their Intercept Networks may bring some down before they land.`, `预计 ${eta} 秒后命中。对方的拦截网可能会在落地前击落其中一部分。`),
+      () => L('Zoom out to the War Map and dive into their city if you want to watch them hit.', '缩放到战争地图，再进入对方城市，就能亲眼看着它们落下。'),
+    );
+  }
+  if (incoming) {
+    turn.seenIncoming = true;
+    const from = [...new Set(at.map((x) => x.from))].map(cityName).join(L(', ', '、'));
+    const eta = etaTo((f) => f.to === 'player');
+    const nets = [...grid.cells.values()].some((c) => c.terrain === 'intercept');
+    lines.push(
+      () => L(`Overseer! Radar has picked up launches. ${from} has fired ${plural(at.length, 'missile')} at Hive City.`, `总督！雷达侦测到导弹发射。${from}向蜂巢城发射了 ${at.length} 枚导弹。`),
+      () => L(`First impact in about ${eta} seconds. The countdown at the top shows when they land.`, `约 ${eta} 秒后首枚命中。顶部的倒计时会显示它们何时落地。`),
+      nets
+        ? () => L('Our Intercept Networks will fire on anything that comes near them, as long as we have the oil to spend.', '只要石油够用，我们的拦截网会向靠近的导弹开火。')
+        : () => L('We have no Intercept Networks, Overseer. Whatever they fired will get through.', '我们没有拦截网，总督。他们打来的每一枚都会命中。'),
+      () => L('Stay with the city to watch them come in, or take cover on the War Map. Your call.', '留在城里看着它们落下，或者退到战争地图上。由您决定。'),
+    );
+    buzz();
+  }
+  dialogue.open({ kind: 'pressure', kindLabel: () => L('Field Report', '前线报告'), title: () => (incoming ? L('Incoming missiles', '导弹来袭') : L('First strike', '首次打击')) });
+  for (const line of lines) {
+    await dialogue.say('Field Report', line);
+    if (run !== runId) return { launch, incoming };
+  }
+  await dialogue.leave();
+  globe.pauseAttack(false);
+  return { launch, incoming };
+}
+
 async function announceIncoming(strikes) {
   const at = strikes.filter((x) => x.to === 'player');
   if (!at.length) return;
@@ -4181,6 +4741,7 @@ function closeGlobe() {
     rig.distance = rig.maxDistance;
     rig.resetOverscroll();
     rig.goalDistance = Math.min(boardReturnDistance ?? rig.maxDistance, rig.maxDistance * 0.5);
+    joinFlights();
   });
 }
 
@@ -4202,6 +4763,7 @@ function enterRival(id) {
     view = 'rival';
     rig.release();
     rig.resetOverscroll();
+    joinFlights();
   });
 }
 
@@ -4211,7 +4773,7 @@ function leaveRival() {
 
 /** From the globe, the Esc / G way home: fly onto Hive City first. */
 function globeHome() {
-  if (view === 'globe' && !switching && !globe.busy) globe.visit('player');
+  if (view === 'globe' && !switching && !globe.flying) globe.visit('player'); // also mid attack phase
 }
 
 globe = createGlobeView({
@@ -4226,6 +4788,8 @@ globe = createGlobeView({
   },
   freeDuringWar: true, // look around (board, planet, rival cities) while the missiles are in the air
   onArrive: (s) => arrive(s),
+  onApproach: (s) => approach(s),
+  approachLead: () => missileCfg.followFlight,
 });
 rig.onZoomPastMax = () => {
   if (view === 'board' || view === 'rival') openGlobe();
@@ -4267,7 +4831,10 @@ window.addEventListener('keydown', (e) => {
     globeHome();
     return;
   }
-  if (view !== 'board') return;
+  if (view !== 'board') {
+    if (k === 'enter') endTurn(); // end the turn / skip the payout from the War Map too
+    return;
+  }
   if (dev && k === '`') {
     debug.toggle();
     return;
@@ -4420,6 +4987,8 @@ function resetIsland(opts) {
   if (strikeOpen) closeStrikeScreen();
   resetMissiles(); // and any aimed strikes
   warPending = false;
+  setTurnRunning(false);
+  settledSeason = null;
   attackLive = false;
   landing = [];
   for (const h of factoryHops) {
@@ -4454,12 +5023,18 @@ function resetIsland(opts) {
     unlocked: new Set(),
     seenRebels: false, // first-contact scenes, once per run
     seenBandits: false,
+    seenMilFactory: false,
+    seenLaunch: false, // first-strike Field Report briefings, once per run
+    seenIncoming: false,
     pinned: [],
     coins: 0,
     shopMult: 1,
+    bmCooldown: 0,
+    bmMet: false,
     ...freshTargetState(),
   });
   shopOpen = false;
+  closeBlackMarket(false);
   eventOpen = false;
   pendingScenes.length = 0;
   closeCardPick(false);
@@ -4730,6 +5305,13 @@ function frame(now) {
   }
   rivalMissiles?.update(dt);
   updateWarTimer();
+  if (view !== 'board') {
+    // The payout keeps paying out wherever you're looking (on the board it runs after the render, below).
+    payout.update(dt);
+    updateFactoryHops(dt);
+    updateFactoryFloaters(dt);
+    oilFlights.update(dt);
+  }
   if (view === 'globe') {
     perf.end('camera');
     perf.begin('render (cpu)');
@@ -4974,10 +5556,10 @@ factory.ready.then(() => {
   });
 });
 
-// The Wasteland piece models (about 330 MB) load after the buildings, while the intro plays.
+// The Wasteland piece models load after the core buildings, while the intro plays (by shape: a list per shape).
 factory.piecesReady.then(async (pieces) => {
   if (!pieces) return;
-  await warmUpModelsGradually(pieces);
+  await warmUpModelsGradually(new Map([...pieces.values()].flat().map((root, i) => [i, root])));
   adoptWastePieces();
   rivalView.refresh(true); // a rival city on screen swaps its blocks for the piece models too
 });

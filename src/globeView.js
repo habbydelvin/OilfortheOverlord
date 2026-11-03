@@ -335,7 +335,7 @@ export function clearGlobeConfig() {
 }
 
 /** freeDuringWar: cities can still be visited mid attack phase (the playback keeps running: call tickWar). */
-export function createGlobeView({ renderer, root, factory, playerBuildings, playerHp = () => 5, onVisit, onDive = () => {}, freeDuringWar = false, onArrive = null }) {
+export function createGlobeView({ renderer, root, factory, playerBuildings, playerHp = () => 5, onVisit, onDive = () => {}, freeDuringWar = false, onArrive = null, onApproach = null, approachLead = () => 0 }) {
   const dom = renderer.domElement;
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(BG);
@@ -942,6 +942,31 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     return pts;
   }
 
+  /** What the attack playback has shown landing on each city so far (id -> { hp, dead }), until the phase ends. */
+  const warShown = new Map();
+  function applyShown(n) {
+    const seen = warShown.get(n.id);
+    if (!seen) return;
+    if (seen.hp !== undefined) n.hpShown = seen.hp;
+    if (seen.dead && !n.deadShown) {
+      n.deadShown = true;
+      n.group.clear();
+      n.group.add(factory.create('crater'));
+    }
+  }
+
+  /** Where every city sits on the planet ({ id, p, color }), without building anything (works with the planet shut). */
+  function layout(list = rivals) {
+    const defs = [{ id: 'player', map: PLAYER_NODE, color: PLAYER_NODE.color }, ...list.map((r) => ({ id: r.id, map: r.def.map, color: r.def.color }))];
+    const spots = spreadOut(defs.map((def) => new THREE.Vector2(((def.map.x - 50) / 100) * GLOBE.spread, ((def.map.y - 50) / 100) * GLOBE.spread)));
+    const taken = new Set();
+    return defs.map((def, i) => {
+      const cell = nearestCell(spots[i].x, spots[i].y, taken);
+      taken.add(cell);
+      return { id: def.id, p: cells[cell].p.clone(), color: new THREE.Color(def.color) };
+    });
+  }
+
   function buildNodes() {
     clearNodes();
     const defs = [
@@ -968,6 +993,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       el.style.setProperty('--node', def.color);
       labelsEl.appendChild(el);
       nodes.push({ id: def.id, color, cell, p, group, lift: 0, el, rival: def.rival });
+      applyShown(nodes.at(-1));
     }
     tiles.instanceColor.needsUpdate = true;
     // City positions, so the terrain stays level under them.
@@ -1329,6 +1355,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     camera.lookAt(0, 0, 0);
     camera.updateMatrixWorld();
     updateWar(dt);
+    updateOil(dt);
     updateQueued();
     updateSky(dt); // after the scroll for this frame, so the moon turns with the drag
 
@@ -1448,6 +1475,66 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
   const P = new THREE.Vector3();
   const Q = new THREE.Vector2();
 
+  // ---------- the season's oil, gushing out of Hive City while the payout runs (pulseOil) ----------
+  // Particles live in plane coordinates (x, y, height) so they ride the planet's bend as it turns.
+  const oilRoot = new THREE.Group();
+  scene.add(oilRoot);
+  const oilBits = [];
+  const OIL_COLORS = [0xffb347, 0xe8902a, 0xffd27a, 0x8a4a14];
+  function pulseOil(amount = 1) {
+    if (!active) return; // nothing piles up while the planet is off screen
+    const home = nodes.find((n) => n.id === 'player');
+    if (!home) return;
+    const count = Math.min(40, 6 + Math.round(amount * 3));
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 0.25 + Math.random() * 0.7;
+      const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: glowTex, color: OIL_COLORS[i % OIL_COLORS.length], blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false }),
+      );
+      oilRoot.add(sprite);
+      oilBits.push({ sprite, px: home.p.x, py: home.p.y, h: 0.15, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, vh: 2.6 + Math.random() * 2.4, age: -Math.random() * 0.35, life: 1.4 + Math.random() * 0.9, size: 0.35 + Math.random() * 0.4 });
+    }
+    // A gold ring pulsing out from the city.
+    const ring = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffc860, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false }));
+    oilRoot.add(ring);
+    oilBits.push({ sprite: ring, px: home.p.x, py: home.p.y, h: 0.2, vx: 0, vy: 0, vh: 0, age: 0, life: 0.9, size: 1.1, ring: Math.min(3, 1.4 + amount * 0.2) });
+  }
+  function updateOil(dt) {
+    for (let i = oilBits.length - 1; i >= 0; i--) {
+      const b = oilBits[i];
+      b.age += dt;
+      if (b.age < 0) {
+        b.sprite.visible = false;
+        continue;
+      }
+      const k = b.age / b.life;
+      if (k >= 1) {
+        oilRoot.remove(b.sprite);
+        b.sprite.material.dispose();
+        oilBits.splice(i, 1);
+        continue;
+      }
+      b.sprite.visible = true;
+      b.px += b.vx * dt;
+      b.py += b.vy * dt;
+      b.h += b.vh * dt;
+      b.vh -= 3.2 * dt; // a fountain: up, then falling back
+      b.h = Math.max(0.05, b.h);
+      bend.project(b.px, b.py, b.h, b.sprite.position);
+      const s = b.ring ? b.size * (1 + k * b.ring) : b.size * (1 - 0.5 * k);
+      b.sprite.scale.setScalar(s);
+      b.sprite.material.opacity = (b.ring ? 0.8 : 1) * (1 - k) * Math.min(1, b.age * 10);
+    }
+  }
+  function clearOil() {
+    for (const b of oilBits) {
+      oilRoot.remove(b.sprite);
+      b.sprite.material.dispose();
+    }
+    oilBits.length = 0;
+  }
+
   /** Plane point + height along a strike's arc at u (0 launch, 1 impact). */
   function arcPoint(it, u, out) {
     const h = it.H * Math.sin(Math.PI * Math.min(1, u)) + 0.15;
@@ -1485,8 +1572,12 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
    * Play an attack phase on the globe. strikes: war.js resolve() output. Resolves when everything has landed.
    * speed: 1 normal; skip() jumps ahead.
    */
-  function playAttack(strikes) {
-    const nodeOf = (id) => nodes.find((n) => n.id === id);
+  function playAttack(strikes, list = null) {
+    // Positions come from the layout, not the built nodes: the phase plays (and its countdowns run) from any view,
+    // even when the planet has never been opened or was left.
+    if (list) rivals = list;
+    const spots = layout();
+    const nodeOf = (id) => spots.find((n) => n.id === id);
     const items = [];
     strikes.forEach((s, i) => {
       const a = nodeOf(s.from);
@@ -1546,11 +1637,16 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
         m.material.dispose();
       }
     }
-    if (!war) return;
+    if (!war || war.paused) return; // held while a briefing is on screen
     war.t += dt * war.speed;
     let live = 0;
     for (const it of war.items) {
       const u = (war.t - it.start) / it.dur;
+      // Close to landing: a city view starts its own missile now so it hits exactly as the countdown reaches 0.
+      if (!it.approached && (it.start + it.dur - war.t) / war.speed <= approachLead()) {
+        it.approached = true;
+        onApproach?.(it.s);
+      }
       // Its countdown ran out: the strike lands on the city now (the city view plays it, shown or not).
       if (!it.arrived && u >= 1) {
         it.arrived = true;
@@ -1620,12 +1716,13 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
         if (s.hit) {
           const ground = bend.project(it.to.p.x, it.to.p.y, 0.15, new THREE.Vector3());
           burst(s.capital !== null ? 0xff3a1a : 0xffa040, s.kind === 'missile2' ? 0.7 : 0.45, 1.1).position.copy(ground);
-          if (s.eliminated) {
-            it.to.group.clear();
-            it.to.group.add(factory.create('crater'));
-            it.to.deadShown = true;
-          }
-          if (s.capital !== null) it.to.hpShown = s.capital;
+          // Remembered by city id: the planet may be left and re-entered mid phase (its nodes are rebuilt).
+          const seen = warShown.get(s.to) ?? {};
+          if (s.eliminated) seen.dead = true;
+          if (s.capital !== null) seen.hp = s.capital;
+          warShown.set(s.to, seen);
+          const node = nodes.find((n) => n.id === s.to);
+          if (node) applyShown(node);
           renderLabels();
         }
       }
@@ -1641,6 +1738,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
         for (const sh of it.shots) if (sh.line) warRoot.remove(sh.line);
       }
       war = null;
+      warShown.clear();
       document.body.classList.remove('war-phase');
       done();
     }
@@ -1678,6 +1776,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     hoverFromLabel = null;
     root.classList.add('hidden');
     dom.style.cursor = '';
+    clearOil();
     clearNodes();
   }
 
@@ -1691,6 +1790,15 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     },
     get busy() {
       return Boolean(anim) || visiting || Boolean(war);
+    },
+    /** The camera is flying (opening pull-back, or a dive into a city): the attack phase alone doesn't count. */
+    get flying() {
+      return Boolean(anim) || visiting || Boolean(dive);
+    },
+    /** The countdown and arc progress of every flight still in the air (for a city view joining mid flight). */
+    inFlight() {
+      if (!war) return [];
+      return war.items.filter((it) => !it.arrived).map((it) => ({ s: it.s, eta: Math.max(0, (it.start + it.dur - war.t) / war.speed), approached: Boolean(it.approached) }));
     },
     playAttack,
     /** Keep the attack playback running while the globe isn't shown (the flights land on time). */
@@ -1707,6 +1815,22 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     },
     setQueued,
     skipAttack,
+    /** The payout pays `amount` oil: it gushes out of Hive City on the planet (only while the planet is shown). */
+    pulseOil,
+    /** Where a city sits on screen ([x, y] px), or null when the planet isn't shown or it's round the far side. */
+    screenOf(id) {
+      if (!active) return null;
+      const n = nodes.find((m) => m.id === id);
+      if (!n) return null;
+      const v = bend.project(n.p.x, n.p.y, 0.3, new THREE.Vector3()).project(camera);
+      if (v.z > 1 || Math.abs(v.x) > 1.1 || Math.abs(v.y) > 1.1) return null;
+      const r = dom.getBoundingClientRect();
+      return [r.left + (v.x * 0.5 + 0.5) * r.width, r.top + (-v.y * 0.5 + 0.5) * r.height];
+    },
+    /** Freeze (or resume) the flights in the air, e.g. while a dialogue plays. */
+    pauseAttack(on) {
+      if (war) war.paused = on;
+    },
     renderLabels: () => renderLabels(),
     scene,
     camera,

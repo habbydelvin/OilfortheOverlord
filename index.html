@@ -103,6 +103,12 @@
         <div class="top-tab"><div class="count" id="quotaCount">0 / 20 barrels</div></div>
         <!-- Its own small plate on the right: the season clock (seasonClock.js). -->
         <div class="top-clock" id="seasonClock"></div>
+        <!-- The Black Market: the Smuggler sells military cards for oil, once a year. -->
+        <button class="top-market" id="btnBlackMarket" title="Black Market" data-zh-title="黑市">
+          <span class="bm-icon"></span>
+          <span class="bm-label" data-zh="黑市">Black Market</span>
+          <span class="bm-wait hidden" id="bmWait"></span>
+        </button>
         <div class="top-events">
           <div id="eventLabel" class="event-label hidden"></div>
           <div id="targetLabel" class="event-label hidden"></div>
@@ -238,6 +244,15 @@
         </div>
         <div class="shop-band"><div id="pickCards"></div></div>
         <div class="shop-foot"></div>
+      </div>
+      <div id="blackMarket" class="hidden">
+        <div class="shop-head">
+          <div class="title" data-zh="走私贩的黑市">The Smuggler's Black Market</div>
+          <div class="coins" id="bmOil"></div>
+          <p id="bmHint"></p>
+        </div>
+        <div class="shop-band"><div id="bmCards"></div></div>
+        <div class="shop-foot"><button id="btnBmBack" class="btn hidden" data-zh="← 返回">← Back</button><button id="btnBmLeave" class="btn gold" data-zh="离开">Leave</button></div>
       </div>
       <div id="globeUI" class="hidden">
         <div class="globe-title">War Map</div>

@@ -79,6 +79,10 @@ const HEX = {
   'Camp03.fbx': 'RaiderCampRed',
   'Camp04.fbx': 'RaiderCampBrown',
   'Camp05.fbx': 'RaiderCampGray',
+  // The sand hexagons (GLB_Sand_hexagon): the FBX still gives the palms' sway and the tar's bubbles.
+  'Oasis.fbx': 'WasteOasis',
+  'TarPit01.fbx': 'WasteTar',
+  'Ruins01.fbx': 'WasteRuins',
 };
 const HEX_YAW = Math.PI / 6;
 /**
@@ -89,7 +93,22 @@ const HEX_YAW = Math.PI / 6;
 const GLB_ONLY = {
   'MilitaryFactory.glb': 'MissileFactory',
   'MissileMagazine.glb': 'MissileMagazine', // two clips: Idle (loops) and Launch (played when a missile is fired)
+  'WasteCamp.glb': 'WasteCamp', // the Raider Hideout
+  'WarheadInstitute.glb': 'WarheadInstitute',
+  'MissileRecipeLab.glb': 'MissileRecipeLab',
+  'InterceptNetwork.glb': 'InterceptNetwork', // Idle (with the gun's sweep) and Fire; the game aims the gun (tiles.js)
 };
+/**
+ * Wasteland pieces: every art/models/hex/WasteHex_<Name>.glb, one model per piece shape. The game matches each to its
+ * piece shape by the cells its ground covers (measured here: pieceCells), not by the file name. They carry no
+ * animation: their worm takes the old single-cell piece's (WORM_FBX, the same rig under another name); the game
+ * replaces that with its own as it loads (animateWorm in src/models.js).
+ */
+const PIECE_FILE = /^WasteHex_\w+\.glb$/;
+for (const f of fs.readdirSync(path.join(SRC, 'hex')).filter((f) => PIECE_FILE.test(f)).sort()) GLB_ONLY[f] = f.replace(/\.glb$/, '');
+const WORM_FBX = { file: 'WasteSingleCity01.fbx', prefix: 'WasteSingle' };
+/** The pieces' hexagons are 12 corner to corner: neighbouring cells' centres are this far apart. */
+const PIECE_CELL = 6 * Math.sqrt(3);
 const OUT_GLB = path.join(ROOT, 'public/models/glb');
 const OUT_TEX = path.join(ROOT, 'public/models/tex');
 const MAX_SIZE = Number(process.env.MAX_SIZE ?? 2048); // the game never shows a texture larger than this
@@ -114,6 +133,25 @@ function stripDust(root) {
   for (const o of empty) {
     removed.add(o.name);
     o.removeFromParent();
+  }
+  return removed;
+}
+
+/** stripDust for a .glb document: the dust parts and the _Dust groups they leave empty. Returns their names. */
+function stripDustGltf(doc) {
+  const removed = new Set();
+  for (const n of doc.getRoot().listNodes()) {
+    if (!DUST_PART.test(n.getName())) continue;
+    const all = [n];
+    for (let i = 0; i < all.length; i++) all.push(...all[i].listChildren());
+    for (const c of all) removed.add(c.getName());
+    for (const c of all.reverse()) c.dispose();
+  }
+  for (const n of doc.getRoot().listNodes()) {
+    if (/_Dust$/.test(n.getName()) && !n.listChildren().length && !n.getMesh()) {
+      removed.add(n.getName());
+      n.dispose();
+    }
   }
   return removed;
 }
@@ -347,7 +385,7 @@ function generatedUvs(node, p, material, fbx, prefix) {
   return out;
 }
 
-function graftAnimation(doc, fbx, clips, prefix, yaw, ships = new Set()) {
+function graftAnimation(doc, fbx, clips, prefix, yaw, ships = new Set(), { relative = false } = {}) {
   const root = doc.getRoot();
   const byName = new Map(root.listNodes().map((n) => [n.getName(), n]));
   const buffer = root.listBuffers()[0];
@@ -394,6 +432,12 @@ function graftAnimation(doc, fbx, clips, prefix, yaw, ships = new Set()) {
     const scl = sample('scale', old.scale);
     const basis = ships.has(node) ? new THREE.Matrix4() : BASIS; // ships: back in the FBX's own axes (shipsToBlenderAxes)
     const keys = times.map((time) => M.compose(P.fromArray(pos(time)), Q.fromArray(rot(time)), S.fromArray(scl(time))).clone().premultiply(W).multiply(basis));
+    // relative (an animation borrowed from another model): the motion as it moves away from its first key, carried
+    // over to where (and how turned and scaled) this .glb's part stands.
+    if (relative) {
+      const R = new THREE.Matrix4().fromArray(node.getWorldMatrix()).multiply(keys[0].clone().invert());
+      for (const K of keys) K.premultiply(R);
+    }
     const here = new THREE.Vector3().setFromMatrixPosition(new THREE.Matrix4().fromArray(node.getWorldMatrix()));
     const offset = here.clone().sub(new THREE.Vector3().setFromMatrixPosition(keys[0]));
     parts.push({ name, node, Pw, times, keys, here, offset, group: name.replace(/_\d+$/, '') });
@@ -463,12 +507,14 @@ async function convertHex(file, src) {
   const fbx = new FBXLoader().parse(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), '');
   await new Promise((r) => setTimeout(r, 0));
   fbx.updateMatrixWorld(true);
-  const clips = fbx.animations.map((c) => movingTracksOnly(c, new Set())).filter((c) => c.tracks.length);
+  const removed = stripDust(fbx);
+  const clips = fbx.animations.map((c) => movingTracksOnly(c, removed)).filter((c) => c.tracks.length);
 
   const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).setVertexLayout(VertexLayout.SEPARATE);
   const doc = await io.read(src);
   const root = doc.getRoot();
   const scene = root.getDefaultScene() ?? root.listScenes()[0];
+  const dust = stripDustGltf(doc);
 
   // Materials -> descriptions in extras; the images go to the shared WebP set.
   const textured = new Set();
@@ -534,16 +580,18 @@ async function convertHex(file, src) {
   const name = file.replace(/\.fbx$/i, '.glb');
   fs.writeFileSync(path.join(OUT_GLB, name), out);
   const note = `hex ${prefix}.glb, gap ${anim.gap.toFixed(3)} ${anim.gapNode ?? ''}, first-key turn ${(anim.turn ?? 0).toFixed(1)}°${generated ? `, ${generated} parts given UVs` : ''}${anim.moved?.length ? `, moved: ${anim.moved.join(', ')}` : ''}${anim.missing.length ? `, ${anim.missing.length} animated parts missing: ${anim.missing.slice(0, 4).join(' ')}` : ''}`;
-  return { name, bytes: out.byteLength, dust: 0, tracks: anim.channels, note };
+  return { name, bytes: out.byteLength, dust: [...dust].filter((n) => DUST_PART.test(n)).length, tracks: anim.channels, note };
 }
 
 /** A .glb-only model (GLB_ONLY): convertHex without the FBX; its own animation, trimmed to the channels that move. */
 async function convertGlbOnly(file) {
   const prefix = GLB_ONLY[file];
+  const piece = PIECE_FILE.test(file);
   const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).setVertexLayout(VertexLayout.SEPARATE);
   const doc = await io.read(path.join(HEX_SRC, file));
   const root = doc.getRoot();
   const scene = root.getDefaultScene() ?? root.listScenes()[0];
+  const dust = stripDustGltf(doc);
 
   const textured = new Set();
   for (const m of root.listMaterials()) {
@@ -616,13 +664,110 @@ async function convertGlbOnly(file) {
     wrap.addChild(n);
   }
   scene.addChild(wrap);
+
+  // A Wasteland piece: the worm's motion from the old single-cell piece, and the cells it covers.
+  let borrowed = '';
+  let cells = null;
+  if (piece) {
+    const buf = fs.readFileSync(path.join(SRC, WORM_FBX.file));
+    const fbx = new FBXLoader().parse(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), '');
+    await new Promise((r) => setTimeout(r, 0));
+    const gone = stripDust(fbx);
+    const rename = (n) => n.replace(new RegExp(`^${WORM_FBX.prefix}_`), `${prefix}_`);
+    fbx.traverse((o) => (o.name = rename(o.name)));
+    fbx.updateMatrixWorld(true);
+    const clips = fbx.animations.map((c) => movingTracksOnly(c, gone)).filter((c) => c.tracks.length);
+    for (const c of clips) for (const t of c.tracks) t.name = rename(t.name);
+    const anim = graftAnimation(doc, fbx, clips, prefix, HEX_YAW, new Set(), { relative: true });
+    channels += anim.channels;
+    borrowed = `, worm from ${WORM_FBX.file} (${anim.channels} channels${anim.missing.length ? `, missing: ${anim.missing.join(' ')}` : ''})`;
+    cells = pieceCells(doc, prefix, file);
+  }
   for (const n of root.listNodes()) n.setExtras({ n: n.getName() });
+  if (cells) wrap.setExtras({ n: wrap.getName(), cells, cell: PIECE_CELL });
 
   await doc.transform(prune({ keepAttributes: true, keepLeaves: true }), dedup(), weld());
   const out = await io.writeBinary(doc);
   fs.writeFileSync(path.join(OUT_GLB, file), out);
-  const note = `glb only, own animation (${still} still channels dropped)${generated ? `, ${generated} parts given UVs` : ''}`;
-  return { name: file, bytes: out.byteLength, dust: 0, tracks: channels, note };
+  const drop = [...dust].filter((n) => DUST_PART.test(n)).length;
+  const note = `glb only, ${piece ? `${cells.length} cells` : `own animation (${still} still channels dropped)`}${borrowed}${generated ? `, ${generated} parts given UVs` : ''}${drop ? `, ${drop} dust parts removed` : ''}`;
+  return { name: file, bytes: out.byteLength, dust: drop, tracks: channels, note };
+}
+
+/**
+ * The cells a Wasteland piece's ground covers: their centres ([x, z], model units, after HEX_YAW: pointy-top cells,
+ * neighbours PIECE_CELL apart along x). A lattice point is a cell when most of a ring of points around it lands on
+ * the ground (its pit leaves a hole); the lattice offset that fits best wins, then it is set exactly from the
+ * ground's bounds (the outline is exact hexagons).
+ */
+function pieceCells(doc, prefix, file) {
+  const ground = doc.getRoot().listNodes().find((n) => n.getName() === `${prefix}_Ground`);
+  if (!ground?.getMesh()) throw new Error(`${file}: no ${prefix}_Ground`);
+  const W = new THREE.Matrix4().fromArray(ground.getWorldMatrix());
+  const ROW = Math.sqrt(3) / 2;
+  const R = 1 / Math.sqrt(3);
+  const v = new THREE.Vector3();
+  const tris = [];
+  const box = { x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity };
+  for (const p of ground.getMesh().listPrimitives()) {
+    const pos = p.getAttribute('POSITION');
+    const idx = p.getIndices();
+    const pts = [];
+    for (let i = 0; i < pos.getCount(); i++) {
+      v.fromArray(pos.getElement(i, [])).applyMatrix4(W).multiplyScalar(1 / PIECE_CELL);
+      pts.push([v.x, v.z]);
+      box.x0 = Math.min(box.x0, v.x);
+      box.x1 = Math.max(box.x1, v.x);
+      box.z0 = Math.min(box.z0, v.z);
+      box.z1 = Math.max(box.z1, v.z);
+    }
+    const n = idx ? idx.getCount() : pos.getCount();
+    for (let i = 0; i < n; i += 3) tris.push([0, 1, 2].map((k) => pts[idx ? idx.getScalar(i + k) : i + k]));
+  }
+  const inside = (x, z) =>
+    tris.some(([a, b, c]) => {
+      const s = (p, q) => (p[0] - x) * (q[1] - z) - (q[0] - x) * (p[1] - z);
+      const d1 = s(a, b);
+      const d2 = s(b, c);
+      const d3 = s(c, a);
+      return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+    });
+  const ring = [[0, 0]];
+  for (let k = 0; k < 6; k++) {
+    const a = (k * Math.PI) / 3;
+    ring.push([0.47 * Math.cos(a + Math.PI / 6), 0.47 * Math.sin(a + Math.PI / 6)], [0.4 * Math.cos(a), 0.4 * Math.sin(a)], [0.2 * Math.cos(a + 0.5), 0.2 * Math.sin(a + 0.5)]);
+  }
+  const span = Math.ceil(Math.max(box.x1 - box.x0, box.z1 - box.z0)) + 2;
+  let best = null;
+  const STEPS = 24;
+  for (let i = 0; i < STEPS; i++) {
+    for (let j = 0; j < STEPS; j++) {
+      const ox = i / STEPS + j / STEPS / 2;
+      const oz = (j / STEPS) * ROW;
+      const found = [];
+      let score = 0;
+      for (let az = -span; az <= span; az++) {
+        for (let ax = -span - span; ax <= span + span; ax++) {
+          const wx = ax + az / 2 + ox;
+          const wz = az * ROW + oz;
+          if (wx < box.x0 - 0.5 || wx > box.x1 + 0.5 || wz < box.z0 - 0.6 || wz > box.z1 + 0.6) continue;
+          const f = ring.filter(([px, pz]) => inside(wx + px, wz + pz)).length / ring.length;
+          if (f >= 0.6) {
+            found.push([ax, az]);
+            score += f;
+          } else score -= 2 * f;
+        }
+      }
+      if (!best || score > best.score) best = { found, score };
+    }
+  }
+  const at = best.found.map(([ax, az]) => [ax + az / 2, az * ROW]);
+  // The exact offset: the union of these hexagons has the ground's bounds (flat sides on x, corners on z).
+  const ox = box.x0 - (Math.min(...at.map((c) => c[0])) - 0.5);
+  const oz = box.z0 - (Math.min(...at.map((c) => c[1])) - R);
+  const misfit = Math.max(Math.abs(box.x1 - (Math.max(...at.map((c) => c[0])) + 0.5 + ox)), Math.abs(box.z1 - (Math.max(...at.map((c) => c[1])) + R + oz)));
+  if (!at.length || misfit > 0.02) throw new Error(`${file}: its ground isn't whole hexagons ${PIECE_CELL.toFixed(2)} apart (misfit ${misfit.toFixed(3)})`);
+  return at.map(([x, z]) => [+((x + ox) * PIECE_CELL).toFixed(4), +((z + oz) * PIECE_CELL).toFixed(4)]);
 }
 
 async function writeImage(id, { bytes, use }) {
