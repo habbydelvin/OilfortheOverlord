@@ -1310,8 +1310,13 @@ async function chargeOneFactory(cell) {
     if (run !== runId) return { count: 0 };
     return finishFactoryMissile(cell, idle);
   }
+  // Its oil is paid out of the gauge: a red "-N oil" over the factory, and barrels fly from the gauge into it.
+  // The pip fills as they land.
+  spawnFactoryFloater(cell, `<div class="row neg" style="--c:#ff5a44"><b>-${FACTORY_OIL}</b>${ICONS.oil}</div>`);
+  await flyOilToFactory(cell, FACTORY_OIL);
+  if (run !== runId) return { count: 0 };
   previewFactoryBar(cell.x, cell.z);
-  await wait(FACTORY_FILL_MS / 1000);
+  await wait(FACTORY_FILL_MS / 2000);
   if (run !== runId) return { count: 0 };
   thud();
   const completing = (cell.missileProgress ?? 0) + 1 >= need;
@@ -1335,13 +1340,50 @@ function finishFactoryMissile(cell, idle) {
 }
 
 function spawnMissileFloater(cell, n) {
+  spawnFactoryFloater(cell, `<div class="row" style="--c:#f0c060"><b>+${n}</b></div>`);
+}
+
+function spawnFactoryFloater(cell, html) {
   const layer = $('floaters');
   if (!layer) return;
   const el = document.createElement('div');
   el.className = 'floater';
-  el.innerHTML = `<div class="row" style="--c:#f0c060"><b>+${n}</b></div>`;
+  el.innerHTML = html;
   layer.appendChild(el);
   factoryFloaters.push({ el, x: cell.x, z: cell.z, t: 0 });
+}
+
+/** Barrels fly from the oil gauge down into a factory (board only). Resolves when the last one lands. */
+function flyOilToFactory(cell, oil) {
+  const dur = FACTORY_FILL_MS * 1.6;
+  if (view !== 'board') return wait(dur / 1000);
+  const src = $('quotaBarrels').getBoundingClientRect();
+  const w = hexToWorld(cell.x, cell.z);
+  const v = new THREE.Vector3(w.x, 0.5, w.z).project(camera);
+  const tx = (v.x * 0.5 + 0.5) * window.innerWidth - 13;
+  const ty = (-v.y * 0.5 + 0.5) * window.innerHeight - 13;
+  const n = Math.max(1, Math.min(4, oil));
+  const flights = [];
+  for (let k = 0; k < n; k++) {
+    const el = document.createElement('div');
+    el.className = 'oil-flight';
+    el.innerHTML = ICONS.oil;
+    document.body.appendChild(el);
+    const sx = src.left + src.width * (0.25 + 0.5 * Math.random()) - 13;
+    const sy = src.top + src.height / 2 - 13;
+    const mx = (sx + tx) / 2 + (Math.random() - 0.5) * 80;
+    const my = Math.min(sy, ty) - 40;
+    const anim = el.animate(
+      [
+        { transform: `translate(${sx}px, ${sy}px) scale(0.8)`, opacity: 0 },
+        { transform: `translate(${mx}px, ${my}px) scale(1.1)`, opacity: 1, offset: 0.4 },
+        { transform: `translate(${tx}px, ${ty}px) scale(0.6)`, opacity: 1 },
+      ],
+      { duration: dur, delay: k * 90, easing: 'ease-in', fill: 'both' },
+    );
+    flights.push(anim.finished.then(() => el.remove(), () => el.remove()));
+  }
+  return Promise.all(flights);
 }
 
 function updateFactoryFloaters(dt) {
@@ -1742,6 +1784,7 @@ function updateHUD() {
   // Greyed out while Wasteland that still fits must be placed (endTurn refuses then, with a toast).
   const blocking = hand.placeableForced.length;
   $('btnNext').classList.toggle('disabled', blocking > 0);
+  $('btnNext').title = blocking > 0 ? L(`Clear your hand first: ${blocking} Wasteland left to place`, `请先清空手牌：还有 ${blocking} 张荒地要放置`) : '';
   $('btnNextSub').textContent =
     turn.season === yearLength() - 1
       ? L(`collect oil, pay ${quota} tribute`, `采油，缴纳 ${quota} 桶贡品`)
@@ -1939,11 +1982,16 @@ function updateInspect(cell) {
 // ---------- turns ----------
 /** Next turn: tiles hop and flash what they produce, then the turn is settled. */
 function endTurn() {
-  // Turns can be ended from the board or the War Map (the season plays out with the planet on screen);
-  // from a rival city only a running payout can be fast-forwarded.
+  // Turns can be ended from the board, the War Map or a rival city: the missiles fly wherever you are, and you
+  // can scroll out (or dive into a city) to follow them while they're in the air.
   if (switching) return;
-  if (view === 'rival' && !(payout.active && !previewing)) return; // the HUD stays up on the War Map, but turns are played on the board
   if (turn.over || shopOpen || blackMarketOpen || eventOpen || strikeOpen || warPending) return;
+  // The season is wrapping up (last barrels, factories, the trip home): a click only hurries it along,
+  // it never starts a second turn on the same season.
+  if (turnRunning && !payout.active) {
+    oilFlights.finish();
+    return;
+  }
   if (payout.active) {
     if (previewing) cancelPreview();
     else {
@@ -1964,18 +2012,32 @@ function endTurn() {
   // Combat first: every city's missiles fly, then the season is scored on what's left standing.
   const run = runId;
   warPending = true;
+  setTurnRunning(true);
   runAttackPhase().then((over) => {
     warPending = false;
-    if (run !== runId || over) return;
+    if (run !== runId) return;
+    if (over) return setTurnRunning(false);
     const e = economyNow();
     runPayout(e, () => finishSeasonFx(e));
   });
 }
 /** True from End Turn until the attack phase has finished (a second press does nothing). */
 let warPending = false;
+/** True from End Turn until the season is settled (new hand dealt, or the shop / a scene has taken over). */
+let turnRunning = false;
+let settledSeason = null; // guard: one settle per season
+function setTurnRunning(on) {
+  turnRunning = on;
+  $('btnNext').classList.toggle('running', on);
+  if (on) $('btnNext').title = L('Season in progress…', '季节结算中…');
+  else updateHUD();
+}
 
 /** Oil has landed: wait out factory fill/hop/bump, then wrap the year. */
 function finishSeasonFx(e) {
+  const key = `${turn.round}:${turn.season}`;
+  if (settledSeason === key) return; // never settle the same season twice
+  settledSeason = key;
   const jobs = factoryJobs.splice(0);
   Promise.all(jobs.length ? jobs : [Promise.resolve([])]).then((factoryWork) => {
     turn.stockpile += e.oil;
@@ -1986,6 +2048,8 @@ function finishSeasonFx(e) {
     showOil(turn.stockpile);
     document.body.classList.remove('paying');
     settleTurn({ ...e, oil: 0, factoryWork: factoryWork.flat().filter(Boolean) });
+    // From here the shop, scenes or the new hand hold the screen themselves.
+    setTurnRunning(false);
   });
 }
 
@@ -3840,14 +3904,7 @@ async function launchSalvo(count) {
     .slice(0, count);
   if (!count || !silos.length) return;
   const run = runId;
-  document.body.classList.add('striking'); // the UI slides away, as for a strike
-  const mid = new THREE.Vector3();
-  const spots = silos.map((c) => hexToWorld(c.x, c.z));
-  for (const w of spots) mid.x += w.x / spots.length, mid.z += w.z / spots.length;
-  const spread = Math.max(...spots.map((w) => Math.hypot(w.x - mid.x, w.z - mid.z)));
-  followCamera(mid.setY(1.2), SALVO_CLOSE + spread * 2.2, 3);
-  await wait(0.5);
-  if (run !== runId) return;
+  // No camera move, no UI change: the magazines fire wherever you're looking, while the countdown runs.
   camera.getWorldDirection(camDir);
   camDir.y = 0;
   camDir.normalize();
@@ -3958,7 +4015,7 @@ function showPlacementCost(piece, cells) {
   const rows = [];
   if (workers) rows.push(`<div class="row neg"><b>-${workers}</b>${ICONS.manpower}</div>`);
   if (food) rows.push(`<div class="row neg"><b>-${food}</b>${ICONS.food}<span>${L('/ season', '/ 季')}</span></div>`);
-  if (oil && piece.terrain === 'milfactory') rows.push(`<div class="row neg"><b>-${oil}</b>${ICONS.oil}<span>${L('/ season', '/ 季')}</span></div>`);
+  if (oil && piece.terrain === 'milfactory') rows.push(`<div class="row neg" style="--c:#ff5a44"><b>-${oil}</b>${ICONS.oil}<span>${L('/ season', '/ 季')}</span></div>`);
   if (!rows.length) return;
   const world = cells.map(([x, z]) => hexToWorld(x, z));
   const cx = world.reduce((s, w) => s + w.x, 0) / cells.length;
@@ -4240,10 +4297,10 @@ function craterRival(r, rec) {
 }
 
 /** Our missile into the rival city on screen: their interceptors' flak meets it (or misses) on the way down. */
-function playRivalStrike(r, rec) {
+function playRivalStrike(r, rec, flight = missileCfg.followFlight) {
   rivalMissiles ??= new MissileStrike(rivalView.scene, camera, missileCfg);
   const w = hexToWorld(rec.at[0], rec.at[1]);
-  const t = { x: w.x, z: w.z, rec, shots: rec.shots, flight: missileCfg.followFlight, fired: 0 };
+  const t = { x: w.x, z: w.z, rec, shots: rec.shots, flight, fired: 0 };
   return rivalMissiles.fire([t], {
     onMove: (_pos, tt, u) => {
       while (tt.fired < tt.shots.length && u >= CIWS_START + CIWS_GAP * tt.fired) {
@@ -4264,8 +4321,40 @@ function playRivalStrike(r, rec) {
 }
 
 /** A flight's countdown ran out: play it in the city on screen, or settle it quietly if that city isn't shown. */
+const played = new Set(); // strikes already playing in a city view (started at approach)
+/** A flight is a missile's flight time from landing: if its city is on screen, the missile sets off now. */
+function approach(rec, flight = missileCfg.followFlight) {
+  if (rec.fizzled || played.has(rec)) return;
+  if (rec.to === 'player' && view === 'board') {
+    played.add(rec);
+    landing.push(
+      playMissileStrike([{ x: rec.at[0], z: rec.at[1], rec, shots: rec.shots, flight, mustStop: !rec.hit && rec.shots.some((q) => q.success) }], {
+        free: true,
+        onCover: (_cell, t) => {
+          for (const c of t?.rec?.lost ?? []) craterAt(c.x, c.z);
+        },
+      }),
+    );
+    return;
+  }
+  const r = rivals.find((x) => x.id === rec.to);
+  if (r && view === 'rival' && rivalShown === r) {
+    played.add(rec);
+    landing.push(playRivalStrike(r, rec, flight));
+  }
+}
+
+/**
+ * Just arrived in a city mid attack phase (scrolled in from the planet): any missile already on its final
+ * approach to it comes in now, timed to land when its countdown runs out, so it never lands unseen or late.
+ */
+function joinFlights() {
+  if (!attackLive) return;
+  for (const f of globe.inFlight()) if (f.approached) approach(f.s, Math.max(0.6, f.eta));
+}
+
 function arrive(rec) {
-  if (rec.fizzled) return;
+  if (rec.fizzled || played.has(rec)) return;
   if (rec.to === 'player') {
     if (view === 'board') {
       landing.push(
@@ -4289,7 +4378,7 @@ function arrive(rec) {
   }
   const r = rivals.find((x) => x.id === rec.to);
   if (!r) return;
-  if (view === 'rival' && rivalShown === r && rec.from === 'player') landing.push(playRivalStrike(r, rec));
+  if (view === 'rival' && rivalShown === r) landing.push(playRivalStrike(r, rec));
   else craterRival(r, rec);
 }
 
@@ -4363,8 +4452,11 @@ async function runAttackPhase() {
   attackLive = true;
   hand.select(-1);
   landing = [];
+  played.clear();
   warTimer.classList.remove('hidden');
-  const phase = globe.playAttack(res);
+  const phase = globe.playAttack(res, rivals);
+  // Everyone fires at once: on Hive City your magazines open and the salvo climbs away as the countdown starts.
+  if (view === 'board' && mine.length) launchSalvo(mine.length);
   // The first time missiles fly each way, the Field Report briefs you with everything frozen in the air.
   const briefed = await briefAttack(mine, theirs);
   if (run !== runId) return true;
@@ -4574,6 +4666,7 @@ function closeGlobe() {
     rig.distance = rig.maxDistance;
     rig.resetOverscroll();
     rig.goalDistance = Math.min(boardReturnDistance ?? rig.maxDistance, rig.maxDistance * 0.5);
+    joinFlights();
   });
 }
 
@@ -4595,6 +4688,7 @@ function enterRival(id) {
     view = 'rival';
     rig.release();
     rig.resetOverscroll();
+    joinFlights();
   });
 }
 
@@ -4604,7 +4698,7 @@ function leaveRival() {
 
 /** From the globe, the Esc / G way home: fly onto Hive City first. */
 function globeHome() {
-  if (view === 'globe' && !switching && !globe.busy) globe.visit('player');
+  if (view === 'globe' && !switching && !globe.flying) globe.visit('player'); // also mid attack phase
 }
 
 globe = createGlobeView({
@@ -4619,6 +4713,8 @@ globe = createGlobeView({
   },
   freeDuringWar: true, // look around (board, planet, rival cities) while the missiles are in the air
   onArrive: (s) => arrive(s),
+  onApproach: (s) => approach(s),
+  approachLead: () => missileCfg.followFlight,
 });
 rig.onZoomPastMax = () => {
   if (view === 'board' || view === 'rival') openGlobe();
@@ -4661,7 +4757,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (view !== 'board') {
-    if (k === 'enter' && (view === 'globe' || payout.active)) endTurn(); // end the turn / skip the payout from the War Map too
+    if (k === 'enter') endTurn(); // end the turn / skip the payout from the War Map too
     return;
   }
   if (dev && k === '`') {
@@ -4812,6 +4908,8 @@ function resetIsland(opts) {
   if (strikeOpen) closeStrikeScreen();
   resetMissiles(); // and any aimed strikes
   warPending = false;
+  setTurnRunning(false);
+  settledSeason = null;
   attackLive = false;
   landing = [];
   for (const h of factoryHops) {

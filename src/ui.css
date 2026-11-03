@@ -3342,3 +3342,37 @@ body.rival-view.rival-hand #hand {
   70% { opacity: 1; }
   100% { opacity: 0; transform: translate(-50%, -260%) scale(1); }
 }
+
+/* A rival city clears the side panel, but End Turn stays on screen (bottom right) so a turn can be ended from
+   anywhere; greyed and blurred while the hand still has to be cleared. */
+body.rival-view #btnNext {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  width: 300px;
+  z-index: 30;
+  opacity: 1;
+  pointer-events: auto;
+  translate: none;
+  visibility: visible;
+}
+body.rival-view #panel {
+  opacity: 1;
+  translate: none; /* a translated parent would carry the fixed button off screen with it */
+  pointer-events: none;
+  background: none;
+  box-shadow: none;
+  border: 0;
+}
+body.rival-view #panel > *:not(#btnNext) {
+  visibility: hidden;
+}
+#btnNext.disabled {
+  filter: grayscale(1) blur(1.2px);
+}
+
+/* Season in progress: End Turn can't start another turn until this one is settled. */
+#btnNext.running {
+  filter: grayscale(0.8) brightness(0.8);
+  cursor: progress;
+}

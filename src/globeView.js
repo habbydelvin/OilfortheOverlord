@@ -335,7 +335,7 @@ export function clearGlobeConfig() {
 }
 
 /** freeDuringWar: cities can still be visited mid attack phase (the playback keeps running: call tickWar). */
-export function createGlobeView({ renderer, root, factory, playerBuildings, playerHp = () => 5, onVisit, onDive = () => {}, freeDuringWar = false, onArrive = null }) {
+export function createGlobeView({ renderer, root, factory, playerBuildings, playerHp = () => 5, onVisit, onDive = () => {}, freeDuringWar = false, onArrive = null, onApproach = null, approachLead = () => 0 }) {
   const dom = renderer.domElement;
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(BG);
@@ -942,6 +942,31 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     return pts;
   }
 
+  /** What the attack playback has shown landing on each city so far (id -> { hp, dead }), until the phase ends. */
+  const warShown = new Map();
+  function applyShown(n) {
+    const seen = warShown.get(n.id);
+    if (!seen) return;
+    if (seen.hp !== undefined) n.hpShown = seen.hp;
+    if (seen.dead && !n.deadShown) {
+      n.deadShown = true;
+      n.group.clear();
+      n.group.add(factory.create('crater'));
+    }
+  }
+
+  /** Where every city sits on the planet ({ id, p, color }), without building anything (works with the planet shut). */
+  function layout(list = rivals) {
+    const defs = [{ id: 'player', map: PLAYER_NODE, color: PLAYER_NODE.color }, ...list.map((r) => ({ id: r.id, map: r.def.map, color: r.def.color }))];
+    const spots = spreadOut(defs.map((def) => new THREE.Vector2(((def.map.x - 50) / 100) * GLOBE.spread, ((def.map.y - 50) / 100) * GLOBE.spread)));
+    const taken = new Set();
+    return defs.map((def, i) => {
+      const cell = nearestCell(spots[i].x, spots[i].y, taken);
+      taken.add(cell);
+      return { id: def.id, p: cells[cell].p.clone(), color: new THREE.Color(def.color) };
+    });
+  }
+
   function buildNodes() {
     clearNodes();
     const defs = [
@@ -968,6 +993,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       el.style.setProperty('--node', def.color);
       labelsEl.appendChild(el);
       nodes.push({ id: def.id, color, cell, p, group, lift: 0, el, rival: def.rival });
+      applyShown(nodes.at(-1));
     }
     tiles.instanceColor.needsUpdate = true;
     // City positions, so the terrain stays level under them.
@@ -1546,8 +1572,12 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
    * Play an attack phase on the globe. strikes: war.js resolve() output. Resolves when everything has landed.
    * speed: 1 normal; skip() jumps ahead.
    */
-  function playAttack(strikes) {
-    const nodeOf = (id) => nodes.find((n) => n.id === id);
+  function playAttack(strikes, list = null) {
+    // Positions come from the layout, not the built nodes: the phase plays (and its countdowns run) from any view,
+    // even when the planet has never been opened or was left.
+    if (list) rivals = list;
+    const spots = layout();
+    const nodeOf = (id) => spots.find((n) => n.id === id);
     const items = [];
     strikes.forEach((s, i) => {
       const a = nodeOf(s.from);
@@ -1612,6 +1642,11 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     let live = 0;
     for (const it of war.items) {
       const u = (war.t - it.start) / it.dur;
+      // Close to landing: a city view starts its own missile now so it hits exactly as the countdown reaches 0.
+      if (!it.approached && (it.start + it.dur - war.t) / war.speed <= approachLead()) {
+        it.approached = true;
+        onApproach?.(it.s);
+      }
       // Its countdown ran out: the strike lands on the city now (the city view plays it, shown or not).
       if (!it.arrived && u >= 1) {
         it.arrived = true;
@@ -1681,12 +1716,13 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
         if (s.hit) {
           const ground = bend.project(it.to.p.x, it.to.p.y, 0.15, new THREE.Vector3());
           burst(s.capital !== null ? 0xff3a1a : 0xffa040, s.kind === 'missile2' ? 0.7 : 0.45, 1.1).position.copy(ground);
-          if (s.eliminated) {
-            it.to.group.clear();
-            it.to.group.add(factory.create('crater'));
-            it.to.deadShown = true;
-          }
-          if (s.capital !== null) it.to.hpShown = s.capital;
+          // Remembered by city id: the planet may be left and re-entered mid phase (its nodes are rebuilt).
+          const seen = warShown.get(s.to) ?? {};
+          if (s.eliminated) seen.dead = true;
+          if (s.capital !== null) seen.hp = s.capital;
+          warShown.set(s.to, seen);
+          const node = nodes.find((n) => n.id === s.to);
+          if (node) applyShown(node);
           renderLabels();
         }
       }
@@ -1702,6 +1738,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
         for (const sh of it.shots) if (sh.line) warRoot.remove(sh.line);
       }
       war = null;
+      warShown.clear();
       document.body.classList.remove('war-phase');
       done();
     }
@@ -1753,6 +1790,15 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     },
     get busy() {
       return Boolean(anim) || visiting || Boolean(war);
+    },
+    /** The camera is flying (opening pull-back, or a dive into a city): the attack phase alone doesn't count. */
+    get flying() {
+      return Boolean(anim) || visiting || Boolean(dive);
+    },
+    /** The countdown and arc progress of every flight still in the air (for a city view joining mid flight). */
+    inFlight() {
+      if (!war) return [];
+      return war.items.filter((it) => !it.arrived).map((it) => ({ s: it.s, eta: Math.max(0, (it.start + it.dur - war.t) / war.speed), approached: Boolean(it.approached) }));
     },
     playAttack,
     /** Keep the attack playback running while the globe isn't shown (the flights land on time). */
