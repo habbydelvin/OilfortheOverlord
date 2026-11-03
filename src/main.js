@@ -905,28 +905,40 @@ function followCamera(pos, distance, rate) {
 }
 
 /**
- * A missile launches from the ground at `spot` and hits `target` (Show of Force's ruins, and an
- * Unexploded Missile). Resolves with the names of the tiles lost, or null if the run was reset meanwhile.
+ * A missile launches from the ground at `spot` and hits `target` (Show of Force's ruins, and the old Missile
+ * Magazine of a "?" site). silo: a Missile Magazine cell on the spot, which opens and fires it (otherwise the
+ * missile stands upright on the spot). Resolves with the names of the tiles lost, or null if the run was reset meanwhile.
  */
-async function groundStrike(spot, target, lostText = (l) => L(`The silo's missile destroyed your ${l}`, `发射井的导弹摧毁了你的${l}`)) {
+async function groundStrike(spot, target, lostText = (l) => L(`The silo's missile destroyed your ${l}`, `发射井的导弹摧毁了你的${l}`), silo = null) {
   const run = runId;
   eventOpen = true; // locked from the moment it is called, through the lead-in
   hand.select(-1);
   await wait(0.3);
   if (run !== runId) return null;
-  // The missile stands upright on the spot; the camera closes in, it shakes, then launches and is followed.
-  const at = hexToWorld(spot.x, spot.z); // missiles.js works in world positions
-  const standing = missiles.showUpright(at.x, at.z);
-  const prelude = async () => {
-    standing.rumble();
-    camShake.add(0.3);
-    await wait(1.2);
-    standing.remove();
-    boom();
-    dust.burst(spot.x, spot.z, 1.6);
-  };
-  const lost = await playMissileStrike([{ ...target, from: spot, flight: 2.6, accel: 1.1 }], { follow: true, prelude });
-  standing.remove();
+  // The camera closes in on the spot; the missile rises (out of the silo, or standing up and shaking), launches and
+  // is followed.
+  const t = { ...target, from: spot, flight: 2.6, accel: 1.1 };
+  let standing = null;
+  let prelude;
+  if (silo) {
+    prelude = async () => {
+      const from = await siloLaunch(silo, 1, (f) => f);
+      if (from) t.from = from; // on from the silo's mouth
+    };
+  } else {
+    const at = hexToWorld(spot.x, spot.z); // missiles.js works in world positions
+    standing = missiles.showUpright(at.x, at.z);
+    prelude = async () => {
+      standing.rumble();
+      camShake.add(0.3);
+      await wait(1.2);
+      standing.remove();
+      boom();
+      dust.burst(spot.x, spot.z, 1.6);
+    };
+  }
+  const lost = await playMissileStrike([t], { follow: true, prelude });
+  standing?.remove();
   if (run !== runId) return null;
   eventOpen = false;
   reportStrike(lost);
@@ -947,29 +959,83 @@ function nearestBuilding(x, z) {
 }
 
 /**
- * A "?" site was an Unexploded Missile: it launches from the site into `target` (default: the nearest
- * building). The site stays empty ground.
+ * A "?" site was an old Missile Magazine with a missile still in it (an Unexploded Missile). The magazine surfaces on
+ * the site and stays there, a working one like one you build; it opens and fires at `target` (default: your nearest
+ * building). With nothing to hit, the missile gets stuck in the silo's mouth and a second later blows up there,
+ * harming nothing.
  */
-function unexplodedMissile(site, target = nearestBuilding(site.x, site.z)) {
+async function unexplodedMissile(site, target = nearestBuilding(site.x, site.z)) {
+  const run = runId;
+  if (target) {
+    eventOpen = true; // locked through the magazine's landing, then the strike
+    hand.select(-1);
+  }
+  addTile(site.x, site.z, 'magazine', 0.1);
   dust.burst(site.x, site.z, 1.4);
   camShake.add(0.6);
-  if (!target) {
-    // A dud: it stands up, wobbles, and falls over.
-    const run = runId;
-    const at = hexToWorld(site.x, site.z); // missiles.js works in world positions
-    const dud = missiles.showUpright(at.x, at.z);
-    toast(L('Uncovered an Unexploded Missile... it fizzled into the sand', '发现一枚未爆导弹……它在沙地里哑火了'), 'good', 2400);
-    setTimeout(() => run === runId && dud.topple(), 900);
-    setTimeout(() => {
-      dud.remove();
-      if (run === runId) dust.burst(site.x, site.z, 1);
-    }, 2600);
-    return;
-  }
-  eventOpen = true;
-  hand.select(-1);
-  toast(L('Uncovered an Unexploded Missile!', '发现一枚未爆导弹！'), 'bad', 2400);
-  groundStrike({ x: site.x, z: site.z }, target, (l) => L(`The unexploded missile destroyed your ${l}`, `未爆导弹摧毁了你的${l}`));
+  frontier.rebuild(grid);
+  placement.cell = null; // force ghost revalidation
+  shadeIdle();
+  updateHUD();
+  toast(
+    target
+      ? L('Uncovered an old Missile Magazine, and its missile launched!', '发现一座旧储弹仓，里面的导弹发射了！')
+      : L('Uncovered an old Missile Magazine... its missile blew up in the silo', '发现一座旧储弹仓……里面的导弹在发射井里炸了'),
+    target ? 'bad' : 'good',
+    2400,
+  );
+  await wait(0.9); // it lands
+  if (run !== runId) return;
+  const cell = grid.get(site.x, site.z);
+  // (its model may not have loaded yet: the missile then stands on the site as before)
+  const silo = cell?.terrain === 'magazine' && !cell.mesh.userData.launching && factory.canCue(cell.mesh, 'Launch') ? cell : null;
+  if (target) {
+    groundStrike({ x: site.x, z: site.z }, target, (l) => L(`The old magazine's missile destroyed your ${l}`, `旧储弹仓的导弹摧毁了你的${l}`), silo);
+  } else if (silo) siloDud(silo);
+  else uprightDud(site);
+}
+
+/** How long a missile with nothing to hit sits in place before it blows up (seconds). */
+const DUD_HOLD = 1;
+
+/** A magazine's missile with nothing to hit: it rises into the silo's mouth, sits there, and blows up in place. */
+function siloDud(cell) {
+  const mesh = cell.mesh;
+  mesh.userData.launching = true;
+  return factory.cue(mesh, 'Launch', {
+    speed: SILO_SPEED,
+    cutAt: SILO_STUCK,
+    hide: SILO_PARTS,
+    hold: DUD_HOLD,
+    cut: () => camShake.add(0.15),
+    onResume: () => {
+      const missile = mesh.getObjectByName(SILO_PARTS[0]);
+      dudBurst(missile ? missile.getWorldPosition(new THREE.Vector3()).add(DUD_MIDDLE) : null, cell);
+    },
+    onEnd: () => (mesh.userData.launching = false),
+  });
+}
+
+/** The same with no magazine model to fire it (not loaded yet): it stands up on the site, shakes, and blows up. */
+function uprightDud(site) {
+  const run = runId;
+  const at = hexToWorld(site.x, site.z); // missiles.js works in world positions
+  const dud = missiles.showUpright(at.x, at.z);
+  dud.rumble();
+  setTimeout(() => {
+    dud.remove();
+    if (run === runId) dudBurst(new THREE.Vector3(at.x, 0.35, at.z), site);
+  }, (0.5 + DUD_HOLD) * 1000); // (it takes half a second to stand up)
+}
+
+const DUD_MIDDLE = new THREE.Vector3(0, 0.15, 0); // from a magazine missile's tail to its middle (world units)
+
+/** A missile blowing up where it is: flash, fire and smoke, a jolt; nothing around it is harmed. */
+function dudBurst(pos, cell) {
+  if (pos) missiles.airBurst(pos, true);
+  boom();
+  camShake.add(0.5);
+  dust.burst(cell.x, cell.z, 1.4);
 }
 
 /** Reveals: real tiles drop in; missiles launch. `delay(i)` staggers the drops. Returns the tiles found. */
@@ -2781,7 +2847,7 @@ function applyYearEvent(key, ev, choiceIdx) {
       if (!found) return '';
       if (found.terrain === 'missile') {
         later.push(async () => unexplodedMissile(found));
-        return L('The map led you to an Unexploded Missile.', '地图把你引向了一枚未爆导弹。');
+        return L('The map led you to an old Missile Magazine.', '地图把你引向了一座旧储弹仓。');
       }
       addTile(found.x, found.z, found.terrain, 0.25);
       frontier.rebuild(grid);
@@ -3678,7 +3744,9 @@ function launchSilo(aim) {
 // The magazine's Launch clip (seconds): the petals are open by SILO_RELOAD; the missile reaches the silo's mouth at
 // SILO_CUT, and the flight takes over from there (the model's own missile and flame vanish; its launch smoke plays
 // on, and the petals close). A magazine firing several jumps back from SILO_AGAIN to SILO_RELOAD: the next one rises.
+// A missile that won't launch (nothing to hit) stops at SILO_STUCK: risen into the mouth, before its flame lights.
 const SILO_CUT = 3;
+const SILO_STUCK = 2.5;
 const SILO_AGAIN = 3.6;
 const SILO_RELOAD = 1.5;
 const SILO_SPEED = 1.6;

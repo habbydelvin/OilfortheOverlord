@@ -907,10 +907,11 @@ export class TileFactory {
    * Play a cue clip (EVENT_CLIPS) once on a tile; when it ends the model is back in its rest pose and onEnd runs.
    * At `cutAt` seconds into the clip `cut(i)` runs (e.g. reads where a part is), and the `hide` parts vanish (scale 0)
    * from then on. With `repeat`, the clip then jumps back from `repeatFrom` to `repeatAt` that many times (the parts
-   * come back) and cuts again each time. Resolves at the last cut with what `cut` returned, or null (no such clip,
-   * or the tile went away first).
+   * come back) and cuts again each time. With `hold` (seconds), the clip instead stops at the cut with everything
+   * still showing, and after that long onResume runs, the `hide` parts vanish and it plays on. Resolves at the last
+   * cut with what `cut` returned, or null (no such clip, or the tile went away first).
    */
-  cue(holder, name, { speed = 1, cutAt = null, cut = null, hide = [], repeat = 0, repeatFrom = null, repeatAt = 0, onEnd = null } = {}) {
+  cue(holder, name, { speed = 1, cutAt = null, cut = null, hide = [], repeat = 0, repeatFrom = null, repeatAt = 0, hold = 0, onResume = null, onEnd = null } = {}) {
     let entry = null;
     holder.traverse((o) => (entry ??= o.userData.anim ?? null));
     const clip = entry?.root.animations.find((c) => c.name === name);
@@ -937,14 +938,24 @@ export class TileFactory {
     });
     return new Promise((resolve) => {
       if (cutAt == null) resolve(null);
-      entry.cues.push({ action, cutAt, cut, parts, left: repeat, repeatFrom, repeatAt, onEnd, resolve, n: 0, phase: cutAt == null ? 'after' : 'before' });
+      entry.cues.push({ action, cutAt, cut, parts, left: repeat, repeatFrom, repeatAt, hold, onResume, onEnd, resolve, n: 0, phase: cutAt == null ? 'after' : 'before' });
     });
   }
 
-  /** After the mixer has posed the model this frame: cuts, repeats, hidden parts and finished cues. */
-  #runCues(entry) {
+  /** After the mixer has posed the model this frame: cuts, holds, repeats, hidden parts and finished cues. */
+  #runCues(entry, dt) {
     for (let i = entry.cues.length - 1; i >= 0; i--) {
       const c = entry.cues[i];
+      if (c.phase === 'hold') {
+        // (a paused action doesn't count as running)
+        if ((c.hold -= dt) > 0) continue;
+        c.action.paused = false;
+        c.phase = 'after';
+        c.hidden = true;
+        c.onResume?.();
+        for (const p of c.parts) p.o.scale.setScalar(0);
+        continue;
+      }
       if (!c.action.isRunning()) {
         c.action.stop();
         entry.cues.splice(i, 1);
@@ -961,6 +972,12 @@ export class TileFactory {
       }
       if (c.phase === 'before' && t >= c.cutAt) {
         const value = c.cut?.(c.n++) ?? null;
+        if (c.hold > 0) {
+          c.phase = 'hold';
+          c.action.paused = true;
+          c.resolve(value);
+          continue;
+        }
         if (c.left > 0) c.phase = 'repeat';
         else {
           c.phase = 'after';
@@ -990,7 +1007,7 @@ export class TileFactory {
         entry.idle = 0;
         // A cue (a magazine's launch) or a gun in action plays out even on an idle building.
         if (!frozen || entry.cues.length || entry.rig?.active) entry.mixer.update(dt);
-        if (entry.cues.length) this.#runCues(entry);
+        if (entry.cues.length) this.#runCues(entry, dt);
         entry.rig?.update(dt);
       } else if (++entry.idle > 120) {
         // About two seconds detached. The copy has been thrown away.

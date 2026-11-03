@@ -100,7 +100,8 @@ const GLB_ONLY = {
 /**
  * Wasteland pieces: every art/models/hex/WasteHex_<Name>.glb, one model per piece shape. The game matches each to its
  * piece shape by the cells its ground covers (measured here: pieceCells), not by the file name. They carry no
- * animation: their worm takes the old single-cell piece's (WORM_FBX, the same rig under another name).
+ * animation: their worm takes the old single-cell piece's (WORM_FBX, the same rig under another name); the game
+ * replaces that with its own as it loads (animateWorm in src/models.js).
  */
 const PIECE_FILE = /^WasteHex_\w+\.glb$/;
 for (const f of fs.readdirSync(path.join(SRC, 'hex')).filter((f) => PIECE_FILE.test(f)).sort()) GLB_ONLY[f] = f.replace(/\.glb$/, '');

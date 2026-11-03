@@ -451,6 +451,124 @@ function fitHexPiece(root, mirror = false) {
   return match;
 }
 
+/**
+ * The Wasteland worm (<prefix>_Worm: coiled at the bottom of its pit, neck up, its round mouth of teeth at the tip),
+ * bigger and alive: it rises out of the pit stretching its neck, sways, snaps its mouth open and shut a couple of
+ * times, and sinks back in. Three morph targets on its geometry (shared by every copy) stretch the neck, open the
+ * mouth wide and pinch it shut; its own looping clip (replacing the worm's keys from the file) does the rest.
+ */
+const WORM = {
+  scale: 1.35, // bigger than modelled (its coil then just fits the pit's floor)
+  sink: 0.6, // how far below its modelled place it waits in the pit (model units)
+  lift: 1.2, // how far above it, out of the pit
+  stretch: 1.8, // how much its neck and head stretch up on top of that
+  period: 9, // seconds per loop
+};
+
+function animateWorm(root) {
+  let worm = null;
+  root.traverse((o) => !worm && o.isMesh && /_Worm$/.test(o.name) && (worm = o));
+  if (!worm || worm.userData.alive) return;
+  worm.userData.alive = true;
+  if (!wormMorphs(worm)) return;
+  worm.updateMorphTargets();
+  worm.scale.multiplyScalar(WORM.scale);
+  const p0 = worm.position.clone();
+  const q0 = worm.quaternion.clone();
+  const T = WORM.period;
+  // (time, height): waits low, rises with a little overshoot, stays up, sinks back.
+  const rise = [[0, -WORM.sink], [1.0, -WORM.sink], [1.7, WORM.lift * 1.12], [2.0, WORM.lift], [5.2, WORM.lift], [6.1, -WORM.sink], [T, -WORM.sink]];
+  // (time, twist about the vertical, lean): it looks around while it's up.
+  const sway = [[0, 0, 0], [1.0, 0, 0], [2.0, 0.25, 0.08], [2.8, 0.45, -0.1], [3.8, -0.35, 0.12], [4.8, 0.2, -0.06], [6.1, 0, 0], [T, 0, 0]];
+  // (time, out, open, shut): the neck's stretch and the mouth, snapping open twice.
+  const face = [
+    [0, 0, 0, 1], [1.0, 0, 0, 1], [1.7, 1.08, 0, 1], [2.0, 1, 0, 1], [2.35, 1, 0, 1], [2.5, 1, 1, 0], [3.1, 1, 1, 0], [3.35, 1, 0, 1],
+    [3.9, 1, 0, 1], [4.0, 1, 1.15, 0], [4.45, 1, 1, 0], [4.65, 1, 0, 1], [5.2, 1, 0, 1], [6.1, 0, 0, 1], [T, 0, 0, 1],
+  ];
+  const pos = rise.flatMap(([, y]) => [p0.x, p0.y + y, p0.z]);
+  const q = new THREE.Quaternion();
+  const e = new THREE.Euler();
+  const rot = sway.flatMap(([, twist, lean]) => q.copy(q0).multiply(new THREE.Quaternion().setFromEuler(e.set(lean, twist, lean * 0.6))).toArray());
+  const name = worm.name;
+  const tracks = [
+    new THREE.VectorKeyframeTrack(`${name}.position`, rise.map(([t]) => t), pos),
+    new THREE.QuaternionKeyframeTrack(`${name}.quaternion`, sway.map(([t]) => t), rot),
+    ...[1, 2, 3].map((k) => new THREE.NumberKeyframeTrack(`${name}.morphTargetInfluences[${k - 1}]`, face.map(([t]) => t), face.map((f) => f[k]))),
+  ];
+  const mine = (t) => THREE.PropertyBinding.parseTrackName(t.name).nodeName === name;
+  root.animations = root.animations
+    .map((clip) => (clip.tracks.some(mine) ? new THREE.AnimationClip(clip.name, clip.duration, clip.tracks.filter((t) => !mine(t))) : clip))
+    .filter((clip) => clip.tracks.length)
+    .concat(new THREE.AnimationClip('Worm', T, tracks));
+}
+
+/**
+ * The worm's morph targets (worm space): 0 its neck and head stretched up (more the higher a vertex sits), 1 its mouth
+ * wide open (the lips and teeth around it flared out from the mouth's axis), 2 its mouth pinched shut. The mouth is
+ * the dark disc in its throat (its HiveCity_WindowDark part). False if there's no mouth to find.
+ */
+function wormMorphs(worm) {
+  const g = worm.geometry;
+  if (g.morphAttributes.position?.length) return true; // (another copy of the same file's worm already did)
+  const pos = g.attributes.position;
+  const index = g.index?.array;
+  const mats = [worm.material].flat();
+  const mouth = g.groups.find((grp) => /WindowDark/.test(mats[grp.materialIndex]?.name ?? ''));
+  if (!mouth || !index) return false;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const m = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  let area = 0;
+  for (let i = mouth.start; i < mouth.start + mouth.count; i += 3) {
+    a.fromBufferAttribute(pos, index[i]);
+    b.fromBufferAttribute(pos, index[i + 1]);
+    c.fromBufferAttribute(pos, index[i + 2]);
+    const cross = b.clone().sub(a).cross(c.clone().sub(a));
+    const w = cross.length() / 2;
+    n.add(cross); // (area-weighted: |cross| = 2 × area)
+    m.addScaledVector(a.clone().add(b).add(c), w / 3);
+    area += w;
+  }
+  if (!area) return false;
+  m.divideScalar(area);
+  n.normalize();
+  g.computeBoundingBox();
+  const box = g.boundingBox;
+  const body = box.getCenter(new THREE.Vector3());
+  if (n.dot(m.clone().sub(body)) < 0) n.negate(); // facing out of the mouth
+  let rm = 0;
+  for (let i = mouth.start; i < mouth.start + mouth.count; i++) {
+    a.fromBufferAttribute(pos, index[i]).sub(m);
+    rm = Math.max(rm, a.addScaledVector(n, -a.dot(n)).length());
+  }
+  const out = new Float32Array(pos.count * 3);
+  const open = new Float32Array(pos.count * 3);
+  const shut = new Float32Array(pos.count * 3);
+  const neck = [box.min.y + 0.45 * (box.max.y - box.min.y), box.max.y];
+  const d = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    a.fromBufferAttribute(pos, i);
+    out[i * 3 + 1] = WORM.stretch * THREE.MathUtils.smoothstep(a.y, neck[0], neck[1]);
+    // Around the mouth: how far out from its axis, how far back along it.
+    d.copy(a).sub(m);
+    const along = d.dot(n);
+    const radial = d.addScaledVector(n, -along);
+    const f = THREE.MathUtils.smoothstep(along, -1.1 * rm, 0.05) * (1 - THREE.MathUtils.smoothstep(radial.length(), 1.25 * rm, 2 * rm));
+    for (const [arr, k, lift] of [[open, 0.6, 0.12], [shut, -0.78, 0.05]]) {
+      arr[i * 3] = (radial.x * k + n.x * lift) * f;
+      arr[i * 3 + 1] = (radial.y * k + n.y * lift) * f;
+      arr[i * 3 + 2] = (radial.z * k + n.z * lift) * f;
+    }
+  }
+  g.morphAttributes.position = [out, open, shut].map((arr, k) => Object.assign(new THREE.BufferAttribute(arr, 3), { name: ['out', 'open', 'shut'][k] }));
+  g.morphTargetsRelative = true;
+  g.computeBoundingSphere(); // (with the stretched neck: it's still drawn when only its head is in view)
+  g.computeBoundingBox();
+  return true;
+}
+
 /** Resolves once the texture's image has arrived (FBXLoader hands textures back before their images load). */
 function imageReady(texture, timeout = 30000) {
   return new Promise((resolve) => {
@@ -1486,6 +1604,7 @@ function finishModel(root, spec) {
   const cells = spec.piece && root.userData.cells?.length > 1 ? { centres: root.userData.cells, cell: root.userData.cell } : null;
   if (fp) makeSeamless(root, fp, [1, 1], cells);
   if (spec.piece) {
+    animateWorm(root);
     const match = fitHexPiece(root);
     if (!match) console.warn(`[models] ${spec.key}: its ${root.userData.cells?.length} cells make no piece shape`);
     root.name = match ? `waste-${match.shape}` : spec.key;
