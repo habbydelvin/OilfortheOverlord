@@ -1144,8 +1144,9 @@ function updateRuinButtons() {
 
 const factoryBars = new Map();
 const factoryBarV = new THREE.Vector3();
-const FACTORY_FILL_MS = 200;
-const FACTORY_HOP = 0.28;
+const FACTORY_FILL_MS = 450;
+const FACTORY_HOP = 0.5;
+const factoryFloaters = [];
 const factoryHops = [];
 const factoryJobs = [];
 const factoryPaid = [];
@@ -1192,6 +1193,7 @@ async function chargeOneFactory(cell) {
   const need = yearLength();
   const run = runId;
   if ((cell.missileProgress ?? 0) >= need) {
+    spawnMissileFloater(cell, factoryYield(grid, cell, idle).count);
     await hopFactory(cell);
     if (run !== runId) return { count: 0 };
     return finishFactoryMissile(cell, idle);
@@ -1200,6 +1202,8 @@ async function chargeOneFactory(cell) {
   await wait(FACTORY_FILL_MS / 1000);
   if (run !== runId) return { count: 0 };
   thud();
+  const completing = (cell.missileProgress ?? 0) + 1 >= need;
+  if (completing) spawnMissileFloater(cell, factoryYield(grid, cell, idle).count);
   await hopFactory(cell);
   if (run !== runId) return { count: 0 };
   factoryPaid.push(cell);
@@ -1216,6 +1220,45 @@ function finishFactoryMissile(cell, idle) {
   const el = $('resMissile');
   if (el && out.count) pop(el);
   return out;
+}
+
+function spawnMissileFloater(cell, n) {
+  const layer = $('floaters');
+  if (!layer) return;
+  const el = document.createElement('div');
+  el.className = 'floater';
+  el.innerHTML = `<div class="row" style="--c:#f0c060"><b>+${n}</b></div>`;
+  layer.appendChild(el);
+  factoryFloaters.push({ el, x: cell.x, z: cell.z, t: 0 });
+}
+
+function updateFactoryFloaters(dt) {
+  const c = payoutCfg;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const v = factoryBarV;
+  for (let i = factoryFloaters.length - 1; i >= 0; i--) {
+    const f = factoryFloaters[i];
+    f.t += dt;
+    if (f.t >= c.labelLife) {
+      f.el.remove();
+      factoryFloaters.splice(i, 1);
+      continue;
+    }
+    const p = Math.min(f.t / c.labelLife, 1);
+    const pt = c.labelPopTime;
+    const easeOut = (t) => 1 - (1 - t) ** 3;
+    const easeOutBack = (t) => 1 + 2.7 * (t - 1) ** 3 + 1.7 * (t - 1) ** 2;
+    const scale = f.t < pt ? (0.2 + 0.8 * easeOutBack(Math.min(f.t / pt, 1))) * c.labelPop : 1;
+    const rise = c.labelStartY + c.labelRise * easeOut(p);
+    const pos = hexToWorld(f.x, f.z);
+    v.set(pos.x, rise, pos.z).project(camera);
+    const px = (v.x * 0.5 + 0.5) * w;
+    const py = (-v.y * 0.5 + 0.5) * h;
+    f.el.style.transform = `translate(${px}px, ${py}px) translate(-50%, -100%) scale(${scale})`;
+    const fs = Math.min(c.fadeStart, 0.999);
+    f.el.style.opacity = p > fs ? 1 - (p - fs) / (1 - fs) : 1;
+  }
 }
 
 function updateFactoryBars() {
@@ -4068,6 +4111,8 @@ function resetIsland(opts) {
   factoryHops.length = 0;
   factoryJobs.length = 0;
   factoryPaid.length = 0;
+  for (const f of factoryFloaters) f.el.remove();
+  factoryFloaters.length = 0;
   setAiming(false);
   $('warUI').classList.add('hidden');
   $('warReport').classList.add('hidden');
@@ -4456,6 +4501,7 @@ function frame(now) {
   perf.begin('payout');
   payout.update(dt); // after render so labels use this frame's camera
   updateFactoryHops(dt);
+  updateFactoryFloaters(dt);
   oilFlights.update(dt);
   perf.end('payout');
   perf.frameEnd();
