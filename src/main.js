@@ -3647,6 +3647,7 @@ function playerBuildingCount() {
 // pick a card and click (or drag it onto) one of their tiles to aim it. Leaving the city puts unplayed cards back.
 let rivalHand = null; // the season hand, saved while the missile cards are out
 let aimHover = null;
+let aimAt = null; // a salvo's cell under the cursor: its reticle centres there
 
 const aimPiece = () => (view === 'rival' && rivalHand && isPlayerMissile(hand.piece?.terrain) ? hand.piece : null);
 
@@ -3663,6 +3664,7 @@ function closeRivalHand() {
   hand.replaceHand(rivalHand);
   rivalHand = null;
   aimHover = null;
+  aimAt = null;
   document.body.classList.remove('rival-hand');
   updateHUD();
 }
@@ -3677,8 +3679,8 @@ function updateAimBar() {
   $('rivalQueue').textContent = L(`${q} aimed · ${cards} in hand · fires after End Turn`, `已瞄准 ${q} · 手牌 ${cards} · 结束回合后发射`);
   const aimed = rival ? queuedStrikes(rival.id) : [];
   const aimedCells = aimed.map((s) => footprint(s.kind, s.at, s.size));
-  rivalView.setMarkers(aimedCells, aimHover);
-  rivalView.setArcs(aimHover ? [aimHover] : [], rival ? homeBearing(rival) : null, aimedCells.flat());
+  rivalView.setMarkers(aimedCells, aimHover, aimAt);
+  rivalView.setArcs(aimHover ? [aimHover] : [], rival ? homeBearing(rival) : null, aimedCells.flat(), aimAt);
   globe?.setQueued(queuedStrikes().map((s) => ({ from: 'player', to: s.to })));
 }
 
@@ -3783,8 +3785,10 @@ function updateAimHover() {
   let next = null;
   if (c && piece.terrain === 'salvo') next = spreadFrom(rivalShown.grid, [c[0], c[1]], missileAmmoInHand().length);
   else if (c) next = footprint(piece.terrain, [c[0], c[1]]);
-  if (JSON.stringify(next) === JSON.stringify(aimHover)) return;
+  const at = c && piece.terrain === 'salvo' ? [c[0], c[1]] : null;
+  if (JSON.stringify(next) === JSON.stringify(aimHover) && JSON.stringify(at) === JSON.stringify(aimAt)) return;
   aimHover = next;
+  aimAt = at;
   updateAimBar();
 }
 

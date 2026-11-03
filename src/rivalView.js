@@ -80,10 +80,10 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   const innerDashGeo = dashRing(1.0, 1.09, slot / 2);
   const outerDashGeo = dashRing(1.2, 1.29, 0);
 
-  /** One reticle around `cells` ([[x, z]]), with its own materials so it can fade alone. */
-  function makeReticle(cells) {
+  /** One reticle around `cells` ([[x, z]]), centred on cell `at` (or their middle), with its own materials so it can fade alone. */
+  function makeReticle(cells, at = null) {
     const pts = cells.map(([x, z]) => hexToWorld(x, z));
-    const { x: cx, z: cz } = centreOf(cells);
+    const { x: cx, z: cz } = centreOf(cells, at);
     const radius = Math.max(...pts.map((p) => Math.hypot(p.x - cx, p.z - cz))) + 0.55;
     const g = new THREE.Group();
     g.position.set(cx, MARK_Y, cz);
@@ -152,7 +152,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     fog: false,
   });
   const arcSize = new THREE.Vector2();
-  const arcByKey = new Map(); // "x,z;x,z" (the cells it wraps) -> path
+  const arcByKey = new Map(); // groupKey of the cells it wraps -> path
   let fog = null;
   let active = false;
   let saved = null;
@@ -276,13 +276,14 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
 
   /**
    * The aiming reticle. `aimed`: [[[x, z], ...]] one footprint per queued strike; `hover`: the cells the picked card
-   * would hit under the cursor, or null. When the hover cells turn up among the aimed ones (the card was just played)
+   * would hit under the cursor, or null; `at`: the cell under the cursor, to centre on (a salvo fans out unevenly
+   * around it), or null for the middle of `hover`. When the hover cells turn up among the aimed ones (the card was just played)
    * the reticle fades out; otherwise a reticle that's no longer wanted goes at once. None over cells already aimed.
    */
-  function setMarkers(aimed, hover = null) {
+  function setMarkers(aimed, hover = null, at = null) {
     const done = new Set(aimed.flat().map(([x, z]) => key(x, z)));
     const isAimed = (cells) => cells.every(([x, z]) => done.has(key(x, z)));
-    const want = hover?.length && !isAimed(hover) ? hover.map(([x, z]) => key(x, z)).join(';') : null;
+    const want = hover?.length && !isAimed(hover) ? groupKey(hover, at) : null;
     let carry = 0; // moving tile to tile: the new reticle picks up where the old one's fade-in was
     if (hoverMark && hoverMark.key !== want) {
       if (isAimed(hoverMark.cells)) hoverMark.g.userData.fade = 0;
@@ -293,22 +294,25 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
       hoverMark = null;
     }
     if (want && !hoverMark) {
-      const g = makeReticle(hover);
+      const g = makeReticle(hover, at);
       g.userData.appear = carry;
       marks.add(g);
       hoverMark = { key: want, cells: hover, g };
     }
   }
 
-  /** Middle of `cells` ([[x, z]]) on the ground: where the reticle around them sits. */
-  function centreOf(cells) {
+  const groupKey = (cells, at) => `${at ? key(at[0], at[1]) : ''}|${cells.map(([x, z]) => key(x, z)).join(';')}`;
+
+  /** Where the reticle around `cells` ([[x, z]]) sits on the ground: on cell `at` if given, else their middle. */
+  function centreOf(cells, at = null) {
+    if (at) return hexToWorld(at[0], at[1]);
     const pts = cells.map(([x, z]) => hexToWorld(x, z));
     return { x: pts.reduce((a, p) => a + p.x, 0) / pts.length, z: pts.reduce((a, p) => a + p.z, 0) / pts.length };
   }
 
-  /** One flight path onto the middle of `cells`, coming in from `dir`, with its own material so it can fade alone. */
-  function makeArc(cells, dir) {
-    const end = centreOf(cells);
+  /** One flight path onto the centre of the reticle around `cells` (see centreOf), coming in from `dir`, with its own material so it can fade alone. */
+  function makeArc(cells, dir, at = null) {
+    const end = centreOf(cells, at);
     const p0 = new THREE.Vector3(end.x + dir.x * 22, 9, end.z + dir.z * 22);
     const p2 = new THREE.Vector3(end.x, MARK_Y, end.z); // in the reticle's plane, so it meets the reticle's centre
     const p1 = p0.clone().lerp(p2, 0.55).add(new THREE.Vector3(0, 6, 0));
@@ -329,7 +333,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     const line = new Line2(geo, mat);
     line.renderOrder = 21;
     line.frustumCulled = false;
-    line.userData = { appear: 0, fade: -1 };
+    line.userData = { cells, appear: 0, fade: -1 };
     return line;
   }
 
@@ -340,22 +344,20 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   }
 
   /**
-   * Flight paths while aiming: one onto the middle of each of `groups` ([[[x, z], ...]], as a reticle wraps them:
-   * the picked card's cells under the cursor), coming in from `dir` (unit {x, z}: where Hive City lies from this city
+   * Flight paths while aiming: one onto the centre of each of `groups` ([[[x, z], ...]], as a reticle wraps them:
+   * the picked card's cells under the cursor; centred on cell `at` if given, as setMarkers), coming in from `dir` (unit {x, z}: where Hive City lies from this city
    * on the War Map), or none if `dir` is null. A path whose cells all turn up in `aimed` ([[x, z]], the queued
    * strikes' cells: the card was just played) fades out; any other path that's no longer wanted goes at once.
    */
-  function setArcs(groups, dir, aimed = []) {
+  function setArcs(groups, dir, aimed = [], at = null) {
     const done = new Set(aimed.map(([x, z]) => key(x, z)));
     const isAimed = (cells) => cells.every(([x, z]) => done.has(key(x, z)));
-    const want = new Map(
-      dir ? groups.filter((cells) => cells?.length && !isAimed(cells)).map((cells) => [cells.map(([x, z]) => key(x, z)).join(';'), cells]) : [],
-    );
+    const want = new Map(dir ? groups.filter((cells) => cells?.length && !isAimed(cells)).map((cells) => [groupKey(cells, at), cells]) : []);
     let carry = 0; // moving tile to tile: new paths pick up where the old ones' fade-in was
     for (const [k, line] of arcByKey) {
       if (want.has(k)) continue;
       arcByKey.delete(k);
-      if (isAimed(k.split(';').map((s) => s.split(',').map(Number)))) line.userData.fade = 0;
+      if (isAimed(line.userData.cells)) line.userData.fade = 0;
       else {
         carry = Math.max(carry, line.userData.appear);
         dropArc(line);
@@ -363,7 +365,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     }
     for (const [k, c] of want) {
       if (arcByKey.has(k)) continue;
-      const line = makeArc(c, dir);
+      const line = makeArc(c, dir, at);
       line.userData.appear = carry;
       arcs.add(line);
       arcByKey.set(k, line);

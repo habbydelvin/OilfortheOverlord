@@ -611,12 +611,13 @@ function homeBearing(r) {
   return { x: dx / len, z: dz / len };
 }
 
-function drawAims(hover = null) {
+/** `at`: a salvo's cell under the cursor, where its reticle centres. */
+function drawAims(hover = null, at = null) {
   if (!shown) return;
   const mine = queue.filter((q) => q.to === shown.id);
   const aimed = mine.map((q) => footprint(q.kind, q.at));
-  rivalView.setMarkers(aimed, hover);
-  rivalView.setArcs(hover ? [hover] : [], homeBearing(shown), aimed.flat());
+  rivalView.setMarkers(aimed, hover, at);
+  rivalView.setArcs(hover ? [hover] : [], homeBearing(shown), aimed.flat(), at);
 }
 
 rig.onZoomPastMax = () => {
@@ -691,7 +692,7 @@ function moveDrag(e) {
   if (c && shown?.grid.has(c[0], c[1])) {
     hover = drag.kind === 'salvo' ? spreadFrom(shown.grid, c, silo) : footprint('missile', c);
   }
-  drawAims(hover);
+  drawAims(hover, hover && drag.kind === 'salvo' ? c : null);
 }
 window.addEventListener('pointermove', moveDrag);
 window.addEventListener('pointerup', (e) => {
