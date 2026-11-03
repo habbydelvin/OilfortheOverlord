@@ -167,6 +167,14 @@ export class Placement {
     });
   }
 
+  /** Buildings a player missile may destroy (not a Capital). */
+  missileable(cells) {
+    return cells.filter(([x, z]) => {
+      const cell = this.grid.get(x, z);
+      return cell && isBuilding(cell.terrain) && cell.terrain !== 'capital';
+    });
+  }
+
   validate(cells) {
     if (this.piece?.terrain === 'spark') {
       if (!cells.some(([x, z]) => this.grid.has(x, z))) return { ok: false, reason: L('No tiles in range', '范围内没有地块') };
@@ -186,6 +194,15 @@ export class Placement {
     if (this.piece?.terrain === 'militia') {
       const cell = this.grid.get(...cells[0]);
       if (!cell || !isCamp(cell.terrain)) return { ok: false, reason: L('The militia only clears bandit and rebel camps', '民兵只能清除匪营和叛军营地') };
+      return { ok: true, reason: '' };
+    }
+    if (this.piece?.terrain === 'missile' || this.piece?.terrain === 'missile2') {
+      if (!this.missileable(cells).length) return { ok: false, reason: L('No building to destroy here', '这里没有可摧毁的建筑') };
+      return { ok: true, reason: '' };
+    }
+    if (this.piece?.terrain === 'overtime') {
+      const cell = this.grid.get(...cells[0]);
+      if (!cell || cell.terrain !== 'milfactory') return { ok: false, reason: L('Play this on a Military Factory', '请打在军事工厂上') };
       return { ok: true, reason: '' };
     }
     // Optional extra rule (the tutorial: only the highlighted cells).

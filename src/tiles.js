@@ -88,6 +88,61 @@ export const TERRAINS = {
     rule: '1× oil per adjacent station',
     stats: { manpower: -1, oilMultiplierPerAdjacent: { station: 1 } },
   },
+  milfactory: {
+    name: 'Military Factory',
+    trigger: 'On trigger',
+    top: 0x6a3a32,
+    edge: 0x3e221c,
+    category: 'building',
+    buildable: false,
+    weight: 0.5,
+    rule: '-3 oil each season · After one year, produce 1 Missile',
+    stats: { oil: -3 },
+  },
+  missilelab: {
+    name: 'Missile Recipe Lab',
+    trigger: 'Passive',
+    top: 0x4a5a6e,
+    edge: 0x2f3c4a,
+    category: 'building',
+    buildable: false,
+    weight: 0.5,
+    rule: 'Adjacent Military Factories produce +1 Missile',
+    stats: { manpower: -2 },
+  },
+  warhead: {
+    name: 'Warhead Institute',
+    trigger: 'Passive',
+    top: 0x8a5a28,
+    edge: 0x5c3a18,
+    category: 'building',
+    buildable: false,
+    weight: 0.5,
+    rule: "Adjacent factories' missiles destroy a 2×2",
+    stats: { manpower: -2 },
+  },
+  intercept: {
+    name: 'Intercept Network',
+    trigger: 'When adjacent tiles are attacked',
+    top: 0x3a6a5a,
+    edge: 0x24463c,
+    category: 'building',
+    buildable: false,
+    weight: 0.5,
+    rule: 'Spend 3 oil to stop one hit on an adjacent building',
+    stats: {},
+  },
+  magazine: {
+    name: 'Missile Magazine',
+    trigger: 'Passive',
+    top: 0x4a5238,
+    edge: 0x2c3220,
+    category: 'building',
+    buildable: false,
+    weight: 0.5,
+    rule: 'Missile capacity +1',
+    stats: { manpower: -2, missileCap: 1 },
+  },
 
   // ---- wasteland (4 cosmetic variants, share one draw weight: 4 × 1.34 ≈ 30% of draws) ----
   wasteland1: {
@@ -320,9 +375,48 @@ export const ACTIONS = {
     weight: 0, // shop only
     rule: 'Clear one bandit or rebel camp',
   },
+  missile: {
+    name: 'Missile',
+    trigger: 'On play',
+    top: 0x7a3a2a,
+    edge: 0x4e241a,
+    category: 'action',
+    symbol: '▲',
+    range: 0,
+    weight: 0, // produced by a Military Factory
+    rule: 'Destroy one building',
+  },
+  missile2: {
+    name: 'Missile',
+    trigger: 'On play',
+    top: 0x9b3e28,
+    edge: 0x5c2418,
+    category: 'action',
+    symbol: '▲',
+    size: 2,
+    weight: 0, // produced next to a Warhead Institute
+    rule: 'Destroy buildings in a 2×2 square',
+  },
+  overtime: {
+    name: 'Work Overtime',
+    trigger: 'On play',
+    top: 0x6e4a2a,
+    edge: 0x46301c,
+    category: 'action',
+    symbol: '⌛',
+    range: 0,
+    weight: 0.4,
+    rule: 'Spend 2 oil: a Military Factory gains +1 season of progress',
+  },
 };
 
-const TRIGGER_ZH = { Passive: '被动', 'On trigger': '触发时', Junk: '废料', 'On play': '打出时' };
+const TRIGGER_ZH = {
+  Passive: '被动',
+  'On trigger': '触发时',
+  Junk: '废料',
+  'On play': '打出时',
+  'When adjacent tiles are attacked': '周围地块被攻击时',
+};
 const WASTELAND_ZH = { name: '荒地', rule: '7 格荒地群（一格及其周围 6 格）可能引来匪营' };
 
 /** Chinese name and rule for each card; a function rule reads the live SCALE values like the English getter. */
@@ -354,6 +448,14 @@ const ZH = {
   demolish: { name: '拆除', rule: '移除一个地块' },
   demolish2: { name: '拆迁队', rule: '移除菱形范围内至多 4 个地块' },
   militia: { name: '派遣民兵', rule: '清除一个匪营或叛军营地' },
+  milfactory: { name: '军事工厂', rule: '每季 -3 石油 · 一年后生产 1 枚导弹' },
+  missilelab: { name: '导弹配方改良所', rule: '相邻军事工厂生产导弹数量 +1' },
+  warhead: { name: '弹头研究所', rule: '相邻工厂产出的导弹摧毁 2×2' },
+  intercept: { name: '拦截网络', rule: '花费 3 石油，阻止相邻建筑被攻击一次' },
+  magazine: { name: '储弹仓', rule: '导弹容量 +1' },
+  missile: { name: '导弹', rule: '摧毁 1 格建筑' },
+  missile2: { name: '导弹', rule: '摧毁 2×2 范围内的建筑' },
+  overtime: { name: '熬夜加班', rule: '花费 2 石油：一座军事工厂生产进度 +1 季' },
 };
 
 // name, trigger and rule become getters that answer in the current language (the English stays above).
@@ -454,6 +556,10 @@ export const AREAS = {
   crater: 'plus',
   spark: 'square',
   demolish2: 'block2',
+  missilelab: 'plus',
+  warhead: 'plus',
+  intercept: 'plus',
+  missile2: 'block2',
 };
 
 export function areaGridHTML(area) {
@@ -506,10 +612,30 @@ export const SHOP_ITEMS = [
   ['demolish', 2],
   ['demolish2', 4],
   ['militia', 2],
+  ['milfactory', 5],
+  ['missilelab', 4],
+  ['warhead', 4],
+  ['intercept', 4],
+  ['magazine', 4],
+  ['overtime', 3],
 ];
 
 /** Basic tiles sold in the shop. They are never locked and never offered as a free tile pick. */
 export const BASIC_SHOP = new Set(['station', 'farm', 'settlement']);
+
+/** Shop / free-pick cards that stay hidden until another card has been unlocked. */
+export const SHOP_REQUIRES = {
+  missilelab: 'milfactory',
+  warhead: 'milfactory',
+  magazine: 'milfactory',
+  overtime: 'milfactory',
+};
+
+/** True if this shop item may appear (its prerequisite is already unlocked). */
+export const shopReady = (key, unlocked) => {
+  const need = SHOP_REQUIRES[key];
+  return !need || unlocked.has(need);
+};
 
 /**
  * Card pictures: front renders of each tile model (public/cards/snapshots, made by tools/card-snapshots.html).

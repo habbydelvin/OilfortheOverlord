@@ -710,11 +710,14 @@ export class MissileStrike {
     const c = this.cfg;
     // Launched from the ground (a silo in Pre-war Ruins): a tall lob from the launch cell.
     if (m.target.from) {
-      const start = new THREE.Vector3(m.target.from.x, 0.3, m.target.from.z);
+      const f = m.target.from;
+      const start = new THREE.Vector3(f.x, f.y ?? 0.3, f.z);
       const end = new THREE.Vector3(m.target.x, 0, m.target.z);
       const len = start.distanceTo(end);
       m.p0 = start;
-      m.p1 = start.clone().lerp(end, 0.5).addScaledVector(UP, Math.max(5, len * 1.4));
+      // Ground silo: a tall lob. Hand / air launch: a shorter arc so it dives onto the tile.
+      const loft = f.y != null ? Math.max(2.5, len * 0.28) : Math.max(5, len * 1.4);
+      m.p1 = start.clone().lerp(end, 0.45).addScaledVector(UP, loft);
       m.p2 = end;
       return;
     }

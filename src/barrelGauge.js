@@ -78,6 +78,7 @@ function restart(el, cls) {
  */
 export class OilFlights {
   #flights = [];
+  #idle = [];
 
   constructor(layer, gauge, onLand) {
     this.layer = layer;
@@ -136,6 +137,18 @@ export class OilFlights {
       f.el.style.opacity = String(Math.min(1, t * 6));
       f.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -50%) scale(${s.toFixed(3)}) rotate(${(t * 200 * Math.sign(f.side)).toFixed(0)}deg)`;
     }
+    if (!this.#flights.length) this.#flushIdle();
+  }
+
+  /** Run `cb` once every barrel in the air has landed (or immediately if none). */
+  whenIdle(cb) {
+    if (!this.#flights.length) cb();
+    else this.#idle.push(cb);
+  }
+
+  #flushIdle() {
+    const waiters = this.#idle.splice(0);
+    for (const cb of waiters) cb();
   }
 
   /** Land everything now (the payout was skipped). */
@@ -145,11 +158,13 @@ export class OilFlights {
       this.onLand(f.value);
     }
     this.#flights = [];
+    this.#flushIdle();
   }
 
   /** Drop everything without landing it (a reset). */
   clear() {
     for (const f of this.#flights) f.el.remove();
     this.#flights = [];
+    this.#idle.length = 0;
   }
 }
