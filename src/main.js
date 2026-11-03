@@ -720,7 +720,11 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
     ...t,
     ...toWorld(t),
     cell: { x: t.x, z: t.z },
-    from: t.from ? toWorld(t.from) : undefined,
+    from: t.from
+      ? t.from.y != null
+        ? { x: t.from.x, y: t.from.y, z: t.from.z }
+        : toWorld(t.from)
+      : undefined,
     flight: t.from || t.flight ? t.flight : missileCfg.followFlight,
   }));
   const original = new Map(tracked.map((t, i) => [t, targets[i]]));
@@ -2671,7 +2675,7 @@ function debugEnsureFactory() {
   return { cells: [grid.get(x, z)], placed: true };
 }
 
-/** G: put a factory on the board, then play the season settle so missiles fly from it. */
+/** L: put a factory on the board, then play the season settle so a missile is produced. */
 function debugMissileSettle() {
   if (turn.over || striking || shopOpen || eventOpen || payout.active) {
     return L('Finish the current screen first', '请先结束当前界面');
@@ -3537,7 +3541,7 @@ window.addEventListener('keydown', (e) => {
   else if (dev && k === 'v' && !e.repeat) debugEvent();
   else if (dev && k === 't' && !e.repeat) debugTarget(e.shiftKey);
   else if (dev && k === 'x' && !e.repeat) setExpansionMode(!grid.expansionMode);
-  else if (!RELEASE && k === 'g' && !e.repeat) {
+  else if (!RELEASE && k === 'l' && !e.repeat) {
     if (tutorial.active) return tutorial.nudge();
     const msg = debugMissileSettle();
     toast(msg, msg.includes('Finish') || msg.includes('请先') ? 'bad' : 'good');
