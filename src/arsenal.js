@@ -1,11 +1,30 @@
-import { DIRS } from './grid.js';
+import { DIRS, hexesAround } from './grid.js';
 
 /** Oil a Military Factory spends each season it works. */
 export const FACTORY_OIL = 3;
 /** Oil Work Overtime spends to add one season of progress. */
 export const OVERTIME_OIL = 2;
 /** Oil an Intercept Network spends to stop one incoming hit. */
+/**
+ * Intercept Network tuning, read live (combat-test.html's debug panel changes it; saved to localStorage).
+ * range: cells covered in the attack phase · chance: one shot stops a strike · oil: cost per shot.
+ */
+export const INTERCEPT_DEFAULTS = { range: 2, chance: 0.65, oil: 3 };
+const INTERCEPT_KEY = 'oto.intercept';
+export const INTERCEPT = { ...INTERCEPT_DEFAULTS };
+try {
+  Object.assign(INTERCEPT, JSON.parse(localStorage.getItem(INTERCEPT_KEY) ?? '{}'));
+} catch {
+  /* keep defaults */
+}
+export const saveIntercept = () => localStorage.setItem(INTERCEPT_KEY, JSON.stringify(INTERCEPT));
+export const clearIntercept = () => {
+  localStorage.removeItem(INTERCEPT_KEY);
+  Object.assign(INTERCEPT, INTERCEPT_DEFAULTS);
+};
 export const INTERCEPT_OIL = 3;
+/** Chance one Intercept Network shot stops an incoming strike. */
+export const INTERCEPT_CHANCE = 0.65;
 /** Seasons of paid work to finish one missile (a default year). */
 export const FACTORY_SEASONS = 4;
 /** Missile slots the city starts with (each staffed Magazine adds one more). */
@@ -28,6 +47,19 @@ export function factoryYield(grid, cell, idleKeys) {
 /** Intercept Networks adjacent to a cell, in placement order. */
 export function interceptorsBeside(grid, x, z) {
   return near(grid, x, z).filter((n) => n.terrain === 'intercept');
+}
+
+/** How far (in cells) an Intercept Network covers in the attack phase. */
+export const INTERCEPT_RANGE = 2;
+
+/** Intercept Networks within `range` cells of (x, z), nearest first. */
+export function interceptorsNear(grid, x, z, range = INTERCEPT.range) {
+  const out = [];
+  for (const [cx, cz] of hexesAround(x, z, range)) {
+    const c = grid.get(cx, cz);
+    if (c?.terrain === 'intercept') out.push(c);
+  }
+  return out;
 }
 
 export const isPlayerMissile = (key) => key === 'missile' || key === 'missile2';

@@ -11,8 +11,8 @@ Three AI rival city-states, all vassals of the Overlord, compete with the player
 |---|---|---|
 | **1** | **War Map overlay + read-only rival city views** | Browse the continent and inspect 3 rival cities |
 | 2 | Rival simulation per turn: economy, build-up, tension | Rival cities grow between seasons |
-| 3 | Missile Silo, strike cards, strike planning, Attack, resolver, cinematic | First combat loop |
-| 4 | Interceptors and shields on both sides; rival counterstrikes | Defense matters |
+| 3 | **Attack phase (built):** aim at rival cities, everyone fires after scoring, War Map playback, Capital HP, elimination, victory | First combat loop |
+| 4 | Polish: zoomed-in interceptor tracers, mushroom billows, tuning sliders, full Chinese text | Defense feels alive |
 | 5 | Rival outposts on the player board; Barracks/garrison/militia | Ground pressure |
 | 6 | Nukes, Doomsday, fallout, Nuclear Winter ending | Shared-loss endgame |
 | 7 | Dialogue, events, Chinese text, tuning sliders | Polish |
@@ -183,16 +183,32 @@ Rival turn simulation, tension changes, missiles, strike cards, defenses, outpos
 - Rival economy via `computeEconomy(rival.grid, …)` if it works off-board; otherwise a simplified model.
 - Tension (0–100) per rival, shown on the War Map.
 
-## Phase 3: First combat loop
-- Missile Silo tile builds strike cards over seasons (oil cost).
-- Rival view gets a strike hand: drag cards onto tiles to place target markers; undo/retarget freely.
-- Attack button → pure `resolveStrike(loadout, defenderCity)` decides every result, then the cinematic plays it back (reuse `MissileStrike`, `craterAt`).
-- Damage report: buildings destroyed, production denied, tension change.
+## Phase 3: Attack phase (built)
+Replaces the old one-strike-at-a-time plan. Uses the existing Military Factory, Recipe Lab, Warhead Institute,
+Missile Magazine and Intercept Network (`arsenal.js`) on both sides; no separate silo or battery.
 
-## Phase 4: Defenses
-- Interceptor Battery and Shield Generator on both sides, resolved by the same `resolveStrike`.
-- `missiles.js`: per-strike bearing, interceptor counter-missiles, mid-air bursts, shield hit effects.
-- Rival counterstrikes against the player board.
+- **Aiming:** War Map → a rival city → **Attack**. Click tiles to aim missiles from your silo (click again to
+  take one back; Clear returns all). Aimed missiles leave the silo. Toggle Missile / Warhead (2×2 diamond).
+- **Turn flow:** End Turn → payout → factories → scoring/tribute → **attack phase** (`main.js runAttackPhase`)
+  → rivals grow → shop or next hand. Skipped when nobody fires.
+- **Resolution (`war.js resolve`, pure):** launch order is round robin over attackers. Each Intercept Network
+  within 2 cells of the footprint gets one shot per phase: 3 oil, 65% (`INTERCEPT_CHANCE`) to stop the whole
+  strike; a miss lets the next network try. A hit craters the tiles; a Capital hit costs 1 HP (warhead 2).
+- **Capital HP:** 5 for every city. At 0 the city is eliminated (rivals can eliminate each other).
+- **Rival AI (`rivalAI.js chooseStrikes`):** tension per city (personality aggression floor, +retaliation per
+  hit taken, fades each season); fires past 0.6 at the most-hated / strongest / most wounded city, keeps a
+  personality reserve. Aims at the Capital when the odds of getting through are good enough, else oil and
+  interceptors. No rival fires at the player in year 1.
+- **Playback:** `globeView.playAttack(strikes)`: arcs between cities, interceptors rising from the target,
+  air bursts, ground flashes, HP pips on the labels, fallen cities turn to craters. Skip speeds it up. Then a
+  results panel, then your board takes its hits with the strike cinematic.
+- **Endings:** victory when every rival has fallen (tribute still applies throughout); defeat if your Capital
+  reaches 0 HP, or three missed tributes.
+
+## Phase 4: Polish
+- Zoomed-in interceptor detail (per-network tracers, near misses, debris), mushroom billows on hits.
+- Debug sliders: intercept chance/range, Capital HP, tension rates, reserves.
+- Loot for eliminating a rival (open question), full Chinese text pass.
 
 ## Phase 5: Ground pressure
 - Rival outposts on the player board (Rival Derrick, Forward Camp, Spotter Post), reusing camp spawn/clear code (`spawnRaider`, `spawnBandits`, `clearCamp`).

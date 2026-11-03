@@ -97,6 +97,7 @@
             <div class="bar" id="quotaBarrels"></div>
             <div class="top-frame top-overlord"><img src="/portraits/TheOverlord01.png?v=20261027-1828" alt="" /></div>
             <div class="strikes" id="strikes" title="Failed tributes: at 3 the Overlord destroys you" data-zh-title="失职次数：满 3 次，霸主将毁灭你"><i></i><i></i><i></i></div>
+            <div class="capital-hp" id="capitalHp" title="Capital HP: at 0 your city falls" data-zh-title="首都耐久：归零则城市陷落"></div>
           </div>
         </div>
         <div class="top-tab"><div class="count" id="quotaCount">0 / 20 barrels</div></div>
@@ -245,10 +246,22 @@
         <button id="btnRivalBack" type="button">◀ <span data-zh="战争地图">War Map</span></button>
         <div id="rivalTitle"></div>
         <div id="rivalStats"></div>
+        <button id="btnRivalAttack" type="button" data-zh="进攻">Attack</button>
+        <div id="rivalAim" class="hidden">
+          <button id="btnRivalKind" type="button"></button>
+          <span id="rivalQueue"></span>
+          <button id="btnRivalClear" type="button" data-zh="撤销全部">Clear</button>
+        </div>
       </header>
+      <div id="warUI" class="hidden">
+        <div class="war-title" data-zh="攻击阶段">Attack Phase</div>
+        <div id="warReport" class="war-report hidden"></div>
+        <div id="warAlert" class="war-alert hidden"></div>
+        <button id="btnWarSkip" type="button" class="btn" data-zh="跳过">Skip</button>
+      </div>
       <div id="gameover" class="hidden">
         <div class="box">
-          <h1 data-zh="城市已陷落">The city has fallen</h1>
+          <h1 id="gameoverTitle" data-zh="城市已陷落">The city has fallen</h1>
           <p id="gameoverReason"></p>
           <p class="stats" id="gameoverStats"></p>
           <button id="btnRestart" class="btn gold" data-zh="重新开始">Start again</button>
