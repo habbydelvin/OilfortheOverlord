@@ -681,7 +681,187 @@ export class MissileStrike {
 
   /** True while missiles are flying or clouds are still up. */
   get busy() {
-    return this.#missiles.length > 0 || this.#blasts.length > 0 || this.#timers.length > 0;
+    return this.#missiles.length > 0 || this.#blasts.length > 0 || this.#timers.length > 0 || this.#guns.length > 0 || this.#rounds.length > 0;
+  }
+
+  // ---------- interception (attack phase): CIWS turrets shoot incoming missiles down ----------
+
+  /** Where the missile flying at `target` is right now (null if it isn't in the air). */
+  position(target) {
+    return this.#missiles.find((m) => m.target === target && m.mesh)?.mesh.position ?? null;
+  }
+
+  /**
+   * CIWS fire at the missile flying toward `aim()` (a moving world point, null once it's gone).
+   * gun: { turret, pivot, muzzles } (interceptMesh.js) or null (then `from` is the muzzle). The turret swings onto
+   * the missile, then pours rounds at where it's going. success: the spread closes on it and after `kill` s of
+   * firing onKill() runs (the caller shoots it down); a miss streams past behind it until `dur` runs out.
+   */
+  fireCIWS(gun, from, aim, { dur = 0.9, kill = 0.5, success = true, onKill, onFire } = {}) {
+    this.#guns.push({ gun, from: from.clone(), aim, dur, kill, success, onKill, onFire, age: 0, acc: 0, barrel: 0, last: null, vel: new THREE.Vector3(), killed: false, firing: false });
+  }
+
+  #guns = [];
+  #rounds = [];
+  #tracers = null;
+  static SLEW = 0.22; // seconds to swing onto the target before opening fire
+  static ROUND_SPEED = 24;
+  static RATE = 40; // rounds per second (both barrels together)
+
+  #ensureTracers() {
+    if (this.#tracers) return;
+    const max = 900;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(max * 6), 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(max * 6), 3));
+    geo.setDrawRange(0, 0);
+    const lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, fog: false }));
+    lines.frustumCulled = false;
+    lines.renderOrder = 11;
+    this.group.add(lines);
+    this.#tracers = { lines, max };
+  }
+
+  #muzzle(g, out) {
+    const m = g.gun?.muzzles?.[g.barrel % (g.gun.muzzles.length || 1)];
+    return m ? m.getWorldPosition(out) : out.copy(g.from);
+  }
+
+  /** Swing the turret (yaw) and barrels (pitch) toward a world point, eased at `rate`. */
+  #slew(g, point, dt, rate = 14) {
+    const { turret, pivot } = g.gun ?? {};
+    if (!turret || !turret.parent) return;
+    const local = turret.parent.worldToLocal(point.clone());
+    const yaw = Math.atan2(local.x - turret.position.x, local.z - turret.position.z);
+    let d = yaw - turret.rotation.y;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    const k = 1 - Math.exp(-rate * dt);
+    turret.rotation.y += d * k;
+    if (pivot) {
+      const flat = Math.hypot(local.x - turret.position.x, local.z - turret.position.z);
+      const elev = Math.atan2(local.y - turret.position.y - pivot.position.y, flat);
+      pivot.rotation.x += (-THREE.MathUtils.clamp(elev, -0.1, 1.45) - pivot.rotation.x) * k;
+    }
+  }
+
+  #updateGuns(dt) {
+    const tmp = new THREE.Vector3();
+    const lead = new THREE.Vector3();
+    for (let i = this.#guns.length - 1; i >= 0; i--) {
+      const g = this.#guns[i];
+      g.age += dt;
+      const target = g.aim();
+      if (target) {
+        if (g.last) g.vel.copy(target).sub(g.last).divideScalar(Math.max(dt, 1e-3));
+        g.last = (g.last ?? new THREE.Vector3()).copy(target);
+      }
+      const t = g.last;
+      if (!t) {
+        this.#guns.splice(i, 1);
+        continue;
+      }
+      // Lead the target: aim where it will be when a round gets there.
+      const muzzle = this.#muzzle(g, tmp);
+      const flight = muzzle.distanceTo(t) / MissileStrike.ROUND_SPEED;
+      lead.copy(t).addScaledVector(g.vel, flight);
+      this.#slew(g, lead, dt);
+      const fireT = g.age - MissileStrike.SLEW;
+      const stopAt = g.success ? g.kill + 0.12 : g.dur;
+      if (fireT < 0) continue;
+      if (fireT > stopAt || (g.killed && fireT > g.kill + 0.12) || (!target && fireT > 0.1)) {
+        this.#guns.splice(i, 1);
+        continue;
+      }
+      if (!g.firing) {
+        g.firing = true;
+        g.onFire?.(g.success ? g.kill + 0.12 : g.dur);
+      }
+      // A hit closes the spread onto the missile; a miss stays wide and trails behind it.
+      const spread = g.success ? THREE.MathUtils.lerp(0.9, 0.06, Math.min(1, fireT / g.kill)) : 0.75;
+      const behind = g.success ? 0 : 0.28;
+      g.acc += MissileStrike.RATE * dt;
+      for (; g.acc >= 1; g.acc--) {
+        g.barrel++;
+        const from = this.#muzzle(g, new THREE.Vector3());
+        const goal = lead.clone().addScaledVector(g.vel, -behind).add(new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(spread));
+        const dir = goal.sub(from);
+        const dist = dir.length();
+        dir.divideScalar(dist || 1);
+        this.#rounds.push({ pos: from, vel: dir.multiplyScalar(MissileStrike.ROUND_SPEED * rand(0.92, 1.08)), age: 0, life: dist / MissileStrike.ROUND_SPEED + rand(0.15, 0.35) });
+        // Muzzle flash, flickering.
+        if (Math.random() < 0.6)
+          this.flames.spawn({ pos: from.clone(), size0: rand(0.12, 0.2), size1: 0.03, life: 0.05, color0: '#fff4c0', color1: '#ff8a20', opacity: 1, fadeIn: 0.005 });
+        if (Math.random() < 0.15)
+          this.smoke.spawn({ pos: from.clone(), vel: new THREE.Vector3(rand(-0.2, 0.2), rand(0.2, 0.5), rand(-0.2, 0.2)), drag: 1.5, lift: 0.3, size0: 0.05, size1: rand(0.15, 0.25), life: rand(0.5, 0.8), color0: '#d8d0c0', color1: '#8a8478', opacity: 0.45, fadeIn: 0.02, fadeStart: 0.2 });
+      }
+      // Flak bursting around the missile while the rounds reach it.
+      if (fireT > flight && Math.random() < dt * (g.success ? 26 : 14)) {
+        const p = t.clone().addScaledVector(g.vel, -behind * 0.6).add(new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(spread * 0.8 + 0.1));
+        this.flames.spawn({ pos: p, size0: 0.05, size1: rand(0.18, 0.3), life: 0.09, color0: '#ffffff', color1: '#ffb040', opacity: 1, fadeIn: 0.005 });
+        this.smoke.spawn({ pos: p.clone(), vel: new THREE.Vector3(rand(-0.2, 0.2), rand(-0.1, 0.2), rand(-0.2, 0.2)), drag: 2, lift: 0.05, size0: 0.06, size1: rand(0.22, 0.34), life: rand(0.8, 1.3), color0: '#3a3632', color1: '#6a645c', opacity: rand(0.55, 0.8), fadeIn: 0.02, fadeStart: 0.2 });
+      }
+      if (g.success && !g.killed && fireT >= g.kill) {
+        g.killed = true;
+        g.onKill?.();
+      }
+    }
+  }
+
+  #updateRounds(dt) {
+    if (!this.#rounds.length && !this.#tracers) return;
+    this.#ensureTracers();
+    const { lines, max } = this.#tracers;
+    const pos = lines.geometry.attributes.position;
+    const col = lines.geometry.attributes.color;
+    let n = 0;
+    for (let i = this.#rounds.length - 1; i >= 0; i--) {
+      const r = this.#rounds[i];
+      r.age += dt;
+      r.pos.addScaledVector(r.vel, dt);
+      r.vel.y -= 1.2 * dt; // a touch of drop
+      if (r.age >= r.life || n >= max) {
+        this.#rounds.splice(i, 1);
+        continue;
+      }
+      const fade = 1 - Math.max(0, (r.age - r.life * 0.7) / (r.life * 0.3));
+      const tail = 0.035; // seconds of travel the streak covers
+      pos.setXYZ(n * 2, r.pos.x, r.pos.y, r.pos.z);
+      pos.setXYZ(n * 2 + 1, r.pos.x - r.vel.x * tail, r.pos.y - r.vel.y * tail, r.pos.z - r.vel.z * tail);
+      col.setXYZ(n * 2, 1.6 * fade, 1.15 * fade, 0.45 * fade);
+      col.setXYZ(n * 2 + 1, 0.5 * fade, 0.2 * fade, 0.02 * fade);
+      n++;
+    }
+    lines.geometry.setDrawRange(0, n * 2);
+    pos.needsUpdate = true;
+    col.needsUpdate = true;
+  }
+
+  /** A mid-air explosion: flash, fire and a puff of smoke (big: a missile shot down; small: an interceptor popping). */
+  airBurst(pos, big = true) {
+    const S = big ? 1 : 0.45;
+    this.flames.spawn({ pos: pos.clone(), size0: 0.4 * S, size1: 2.2 * S, life: 0.35, color0: '#ffffff', color1: big ? this.cfg.fireColor : '#9affe0', colorTime: 0.4, fadeIn: 0.01, fadePow: 2 });
+    for (let i = 0; i < Math.round(10 * S); i++)
+      this.flames.spawn({ pos: pos.clone(), vel: new THREE.Vector3(rand(-3, 3), rand(-1.5, 3), rand(-3, 3)).multiplyScalar(S), drag: 3, size0: 0.25 * S, size1: 0.05, life: rand(0.3, 0.6), color0: '#fff0b0', color1: '#ff5010', opacity: 1, fadeIn: 0.01 });
+    for (let i = 0; i < Math.round(14 * S); i++)
+      this.smoke.spawn({ pos: pos.clone().add(new THREE.Vector3(rand(-0.2, 0.2), rand(-0.2, 0.2), rand(-0.2, 0.2))), vel: new THREE.Vector3(rand(-0.8, 0.8), rand(-0.2, 0.6), rand(-0.8, 0.8)), drag: 1.8, lift: 0.15, size0: 0.25 * S, size1: rand(0.8, 1.3) * S, life: rand(1.4, 2.2), color0: '#5a5048', color1: this.cfg.smokeColor2, colorTime: 0.3, opacity: rand(0.6, 0.85), fadeIn: 0.03, fadeStart: 0.3 });
+    if (big) {
+      this.light.position.copy(pos);
+      this.#lightLevel = Math.max(this.#lightLevel, 0.7);
+    }
+  }
+
+  /** Shoot down the missile flying at `target`: it bursts in the air, never lands, and its job counts it done. */
+  destroy(target) {
+    const i = this.#missiles.findIndex((m) => m.target === target && m.mesh);
+    if (i < 0) return false;
+    const m = this.#missiles[i];
+    this.airBurst(m.mesh.position, true);
+    this.group.remove(m.mesh);
+    m.glow.material.dispose();
+    this.#missiles.splice(i, 1);
+    m.job.hooks.onIntercept?.(m.target, m.i);
+    if (--m.job.left === 0) this.#finish(m.job);
+    return true;
   }
 
   /**
@@ -791,6 +971,8 @@ export class MissileStrike {
     }
 
     this.#updateUpright(dt);
+    this.#updateGuns(dt);
+    this.#updateRounds(dt);
 
     // Missiles in flight.
     for (let i = this.#missiles.length - 1; i >= 0; i--) {
@@ -799,7 +981,8 @@ export class MissileStrike {
       if (m.age < 0) continue;
       if (!m.mesh) this.#spawnMissile(m);
       // A ground launch can fly slower (target.flight / target.accel) so the camera can follow it.
-      const u = Math.min(1, Math.pow(m.age / (m.target.flight ?? c.flightTime), m.target.accel ?? c.accel));
+      // mustStop: an interceptor is on its way; it never reaches the ground (a guard, should the shot run late).
+      const u = Math.min(m.target.mustStop ? 0.97 : 1, Math.pow(m.age / (m.target.flight ?? c.flightTime), m.target.accel ?? c.accel));
       const prev = this.#tmp.copy(m.mesh.position);
       bezier(m.mesh.position, m.p0, m.p1, m.p2, u);
       bezierTangent(this.#dir, m.p0, m.p1, m.p2, Math.min(u, 0.999));
@@ -1028,6 +1211,8 @@ export class MissileStrike {
     this.#missiles.length = 0;
     for (const u of this.#upright) this.group.remove(u.mesh);
     this.#upright.length = 0;
+    this.#guns.length = 0;
+    this.#rounds.length = 0;
     this.#blasts.length = 0;
     this.#timers.length = 0;
     this.smoke.clear();

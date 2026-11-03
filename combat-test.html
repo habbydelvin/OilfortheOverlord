@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Combat test</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+        font-family: 'Avenir Next', 'Nunito', 'Segoe UI', system-ui, sans-serif;
+        color: #e8e2d8;
+      }
+      #panel {
+        position: fixed;
+        z-index: 5;
+        top: 12px;
+        left: 12px;
+        width: 320px;
+        padding: 12px 14px;
+        background: rgba(12, 10, 8, 0.82);
+        border: 1px solid #4a4036;
+        border-radius: 6px;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      #panel h1 {
+        margin: 0 0 6px;
+        font-size: 16px;
+        letter-spacing: 0.04em;
+      }
+      #panel p {
+        margin: 0 0 10px;
+        color: #c8bfb2;
+      }
+      button {
+        font: inherit;
+        color: #1a140e;
+        background: #e8bf68;
+        border: 0;
+        border-radius: 4px;
+        padding: 6px 12px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      #status {
+        margin-top: 8px;
+        color: #d8b27a;
+      }
+      #log {
+        margin-top: 8px;
+        max-height: 180px;
+        overflow: auto;
+        color: #b7c4bc;
+      }
+      #log div {
+        margin-top: 4px;
+      }
+      a {
+        color: #d8b27a;
+      }
+      .tune-head {
+        display: flex;
+        justify-content: space-between;
+        margin: 12px 0 4px;
+        padding-top: 8px;
+        border-top: 1px solid #4a4036;
+      }
+      .tune-row {
+        display: grid;
+        grid-template-columns: 1fr 110px 36px;
+        gap: 6px;
+        align-items: center;
+        font-size: 12px;
+      }
+      .tune-row b {
+        text-align: right;
+        color: #e8bf68;
+      }
+      .tune-btns {
+        display: flex;
+        gap: 6px;
+        margin: 8px 0;
+      }
+      #panel {
+        max-height: calc(100vh - 24px);
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="crt" style="position: fixed; inset: 0; pointer-events: none"></div>
+    <div id="panel">
+      <h1>Combat test</h1>
+      <p>A prebuilt city. Next turn sends missiles in, filmed with the game's strike camera. Each Intercept Network is a CIWS bunker: its turret swings onto the missile and fills the sky with rounds. A hit brings it down in mid-air; a miss streams past behind it. Drag / scroll / WASD to move the camera.</p>
+      <button id="next" type="button" disabled>Next turn</button>
+      <div id="status">Loading the city…</div>
+      <div id="log"></div>
+      <div class="tune-head">
+        <b>Tuning</b>
+        <label><input id="showRings" type="checkbox" checked /> Range rings</label>
+      </div>
+      <div id="tuning"></div>
+      <div class="tune-btns">
+        <button id="resetCity" type="button">Reset city</button>
+        <button id="resetTune" type="button">Default tuning</button>
+      </div>
+      <p><a href="/">← Back to the table</a></p>
+    </div>
+    <script type="module" src="/src/combatTest.js"></script>
+  </body>
+</html>

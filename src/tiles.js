@@ -3,6 +3,7 @@ import { clone as cloneModel } from 'three/addons/utils/SkeletonUtils.js';
 import { hasBlockout, loadCoreModels, loadBundle } from './models.js';
 import { buildRaiderCamp } from './raiderMesh.js';
 import { buildLabourCamp } from './labourCampMesh.js';
+import { buildInterceptBunker } from './interceptMesh.js';
 import { copySeam } from './seamlessGround.js';
 import { SCALE } from './scalingConfig.js';
 import { L } from './i18n.js';
@@ -772,6 +773,8 @@ export class TileFactory {
     if (isCamp(terrain) && !this.models?.has(terrain)) return tagSoil(buildRaiderCamp(this.soilGeo, this.soilMat, TERRAINS[terrain].tent));
     // The finished model (LaborCampCity01.fbx); the code-built camp only if that file failed to load.
     if (terrain === 'labourcamp' && !this.models?.has('labourcamp')) return tagSoil(buildLabourCamp(this.soilGeo, this.soilMat));
+    // Intercept Network: the code-built CIWS bunker until a model file exists.
+    if (terrain === 'intercept' && !this.models?.has('intercept')) return tagSoil(buildInterceptBunker(this.soilGeo, this.soilMat));
     const source = this.models?.get(terrain);
     if (!source) return this.#block(terrain);
     // The fitted model keeps its own offset. A holder takes the cell position
