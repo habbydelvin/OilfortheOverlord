@@ -2,7 +2,6 @@ import { DIRS, key, hexDistance } from './grid.js';
 import { TERRAINS, MILITARY } from './tiles.js';
 import { SHAPES, ROTATIONS, rotateCells } from './pieces.js';
 import { computeEconomy } from './economy.js';
-import { GRACE_ROUNDS } from './war.js';
 import { FACTORY_OIL, INTERCEPT_OIL, INTERCEPT, factoryYield, interceptorsBeside, interceptorsNear, missileCapacity } from './arsenal.js';
 import { hexesAround } from './grid.js';
 
@@ -386,14 +385,15 @@ function throughOdds(city, x, z, chance) {
 
 /**
  * This season's strikes for a rival: [{ from, to, at, kind }], taken out of rival.missiles.
- * cities: every city still standing ({ id, grid, oil, hp, alive, buildings }). round: the player's year.
+ * cities: every city still standing ({ id, grid, oil, hp, alive, buildings }).
+ * playerArmed: the player has unlocked a military building; until then nobody fires on Hive City.
  */
-export function chooseStrikes(rival, cities, { round, chance }) {
+export function chooseStrikes(rival, cities, { round, chance, playerArmed = true }) {
   if (!rival.alive || !rival.missiles?.length) return [];
   rival.tension ??= {};
   const w = warOf(rival);
   const rng = rival.rng;
-  const foes = cities.filter((c) => c.alive && c.id !== rival.id && !(c.id === 'player' && round <= GRACE_ROUNDS));
+  const foes = cities.filter((c) => c.alive && c.id !== rival.id && !(c.id === 'player' && !playerArmed));
   if (!foes.length) return [];
   const strongest = Math.max(...foes.map((c) => c.buildings ?? 0), 1);
   let target = null;
