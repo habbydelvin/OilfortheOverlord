@@ -1329,6 +1329,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     camera.lookAt(0, 0, 0);
     camera.updateMatrixWorld();
     updateWar(dt);
+    updateOil(dt);
     updateQueued();
     updateSky(dt); // after the scroll for this frame, so the moon turns with the drag
 
@@ -1448,6 +1449,66 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
   const P = new THREE.Vector3();
   const Q = new THREE.Vector2();
 
+  // ---------- the season's oil, gushing out of Hive City while the payout runs (pulseOil) ----------
+  // Particles live in plane coordinates (x, y, height) so they ride the planet's bend as it turns.
+  const oilRoot = new THREE.Group();
+  scene.add(oilRoot);
+  const oilBits = [];
+  const OIL_COLORS = [0xffb347, 0xe8902a, 0xffd27a, 0x8a4a14];
+  function pulseOil(amount = 1) {
+    if (!active) return; // nothing piles up while the planet is off screen
+    const home = nodes.find((n) => n.id === 'player');
+    if (!home) return;
+    const count = Math.min(40, 6 + Math.round(amount * 3));
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 0.25 + Math.random() * 0.7;
+      const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: glowTex, color: OIL_COLORS[i % OIL_COLORS.length], blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false }),
+      );
+      oilRoot.add(sprite);
+      oilBits.push({ sprite, px: home.p.x, py: home.p.y, h: 0.15, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, vh: 2.6 + Math.random() * 2.4, age: -Math.random() * 0.35, life: 1.4 + Math.random() * 0.9, size: 0.35 + Math.random() * 0.4 });
+    }
+    // A gold ring pulsing out from the city.
+    const ring = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffc860, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false }));
+    oilRoot.add(ring);
+    oilBits.push({ sprite: ring, px: home.p.x, py: home.p.y, h: 0.2, vx: 0, vy: 0, vh: 0, age: 0, life: 0.9, size: 1.1, ring: Math.min(3, 1.4 + amount * 0.2) });
+  }
+  function updateOil(dt) {
+    for (let i = oilBits.length - 1; i >= 0; i--) {
+      const b = oilBits[i];
+      b.age += dt;
+      if (b.age < 0) {
+        b.sprite.visible = false;
+        continue;
+      }
+      const k = b.age / b.life;
+      if (k >= 1) {
+        oilRoot.remove(b.sprite);
+        b.sprite.material.dispose();
+        oilBits.splice(i, 1);
+        continue;
+      }
+      b.sprite.visible = true;
+      b.px += b.vx * dt;
+      b.py += b.vy * dt;
+      b.h += b.vh * dt;
+      b.vh -= 3.2 * dt; // a fountain: up, then falling back
+      b.h = Math.max(0.05, b.h);
+      bend.project(b.px, b.py, b.h, b.sprite.position);
+      const s = b.ring ? b.size * (1 + k * b.ring) : b.size * (1 - 0.5 * k);
+      b.sprite.scale.setScalar(s);
+      b.sprite.material.opacity = (b.ring ? 0.8 : 1) * (1 - k) * Math.min(1, b.age * 10);
+    }
+  }
+  function clearOil() {
+    for (const b of oilBits) {
+      oilRoot.remove(b.sprite);
+      b.sprite.material.dispose();
+    }
+    oilBits.length = 0;
+  }
+
   /** Plane point + height along a strike's arc at u (0 launch, 1 impact). */
   function arcPoint(it, u, out) {
     const h = it.H * Math.sin(Math.PI * Math.min(1, u)) + 0.15;
@@ -1546,7 +1607,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
         m.material.dispose();
       }
     }
-    if (!war) return;
+    if (!war || war.paused) return; // held while a briefing is on screen
     war.t += dt * war.speed;
     let live = 0;
     for (const it of war.items) {
@@ -1678,6 +1739,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     hoverFromLabel = null;
     root.classList.add('hidden');
     dom.style.cursor = '';
+    clearOil();
     clearNodes();
   }
 
@@ -1707,6 +1769,22 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     },
     setQueued,
     skipAttack,
+    /** The payout pays `amount` oil: it gushes out of Hive City on the planet (only while the planet is shown). */
+    pulseOil,
+    /** Where a city sits on screen ([x, y] px), or null when the planet isn't shown or it's round the far side. */
+    screenOf(id) {
+      if (!active) return null;
+      const n = nodes.find((m) => m.id === id);
+      if (!n) return null;
+      const v = bend.project(n.p.x, n.p.y, 0.3, new THREE.Vector3()).project(camera);
+      if (v.z > 1 || Math.abs(v.x) > 1.1 || Math.abs(v.y) > 1.1) return null;
+      const r = dom.getBoundingClientRect();
+      return [r.left + (v.x * 0.5 + 0.5) * r.width, r.top + (-v.y * 0.5 + 0.5) * r.height];
+    },
+    /** Freeze (or resume) the flights in the air, e.g. while a dialogue plays. */
+    pauseAttack(on) {
+      if (war) war.paused = on;
+    },
     renderLabels: () => renderLabels(),
     scene,
     camera,

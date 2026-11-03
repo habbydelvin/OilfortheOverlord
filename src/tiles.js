@@ -622,6 +622,12 @@ export const SHOP_ITEMS = [
   ['overtime', 3],
 ];
 
+/** Military buildings (and the Overtime action that runs them): the Black Market's stock; rivals value them too. */
+export const MILITARY = new Set(['milfactory', 'missilelab', 'warhead', 'intercept', 'magazine']);
+export const BLACK_MARKET = new Set([...MILITARY, 'overtime', 'militia']);
+/** The Black Market's other aisle: every non-military shop card except the basics (those come up in every deal). */
+export const BLACK_MARKET_RESOURCE = new Set(['pump', 'oasis', 'tarpit', 'labourcamp', 'refinery', 'spark', 'demolish', 'demolish2']);
+
 /** Basic tiles sold in the shop. They are never locked and never offered as a free tile pick. */
 export const BASIC_SHOP = new Set(['station', 'farm', 'settlement']);
 

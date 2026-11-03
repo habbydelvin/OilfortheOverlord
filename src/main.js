@@ -11,7 +11,7 @@ import { CameraRig } from './controls.js';
 import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
 import { preloadCardArt } from './tiles.js';
-import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, shopReady, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
+import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, BLACK_MARKET, BLACK_MARKET_RESOURCE, shopReady, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
 import { hasBlockout, loadProgress, breathe, decodeImage } from './models.js';
 import { Frontier } from './frontier.js';
 import { Placement, GHOST_LAYER, PREVIEW_PARAMS, PREVIEW_DEFAULTS, loadPreviewConfig, savePreviewConfig, clearPreviewConfig } from './placement.js';
@@ -44,7 +44,7 @@ import { createDebugPanel } from './debugPanel.js';
 import { CameraShake, SHAKE_PARAMS, SHAKE_DEFAULTS, loadShakeConfig, saveShakeConfig, clearShakeConfig } from './cameraShake.js';
 import { SCALE, SCALE_PARAMS, SCALE_DEFAULTS, loadScaleConfig, saveScaleConfig, clearScaleConfig, eventPct, P } from './scalingConfig.js';
 import { Traffic } from './traffic.js';
-import { ZoomIcons, ICON_PARAMS, ICON_DEFAULTS, loadIconConfig, saveIconConfig, clearIconConfig } from './zoomIcons.js';
+import { ZoomIcons, MAP_ICONS, ICON_PARAMS, ICON_DEFAULTS, loadIconConfig, saveIconConfig, clearIconConfig } from './zoomIcons.js';
 import { Perf } from './perfOverlay.js';
 import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig, applyGfx } from './graphics.js';
 import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
@@ -122,6 +122,8 @@ const boostHints = new BoostHints(scene); // outlines where the hovered / placed
 setupLegend(document.getElementById('btnLegend'), document.getElementById('legend')); // icon legend window
 const payoutCfg = loadPayoutConfig();
 const payout = new Payout(camera, document.getElementById('floaters'), payoutCfg);
+// On the War Map the tile labels (+oil, +food, ...) all rise above Hive City instead of their board tiles.
+payout.anchor = () => (view === 'globe' ? globe?.screenOf('player') : null);
 const audioCfg = { music: getMusicVolume(), sfx: getSfxVolume() };
 const AUDIO_DEFAULTS = { music: MUSIC_VOLUME_DEFAULT, sfx: SFX_VOLUME_DEFAULT };
 const AUDIO_PARAMS = [
@@ -258,7 +260,7 @@ let piecesPlaced = 0;
 // Turn state: a turn is a season, a round is four seasons, tribute after Winter.
 /** Food in the store at the start, so a bad first year isn't an instant loss. */
 const STARTING_FOOD = 5;
-const turn = { strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, event: null, metStreak: 0, lastMissed: false, unlocked: new Set(), pinned: [], coins: 0, total: 0, food: STARTING_FOOD, population: 0, quota: FIRST_QUOTA, capitalHp: CAPITAL_HP, ...freshTargetState() };
+const turn = { bmCooldown: 0, bmMet: false, strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, event: null, metStreak: 0, lastMissed: false, unlocked: new Set(), pinned: [], coins: 0, total: 0, food: STARTING_FOOD, population: 0, quota: FIRST_QUOTA, capitalHp: CAPITAL_HP, ...freshTargetState() };
 
 /**
  * Yearly target state (see targets.js).
@@ -315,9 +317,11 @@ hand.onBlocked = () => tutorial.nudge();
 placement.guard = (cells, piece) => tutorial.placeGuard(cells, piece);
 /** Debug tools and shortcuts are off during the tutorial (it has to stay on script). */
 /** True while something owns the screen (dialogue, missiles, shop, payout). */
-const screenBusy = () => eventOpen || striking || shopOpen || payout.active || turn.over;
+const screenBusy = () => eventOpen || striking || shopOpen || blackMarketOpen || payout.active || turn.over;
 /** The War Map stays shut while the screen is busy, and during the tutorial (except on its own trip to the planet). */
-const mapBlocked = () => (screenBusy() && !attackLive) || (tutorial.active && !tutorial.allows('globe'));
+/** Only the payout is running (no screen up): the War Map may open, the season keeps paying out there. */
+const onlyPaying = () => payout.active && !(eventOpen || striking || shopOpen || blackMarketOpen || turn.over || previewing);
+const mapBlocked = () => (screenBusy() && !attackLive && !onlyPaying()) || (tutorial.active && !tutorial.allows('globe'));
 /** Also true off the board, so the hand, the ghost and placement ignore the War Map and rival cities. (Not the
     tutorial: its guard decides which cards it lets through.) */
 const busy = () => screenBusy() || view !== 'board';
@@ -572,6 +576,10 @@ function nukeRandomTile(quiet = false) {
 let runId = 0;
 /** True while the strike cinematic plays (camera locked, game keys ignored). */
 let striking = false;
+/** Black Market: open from the click until the Smuggler has left (dialogue and stall). Stock: [[key, price, sold]]. */
+let blackMarketOpen = false;
+let bmStock = { military: [], resource: [] }; // each aisle: [[key, price, sold]]
+let bmCategory = null; // null: choosing an aisle
 /** True while the attack phase's missiles are in the air: you can look around (board, War Map, rivals) but not play. */
 let attackLive = false;
 const wait = (s) => new Promise((r) => setTimeout(r, s * 1000));
@@ -1555,6 +1563,7 @@ function updateHUD() {
     `第 ${turn.round} 年 · ${SEASONS[turn.season]} · ${left ? `${left} 季后缴纳贡品` : '本季缴纳贡品'}`,
   );
   seasonClock.set(turn.season, yearLength() - 1);
+  updateBlackMarketButton();
   const ev = turn.event;
   $('eventLabel').classList.toggle('hidden', !ev);
   if (ev) {
@@ -1838,8 +1847,11 @@ function updateInspect(cell) {
 // ---------- turns ----------
 /** Next turn: tiles hop and flash what they produce, then the turn is settled. */
 function endTurn() {
-  if (view !== 'board') return; // the HUD stays up on the War Map, but turns are played on the board
-  if (turn.over || shopOpen || eventOpen || strikeOpen || warPending) return;
+  // Turns can be ended from the board or the War Map (the season plays out with the planet on screen);
+  // from a rival city only a running payout can be fast-forwarded.
+  if (switching) return;
+  if (view === 'rival' && !(payout.active && !previewing)) return; // the HUD stays up on the War Map, but turns are played on the board
+  if (turn.over || shopOpen || blackMarketOpen || eventOpen || strikeOpen || warPending) return;
   if (payout.active) {
     if (previewing) cancelPreview();
     else {
@@ -1978,7 +1990,19 @@ function runPayout(e, onDone) {
     tiles,
     (tile) => {
       chimeTile(tile);
-      if (tile.oil > 0) {
+      const fromGlobe = tile.oil > 0 && view === 'globe' ? globe.screenOf('player') : null;
+      if (fromGlobe) {
+        // On the War Map: the labels rise above Hive City (payout.anchor) and the gauge fills
+        // on its own (no flying barrels), at the board's pace.
+        shown += tile.oil;
+        showOil(shown, true);
+        barrel(Math.min(1, shown / Math.max(1, turn.quota)));
+      } else if (tile.oil > 0 && view !== 'board') {
+        // In a rival city (or Hive City round the far side of the planet): straight into the gauge.
+        shown += tile.oil;
+        showOil(shown, true);
+        barrel(Math.min(1, shown / Math.max(1, turn.quota)));
+      } else if (tile.oil > 0) {
         // The oil flies up into the gauge; each barrel fills it as it lands.
         const w = hexToWorld(tile.x, tile.z);
         tileV.set(w.x, 0.6, w.z).project(camera);
@@ -1994,7 +2018,11 @@ function runPayout(e, onDone) {
       }
     },
     () => {
-      oilFlights.whenIdle(() => {
+      oilFlights.whenIdle(async () => {
+        // Watched from the War Map (or a rival city): fly back to Hive City for the rest of the season.
+        const run = runId;
+        await backToHive();
+        if (run !== runId) return;
         document.body.classList.remove('paying');
         onDone();
       });
@@ -2002,6 +2030,26 @@ function runPayout(e, onDone) {
   );
 }
 const tileV = new THREE.Vector3();
+
+
+/** Back to the board from the War Map or a rival city (the season's wrap-up needs it). Resolves once there. */
+async function backToHive() {
+  for (let i = 0; i < 80 && (switching || (view === 'globe' && globe.busy)); i++) await wait(0.1);
+  if (view === 'globe') await closeGlobe();
+  else if (view === 'rival') {
+    await swapView(() => {
+      closeRivalHand();
+      rivalView.exit();
+      rivalShown = null;
+      document.body.classList.remove('rival-view');
+      setBoardFraming(true);
+      view = 'board';
+      rig.release();
+      rig.resetOverscroll();
+    });
+  }
+  for (let i = 0; i < 40 && switching; i++) await wait(0.1);
+}
 
 /**
  * A tile triggered twice (next to a Capital) hops twice, each time showing one trigger's output,
@@ -2389,6 +2437,7 @@ function settleTurn(e) {
     if (!final) {
       turn.season = 0;
       turn.round++;
+      tickBlackMarket();
       growRivals();
     }
     turn.coins = 0;
@@ -2419,6 +2468,7 @@ function settleTurn(e) {
 
   turn.season = yearEnds ? 0 : turn.season + 1;
   if (yearEnds) turn.round++;
+  tickBlackMarket();
   growRivals();
   toast(() => msg.map(textOf).join(''), kind, 3200);
   // A new year opens with the shop; the hand is dealt when it closes.
@@ -3047,6 +3097,239 @@ const PICK_SLOTS = 3;
 let pickResolve = null;
 let pickOptions = [];
 
+// ---------- the Black Market: the Smuggler sells military cards for oil from the stockpile, once a year ----------
+const BM_MARKUP = 2; // oil per barrel of the market price
+const BM_SLOTS = 3;
+const BM_SPEAKER = 'The Smuggler';
+
+/** Seasons until the Smuggler comes back (one full year from a visit). */
+function tickBlackMarket() {
+  if (turn.bmCooldown > 0) turn.bmCooldown--;
+}
+
+$('btnBlackMarket').querySelector('.bm-icon').innerHTML = MAP_ICONS.crate;
+
+function updateBlackMarketButton() {
+  const btn = $('btnBlackMarket');
+  const wait = turn.bmCooldown;
+  btn.classList.toggle('cooling', wait > 0);
+  btn.classList.toggle('ready', wait <= 0);
+  $('bmWait').classList.toggle('hidden', wait <= 0);
+  $('bmWait').textContent = L(`${wait} season${wait === 1 ? '' : 's'}`, `${wait} 季`);
+  btn.title = wait > 0
+    ? L(`Black Market: the Smuggler is back in ${wait} season${wait === 1 ? '' : 's'}`, `黑市：走私贩将在 ${wait} 季后回来`)
+    : L('Black Market: military cards for oil', '黑市：用石油购买军事卡牌');
+}
+
+// First visit: a field report announces the Dune Crawler at the gates, then the Smuggler reports in to the Overseer.
+const BM_ARRIVAL = [
+  () => L('A Dune Crawler has appeared at the city gates. Large, armoured, no markings. It is flying no colours.', '一辆巨型沙丘爬行车出现在城门外。体型庞大，装甲厚重，没有任何标识，也未挂任何旗帜。'),
+  () => L('Its crew requests an audience with the Overseer. The gate guard is holding them at the outer wall.', '车上的人请求面见总督。守门卫兵已将他们拦在外墙。'),
+];
+const BM_INTRO = [
+  () => L('*salutes* Overseer. An honour. Forgive the size of the Crawler. Business has been good.', '*敬礼* 总督。荣幸之至。请原谅这辆爬行车的块头，最近生意不错。'),
+  () => L("They call me the Smuggler. I run cargo across the dunes, the kind the Overlord's convoys don't carry and his ledgers don't list.", '大家叫我走私贩。我在沙丘间跑货，跑的是霸主的车队不运、账本上也不记的那种。'),
+  () => L('Two aisles in the hold. Military: factories, interceptors, warheads, magazines. Everything a city needs to bite back.', '货舱分两排。军事：军工厂、拦截网、弹头、弹药库。一座城反咬一口所需的一切。'),
+  () => L('And Resource: pumps, refineries, oases, labour camps. The things that keep the oil flowing.', '还有资源：油泵、炼油厂、绿洲、劳工营。让石油源源不断的东西。'),
+  () => L("Payment in oil, from your stockpile. And yes, double the Overlord's price. Discretion costs extra.", '用石油付款，直接从你的储备里扣。没错，是霸主价格的两倍。保密可是要另算的。'),
+];
+const BM_ASK_FIRST = () => L('The Crawler makes this run once a year, Overseer. Shall I open the hold?', '这辆爬行车一年只跑一趟，总督。要我打开货舱吗？');
+// Later visits: a one-line report, then a fresh greeting.
+const BM_RETURNS = [
+  () => L('The Dune Crawler is back at the city gates.', '那辆沙丘爬行车又回到了城门外。'),
+  () => L('Dust on the horizon: the Smuggler\'s Crawler is approaching the gates.', '地平线上扬起沙尘：走私贩的爬行车正驶向城门。'),
+  () => L('The gate guard reports a familiar Crawler at the outer wall, asking for the Overseer.', '守门卫兵报告：一辆熟悉的爬行车停在外墙，请求面见总督。'),
+];
+const BM_GREETINGS = [
+  () => L("*salutes* Overseer. The convoy was light this year, but I kept the good stuff for you.", '*敬礼* 总督。今年车队货不多，但好东西我给你留着。'),
+  () => L("Overseer. Quick, before the Overlord's patrol swings round. What do you need?", '总督。快点，霸主的巡逻队要绕回来了。你要什么？'),
+  () => L("Fresh crates, barely scorched. Oil first, questions never.", '新到的货箱，只烧焦了一点。先付油，别多问。'),
+  () => L("Rivals have been buying. If you want to keep up, you'd better buy too.", '你的对手们一直在买。想不落后，最好也买点。'),
+  () => L("The Overlord's men searched my truck twice this season. Found nothing. Want to see why?", '霸主的人这季搜了我的车两次，什么也没找到。想知道为什么吗？'),
+  () => L("Missiles don't build themselves. Well, the factories do. But you need the factories.", '导弹不会自己造出来。好吧，工厂会造。但你得先有工厂。'),
+];
+const BM_FAREWELLS = [
+  () => L("*salutes* A pleasure, Overseer. You never saw the Crawler.", '*敬礼* 合作愉快，总督。您从没见过这辆爬行车。'),
+  () => L("Same time next year. Try to still be standing.", '明年同一时间。尽量别倒下。'),
+  () => L("Keep your head down, and your interceptors up.", '低调做人，拦截网可要立着。'),
+];
+const pickLine = (lines) => lines[Math.floor(Math.random() * lines.length)];
+
+async function openBlackMarket() {
+  if (blackMarketOpen) return;
+  if (turn.bmCooldown > 0) return toast(L(`The Smuggler is gone. Back in ${turn.bmCooldown} season${turn.bmCooldown === 1 ? '' : 's'}.`, `走私贩已离开，${turn.bmCooldown} 季后回来。`), 'bad');
+  if (view !== 'board') return toast(L('Return to Hive City first', '请先返回蜂巢城'));
+  if (screenBusy() || strikeOpen || warPending || previewing) return toast(L('Finish the current screen first', '请先完成当前界面'));
+  if (tutorial.active) return toast(L('Finish the tutorial first', '请先完成教程'));
+  const run = runId;
+  blackMarketOpen = true;
+  hand.select(-1);
+  dialogue.open({ kind: 'choice', kindLabel: () => L('Black Market', '黑市'), title: () => L('A Dune Crawler at the gates', '城门外的沙丘爬行车') });
+  // The field report first (the Dune Crawler at the gates), then the Smuggler himself.
+  for (const line of turn.bmMet ? [pickLine(BM_RETURNS)] : BM_ARRIVAL) {
+    await dialogue.say('Field Report', line);
+    if (run !== runId) return;
+  }
+  if (!turn.bmMet) {
+    for (const line of BM_INTRO) {
+      await dialogue.say(BM_SPEAKER, line);
+      if (run !== runId) return;
+    }
+  }
+  const choice = await dialogue.ask(BM_SPEAKER, turn.bmMet ? pickLine(BM_GREETINGS) : BM_ASK_FIRST, [
+    { text: () => L('Show me the goods.', '让我看看货。') },
+    { text: () => L('Not today.', '今天不用了。') },
+  ]);
+  if (run !== runId) return;
+  turn.bmMet = true;
+  if (choice !== 0) {
+    await dialogue.say(BM_SPEAKER, () => L("As you wish, Overseer. The Crawler stays at the gates a while... for now.", '遵命，总督。爬行车会在城门外再停一阵……暂时。'));
+    if (run !== runId) return;
+    await dialogue.leave();
+    blackMarketOpen = false; // no sale, no cooldown
+    return;
+  }
+  await dialogue.leave();
+  if (run !== runId) return;
+  // The visit counts: the Smuggler won't be back for a year, bought or not.
+  turn.bmCooldown = yearLength();
+  updateBlackMarketButton();
+  // Both aisles are stocked once per visit: browsing back and forth never rerolls them.
+  const roll = (set) =>
+    SHOP_ITEMS.filter(([k]) => set.has(k) && shopReady(k, turn.unlocked))
+      .sort(() => Math.random() - 0.5)
+      .slice(0, BM_SLOTS)
+      .map(([k, price]) => [k, price * BM_MARKUP, false]);
+  bmStock = { military: roll(BLACK_MARKET), resource: roll(BLACK_MARKET_RESOURCE) };
+  bmCategory = null;
+  renderBlackMarket(true);
+  const el = $('blackMarket');
+  el.classList.remove('hidden', 'opening');
+  void el.offsetWidth;
+  el.classList.add('opening');
+  document.body.classList.add('shopping');
+}
+
+const BM_AISLES = {
+  military: {
+    icon: () => MAP_ICONS.missile,
+    name: () => L('Military', '军事'),
+    blurb: () => L('Weapons, defences and war production', '武器、防御与军工生产'),
+    list: () => L('Factories · Interceptors · Warheads · Magazines · Militia', '军工厂 · 拦截网 · 弹头 · 弹药库 · 民兵'),
+    hint: () => L('Military cards, paid in oil from your stockpile at double the price. Bought cards go straight into your hand and unlock for good.', '军事卡牌，用储备石油按双倍价格支付。买下的卡牌直接加入手牌，并永久解锁。'),
+    empty: () => L('Nothing in this crate today, Overseer.', '这只箱子今天是空的，总督。'),
+  },
+  resource: {
+    icon: () => ICONS.oil,
+    name: () => L('Resource', '资源'),
+    blurb: () => L('Oil, food, labour and the tools to run them', '石油、粮食、劳力及其配套工具'),
+    list: () => L('Pumps · Refineries · Oases · Labour Camps · Demolition', '油泵 · 炼油厂 · 绿洲 · 劳工营 · 拆除'),
+    hint: () => L('Resource cards, paid in oil from your stockpile at double the price. Bought cards go straight into your hand and unlock for good.', '资源卡牌，用储备石油按双倍价格支付。买下的卡牌直接加入手牌，并永久解锁。'),
+    empty: () => L('Nothing in this crate today, Overseer.', '这只箱子今天是空的，总督。'),
+  },
+};
+
+function renderBlackMarket(animate = false) {
+  $('bmOil').textContent = L(`${turn.stockpile} oil in the stockpile`, `储备石油 ${turn.stockpile}`);
+  $('btnBmBack').classList.toggle('hidden', !bmCategory);
+  if (!bmCategory) {
+    // First the aisle: two crates in the Crawler's hold.
+    $('bmHint').textContent = L('The hold has two aisles. Pick one to see what the Smuggler brought.', '货舱分两排。选一排，看看走私贩带了什么。');
+    $('bmCards').innerHTML = Object.entries(BM_AISLES).map(([id, a], i) => {
+      const left = bmStock[id].filter((it) => !it[2]).length;
+      return `
+        <button class="bm-aisle${animate ? ' deal' : ''}" data-cat="${id}" style="animation-delay:${0.15 + i * 0.1}s">
+          <span class="bm-aisle-icon">${a.icon()}</span>
+          <span class="bm-aisle-name">${a.name()}</span>
+          <span class="bm-aisle-blurb">${a.blurb()}</span>
+          <span class="bm-aisle-list">${a.list()}</span>
+          <span class="bm-aisle-count">${L(`${left} offer${left === 1 ? '' : 's'}`, `${left} 件货`)}</span>
+        </button>`;
+    }).join('');
+    return;
+  }
+  const aisle = BM_AISLES[bmCategory];
+  $('bmHint').textContent = aisle.hint();
+  $('bmCards').innerHTML = bmStock[bmCategory].map(([k, price, sold], i) => {
+    const t = cardDef(k);
+    const can = !sold && turn.stockpile >= price;
+    return `
+      <div class="shop-item">
+        <div class="card${can ? '' : ' cant'}${animate ? ' deal' : ''}" data-k="${k}" data-i="${i}" style="--top:${hex(t.top)};--edge:${hex(t.edge)};animation-delay:${0.15 + i * 0.07}s">
+          <div class="art">${cardArtHTML(k)}</div>
+          ${snapHTML(t)}
+          <div class="name">${t.name}</div>
+          <div class="rule">${cardText(t)}</div>
+        </div>
+        <div class="price">${sold ? L('Sold', '已售') : L(`${price} oil`, `${price} 石油`)}<small>${L(`black market ×${BM_MARKUP}`, `黑市 ×${BM_MARKUP}`)}</small></div>
+        <div class="tag">${unlockTag(k)}</div>
+      </div>`;
+  }).join('') || `<p>${aisle.empty()}</p>`;
+}
+
+$('bmCards').addEventListener('click', (e) => {
+  if (!blackMarketOpen) return;
+  const pick = e.target.closest('.bm-aisle[data-cat]');
+  if (pick) {
+    pick.blur();
+    bmCategory = pick.dataset.cat;
+    tick();
+    renderBlackMarket(true);
+    return;
+  }
+  const card = e.target.closest('.card[data-i]');
+  if (!card || !bmCategory) return;
+  const item = bmStock[bmCategory][Number(card.dataset.i)];
+  const [k, price, sold] = item;
+  if (sold) return;
+  if (turn.stockpile < price) return deny();
+  turn.stockpile -= price;
+  item[2] = true;
+  turn.unlocked.add(k);
+  hand.addPinned(k); // kept through the next deal until played
+  showOil(turn.stockpile, true);
+  coin();
+  renderBlackMarket();
+  updateHUD();
+});
+
+$('btnBmBack').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  bmCategory = null;
+  tick();
+  renderBlackMarket(true);
+});
+
+/** `farewell` false (a reset): close at once, no parting line. */
+async function closeBlackMarket(farewell = true) {
+  const wasOpen = !$('blackMarket').classList.contains('hidden');
+  $('blackMarket').classList.add('hidden');
+  if (!shopOpen) document.body.classList.remove('shopping');
+  if (!farewell) {
+    blackMarketOpen = false;
+    return;
+  }
+  if (!wasOpen) return;
+  const run = runId;
+  dialogue.open();
+  await dialogue.say(BM_SPEAKER, pickLine(BM_FAREWELLS));
+  if (run !== runId) return;
+  await dialogue.leave();
+  blackMarketOpen = false;
+  updateHUD();
+}
+
+$('btnBlackMarket').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  openBlackMarket();
+});
+$('btnBmLeave').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  closeBlackMarket();
+});
+onLangChange(() => blackMarketOpen && !$('blackMarket').classList.contains('hidden') && renderBlackMarket());
+
+
 /** Show 3 random market tiles; the clicked one is unlocked and put in the next hand for free. */
 function openCardPick() {
   pickOptions = SHOP_ITEMS.filter(([k]) => !BASIC_SHOP.has(k) && shopReady(k, turn.unlocked)).sort(() => Math.random() - 0.5).slice(0, PICK_SLOTS);
@@ -3324,6 +3607,37 @@ function tryPlace() {
   if (economyNow().idle > idleBefore)
     toast(L('No free workers: this building sits idle until you add housing', '没有空闲人力：这座建筑将一直闲置，直到你建造更多住房'), 'bad', 2400);
   tutorial.notify('placed', cells);
+  if (piece.terrain === 'milfactory' && !turn.seenMilFactory && !tutorial.active) {
+    turn.seenMilFactory = true;
+    playMilFactoryScene();
+  }
+}
+
+/** The first Military Factory goes up: the Overlord takes notice, and dangles a promotion. Once per run. */
+async function playMilFactoryScene() {
+  const run = runId;
+  await wait(0.9); // let the building land first
+  if (run !== runId) return;
+  const prevEvent = eventOpen;
+  eventOpen = true;
+  hand.select(-1);
+  const rivalCount = rivals.filter((r) => r.alive !== false).length;
+  dialogue.open({ kind: 'fortune', kindLabel: () => L('Field Report', '前线报告'), title: () => L('The first Military Factory', '第一座军工厂') });
+  const lines = [
+    ['Field Report', () => L('The Military Factory is running, Overseer. Its first missile will be ready in a year.', '军工厂已经投产，总督。第一枚导弹将在一年后造好。')],
+    ['The Overlord', () => L('A missile factory. So my Overseer has grown teeth.', '一座导弹工厂。看来我的总督长出獠牙了。')],
+    ['The Overlord', () => L(`Look at the War Map. ${rivalCount} cities squat on my sands, pumping oil that should be mine.`, `看看战争地图。${rivalCount} 座城市盘踞在我的沙漠上，抽着本该属于我的石油。`)],
+    ['The Overlord', () => L('Wipe them off it, every last one, and I may find you something grander than a Hive City to run.', '把它们从地图上抹掉，一座不留，我或许会给你一个比蜂巢城更宏伟的位置。')],
+    ['The Overlord', () => L('Call it a promotion. Just never forget whose oil pays for those missiles.', '就当是一次晋升吧。只是永远别忘了，这些导弹是用谁的石油造的。')],
+  ];
+  for (const [who, line] of lines) {
+    await dialogue.say(who, line);
+    if (run !== runId) return;
+  }
+  await dialogue.leave();
+  if (run !== runId) return;
+  eventOpen = prevEvent;
+  updateHUD();
 }
 
 /**
@@ -3956,8 +4270,12 @@ async function runAttackPhase() {
   hand.select(-1);
   landing = [];
   warTimer.classList.remove('hidden');
-  announceIncoming(theirs);
-  await globe.playAttack(res);
+  const phase = globe.playAttack(res);
+  // The first time missiles fly each way, the Field Report briefs you with everything frozen in the air.
+  const briefed = await briefAttack(mine, theirs);
+  if (run !== runId) return true;
+  if (!briefed.incoming) announceIncoming(theirs);
+  await phase;
   await Promise.all(landing);
   attackLive = false;
   warTimer.classList.add('hidden');
@@ -3993,6 +4311,51 @@ async function runAttackPhase() {
 }
 
 /** Incoming! A banner naming who is firing at Hive City, before the missiles fly. */
+async function briefAttack(mine, theirs) {
+  const at = theirs.filter((x) => x.to === 'player');
+  const launch = mine.length > 0 && !turn.seenLaunch;
+  const incoming = at.length > 0 && !turn.seenIncoming;
+  if (!launch && !incoming) return { launch, incoming };
+  const run = runId;
+  const etaTo = (pred) => Math.ceil(Math.min(...globe.arrivals().filter(pred).map((f) => f.eta), 99));
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  globe.pauseAttack(true);
+  const lines = [];
+  if (launch) {
+    turn.seenLaunch = true;
+    const targets = [...new Set(mine.map((s) => s.to))].map(cityName).join(L(', ', '、'));
+    const eta = etaTo((f) => f.from === 'player');
+    lines.push(
+      () => L(`Missiles away, Overseer. ${plural(mine.length, 'warhead')} on course for ${targets}.`, `导弹已发射，总督。${mine.length} 枚弹头正飞向${targets}。`),
+      () => L(`Time to impact: about ${eta} seconds. Their Intercept Networks may bring some down before they land.`, `预计 ${eta} 秒后命中。对方的拦截网可能会在落地前击落其中一部分。`),
+      () => L('Zoom out to the War Map and dive into their city if you want to watch them hit.', '缩放到战争地图，再进入对方城市，就能亲眼看着它们落下。'),
+    );
+  }
+  if (incoming) {
+    turn.seenIncoming = true;
+    const from = [...new Set(at.map((x) => x.from))].map(cityName).join(L(', ', '、'));
+    const eta = etaTo((f) => f.to === 'player');
+    const nets = [...grid.cells.values()].some((c) => c.terrain === 'intercept');
+    lines.push(
+      () => L(`Overseer! Radar has picked up launches. ${from} has fired ${plural(at.length, 'missile')} at Hive City.`, `总督！雷达侦测到导弹发射。${from}向蜂巢城发射了 ${at.length} 枚导弹。`),
+      () => L(`First impact in about ${eta} seconds. The countdown at the top shows when they land.`, `约 ${eta} 秒后首枚命中。顶部的倒计时会显示它们何时落地。`),
+      nets
+        ? () => L('Our Intercept Networks will fire on anything that comes near them, as long as we have the oil to spend.', '只要石油够用，我们的拦截网会向靠近的导弹开火。')
+        : () => L('We have no Intercept Networks, Overseer. Whatever they fired will get through.', '我们没有拦截网，总督。他们打来的每一枚都会命中。'),
+      () => L('Stay with the city to watch them come in, or take cover on the War Map. Your call.', '留在城里看着它们落下，或者退到战争地图上。由您决定。'),
+    );
+    buzz();
+  }
+  dialogue.open({ kind: 'pressure', kindLabel: () => L('Field Report', '前线报告'), title: () => (incoming ? L('Incoming missiles', '导弹来袭') : L('First strike', '首次打击')) });
+  for (const line of lines) {
+    await dialogue.say('Field Report', line);
+    if (run !== runId) return { launch, incoming };
+  }
+  await dialogue.leave();
+  globe.pauseAttack(false);
+  return { launch, incoming };
+}
+
 async function announceIncoming(strikes) {
   const at = strikes.filter((x) => x.to === 'player');
   if (!at.length) return;
@@ -4203,7 +4566,10 @@ window.addEventListener('keydown', (e) => {
     globeHome();
     return;
   }
-  if (view !== 'board') return;
+  if (view !== 'board') {
+    if (k === 'enter' && (view === 'globe' || payout.active)) endTurn(); // end the turn / skip the payout from the War Map too
+    return;
+  }
   if (dev && k === '`') {
     debug.toggle();
     return;
@@ -4386,12 +4752,18 @@ function resetIsland(opts) {
     unlocked: new Set(),
     seenRebels: false, // first-contact scenes, once per run
     seenBandits: false,
+    seenMilFactory: false,
+    seenLaunch: false, // first-strike Field Report briefings, once per run
+    seenIncoming: false,
     pinned: [],
     coins: 0,
     shopMult: 1,
+    bmCooldown: 0,
+    bmMet: false,
     ...freshTargetState(),
   });
   shopOpen = false;
+  closeBlackMarket(false);
   eventOpen = false;
   pendingScenes.length = 0;
   closeCardPick(false);
@@ -4662,6 +5034,13 @@ function frame(now) {
   }
   rivalMissiles?.update(dt);
   updateWarTimer();
+  if (view !== 'board') {
+    // The payout keeps paying out wherever you're looking (on the board it runs after the render, below).
+    payout.update(dt);
+    updateFactoryHops(dt);
+    updateFactoryFloaters(dt);
+    oilFlights.update(dt);
+  }
   if (view === 'globe') {
     perf.end('camera');
     perf.begin('render (cpu)');

@@ -736,3 +736,77 @@
   font-family: var(--dp-serif);
   color: var(--dp-head);
 }
+
+/* Black Market: its own small plate right of the season clock (same metal, rivets, chamfer). */
+.top-market {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 14px + 110px + 10px);
+  width: 96px;
+  height: 114px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 6px 12px;
+  border: 0;
+  color: var(--gold, #e8bf68);
+  font: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  background:
+    var(--dp-rivet) left 6px top 6px / 8px 8px no-repeat,
+    var(--dp-rivet) right 6px top 6px / 8px 8px no-repeat,
+    var(--ih-metal);
+  box-shadow: var(--ih-rim), inset 0 -10px 16px rgba(0, 0, 0, 0.35);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px));
+}
+.top-market .bm-icon svg {
+  width: 46px;
+  height: 46px;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.6));
+}
+.top-market .bm-label {
+  font-size: 12px;
+  line-height: 1.1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+}
+.top-market:hover:not(.cooling) {
+  filter: brightness(1.15);
+}
+.top-market.ready .bm-icon {
+  animation: bm-glint 2.4s ease-in-out infinite;
+}
+@keyframes bm-glint {
+  0%, 100% { filter: none; }
+  50% { filter: drop-shadow(0 0 6px rgba(232, 191, 104, 0.9)); }
+}
+.top-market.cooling {
+  cursor: not-allowed;
+}
+.top-market.cooling .bm-icon {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+.top-market.cooling .bm-label {
+  visibility: hidden;
+}
+.top-market .bm-wait {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 1px 7px;
+  border-radius: 8px;
+  background: rgba(40, 10, 6, 0.9);
+  box-shadow: inset 0 0 0 1px #c8453a;
+  color: #ffb08a;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.top-market .bm-wait.hidden {
+  display: none;
+}
