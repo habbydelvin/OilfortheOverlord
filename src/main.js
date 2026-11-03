@@ -2675,7 +2675,7 @@ function debugEnsureFactory() {
   return { cells: [grid.get(x, z)], placed: true };
 }
 
-/** L: put a factory on the board, then play the season settle so a missile is produced. */
+/** J: put a factory on the board, then play the season settle so a missile is produced. */
 function debugMissileSettle() {
   if (turn.over || striking || shopOpen || eventOpen || payout.active) {
     return L('Finish the current screen first', '请先结束当前界面');
@@ -3191,12 +3191,12 @@ async function firePlayerMissile(cells, fromHand = null) {
     trackCamera: false,
     holdAfter: 0.9,
     onCover: () => {
-      hits.forEach(([x, z]) => (decoy && decoy.x === x && decoy.z === z ? removeDecoy() : demolish(x, z, true)));
+      hits.forEach(([x, z]) => (decoy && decoy.x === x && decoy.z === z ? removeDecoy() : craterAt(x, z)));
     },
   });
   if (run !== runId) return;
   toast(
-    L(`Missile destroyed ${hits.length} building${hits.length === 1 ? '' : 's'}`, `导弹摧毁了 ${hits.length} 座建筑`),
+    L(`Missile left ${hits.length} crater${hits.length === 1 ? '' : 's'}`, `导弹留下了 ${hits.length} 个弹坑`),
     'good',
   );
   updateHUD();
@@ -3541,7 +3541,7 @@ window.addEventListener('keydown', (e) => {
   else if (dev && k === 'v' && !e.repeat) debugEvent();
   else if (dev && k === 't' && !e.repeat) debugTarget(e.shiftKey);
   else if (dev && k === 'x' && !e.repeat) setExpansionMode(!grid.expansionMode);
-  else if (!RELEASE && k === 'l' && !e.repeat) {
+  else if (!RELEASE && k === 'j' && !e.repeat) {
     if (tutorial.active) return tutorial.nudge();
     const msg = debugMissileSettle();
     toast(msg, msg.includes('Finish') || msg.includes('请先') ? 'bad' : 'good');
