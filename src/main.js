@@ -44,7 +44,7 @@ import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
 import { MissileStrike, MISSILE_PARAMS, MISSILE_DEFAULTS, loadMissileConfig, saveMissileConfig, clearMissileConfig } from './missiles.js';
 import { Tutorial, TUTORIAL_KEY, HINTS_KEY, tutorialDone, markTutorialDone } from './tutorial.js';
 import { L, both, isZh, toggleLang, onLangChange, applyStatic, textOf, retranslate } from './i18n.js';
-import { createRivals } from './rivals.js';
+import { createRivals, advanceRivals } from './rivals.js';
 import { createRivalView } from './rivalView.js';
 import { createGlobeView, GLOBE_PARAMS, GLOBE_DEFAULTS, loadGlobeConfig, saveGlobeConfig, clearGlobeConfig } from './globeView.js';
 import { createCloudTransition } from './cloudTransition.js';
@@ -78,7 +78,8 @@ let view = 'board';
 let rivals = [];
 let rivalShown = null;
 let globe;
-const rivalView = createRivalView({ renderer, factory, rig });
+// Rival cities get their own fog of war, with the board's fog settings and quality (read on the first visit).
+const rivalView = createRivalView({ renderer, factory, rig, fogSettings: () => fogCfg, fogQuality: () => gfxCfg.fogQuality });
 const tiles = new THREE.Group();
 scene.add(tiles);
 const previewCfg = loadPreviewConfig(); // Game Debug → Placement preview
@@ -217,7 +218,10 @@ const debug = RELEASE
     cfg: fogCfg,
     save: saveFogConfig,
     clear: clearFogConfig,
-    onChange: (p) => fog.applySettings(!p || p.layout), // null = reset all
+    onChange: (p) => {
+      fog.applySettings(!p || p.layout); // null = reset all
+      rivalView.fog?.applySettings(!p || p.layout);
+    },
   },
   globe: {
     params: GLOBE_PARAMS,
@@ -1947,6 +1951,7 @@ function settleTurn(e) {
     if (!final) {
       turn.season = 0;
       turn.round++;
+      growRivals();
     }
     turn.coins = 0;
     updateHUD();
@@ -1976,6 +1981,7 @@ function settleTurn(e) {
 
   turn.season = yearEnds ? 0 : turn.season + 1;
   if (yearEnds) turn.round++;
+  growRivals();
   toast(() => msg.map(textOf).join(''), kind, 3200);
   // A new year opens with the shop; the hand is dealt when it closes.
   if (turn.season === 0) {
@@ -2857,6 +2863,25 @@ function playerBuildingCount() {
   return count;
 }
 
+/**
+ * A season has passed: each rival plays its next hand (rivalAI.js), one rival per task so the season change
+ * doesn't stall a frame. A reset in the middle drops the rest (the rivals array is replaced).
+ */
+function growRivals() {
+  const list = rivals;
+  const at = { round: turn.round, season: turn.season };
+  list.forEach((rival, i) =>
+    setTimeout(() => {
+      if (list !== rivals) return;
+      advanceRivals([rival], at);
+      if (rivalShown === rival) {
+        rivalView.refresh();
+        fillRivalBar(rival);
+      }
+    }, 30 * (i + 1)),
+  );
+}
+
 function fillRivalBar(rival) {
   rivalShown = rival;
   $('rivalTitle').textContent = `${L(rival.def.name, rival.def.zh)} · ${L(rival.def.personalityName, rival.def.personalityZh)}`;
@@ -3455,6 +3480,7 @@ function frame(now) {
     perf.begin('render (cpu)');
     perf.gpuBegin();
     updateCurve(camera, rig.target); // rival cities follow the Graphics map shape (Flat / Planet), like the board
+    rivalView.update(dt, camera); // its fog of war (offscreen pass before the scene)
     renderer.render(rivalView.scene, camera);
     perf.gpuEnd();
     perf.end('render (cpu)');
@@ -3675,6 +3701,7 @@ factory.piecesReady.then(async (pieces) => {
   if (!pieces) return;
   await warmUpModelsGradually(pieces);
   adoptWastePieces();
+  rivalView.refresh(true); // a rival city on screen swaps its blocks for the piece models too
 });
 
 // The remaining buildings and tiles load last; any already placed swap their stand-ins for the real models.
@@ -3682,6 +3709,7 @@ factory.extrasReady.then(async (extras) => {
   if (!extras) return;
   await warmUpModelsGradually(extras);
   adoptBlockouts();
+  rivalView.refresh(true);
 });
 
 // Release build: players get no Game Debug button, no tile library link (library.html isn't built), no cheats.

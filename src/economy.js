@@ -353,11 +353,14 @@ function shareOut(cells, weightKey, outKey, total) {
   for (const p of parts) p.c[outKey] += p.base;
 }
 
-/** Tribute quota for the first year. */
-export const FIRST_QUOTA = 20;
-/** Each year the quota is multiplied by this, then QUOTA_STEP is added (20 → 50 → 95 → 163 …). */
+/**
+ * Tribute quota for the first year. Raised 30% for the hex board: 6 neighbours make about 20% more oil than the
+ * old square grid did (measured every year of a 6-year run), plus a little extra so it's tighter than before.
+ */
+export const FIRST_QUOTA = 26;
+/** Each year the quota is multiplied by this, then QUOTA_STEP is added (26 → 65 → 124 → 212 …). */
 const QUOTA_GROWTH = 1.5;
-const QUOTA_STEP = 20;
+const QUOTA_STEP = 26;
 /** After a missed tribute the quota only grows by this much (the strike is the punishment). */
 const MISSED_GROWTH = 1.1;
 /** Each barrel delivered above the quota raises the next quota by this much. */

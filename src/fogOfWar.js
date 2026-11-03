@@ -787,12 +787,15 @@ export class FogOfWar {
    * Free placement: uncover every cell within `radius` steps of cell (x, z). The fog eases
    * away over `openDuration` seconds; uncovered land stays uncovered.
    */
-  openAround(x, z, radius = 1) {
+  openAround(x, z, radius = 1, instant = false) {
     for (const [cx, cz] of hexesAround(x, z, radius)) {
       const i = this.#index(cx, cz);
-      if (i >= 0) this.lockedTarget[i] = 0;
+      if (i < 0) continue;
+      this.lockedTarget[i] = 0;
+      if (instant) this.locked[i] = 0;
     }
-    this.lockedBusy = true;
+    if (instant) this.dirty = true;
+    else this.lockedBusy = true;
   }
 
   /** Part the clouds over plot (px, pz). Returns the animation length in seconds. */

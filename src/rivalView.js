@@ -1,14 +1,19 @@
 import * as THREE from 'three';
 import { createGround, createLights } from './scene.js';
+import { hexToWorld, key } from './grid.js';
+import { FogOfWar } from './fogOfWar.js';
 
 const BG = 0x000000;
 
 /**
- * A second scene for rival cities. The frame loop renders this instead of the player scene, so fog,
- * ghosts, traffic and map icons never appear here. Lighting stays fixed: followTarget only moves the
- * player scene's sun, fog and ground.
+ * A second scene for rival cities. The frame loop renders this instead of the player scene, so ghosts, traffic
+ * and map icons never appear here. Lighting stays fixed: followTarget only moves the player scene's sun, fog
+ * and ground. The city has its own fog of war (same look as the board's), cleared around its land.
+ *
+ * fogSettings(): the board's fog settings (shared, so the Game Debug sliders apply here too); read on first visit.
+ * fogQuality(): the Graphics fog quality preset.
  */
-export function createRivalView({ renderer, factory, rig }) {
+export function createRivalView({ renderer, factory, rig, fogSettings, fogQuality }) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(BG);
   scene.fog = new THREE.Fog(BG, 22, 60);
@@ -17,32 +22,54 @@ export function createRivalView({ renderer, factory, rig }) {
   const ground = createGround(renderer);
   scene.add(ground);
 
-  let root = new THREE.Group();
+  // One group for the city's tiles, kept for good: the fog's depth pass holds on to it.
+  const root = new THREE.Group();
   scene.add(root);
+  let fog = null;
   let active = false;
   let saved = null;
+  let shown = null; // { rival, version }
+
+  function ensureFog() {
+    if (fog) return fog;
+    fog = new FogOfWar(scene, fogSettings());
+    fog.attachRenderer(renderer, scene, [root]);
+    return fog;
+  }
 
   function clearRoot() {
-    scene.remove(root);
-    root = new THREE.Group();
-    scene.add(root);
+    root.clear();
   }
 
   /** Drop the previous clones and build this rival again. Shared geometries stay with the factory. */
   function build(rival) {
     clearRoot();
-    let minX = 0;
-    let maxX = 0;
-    let minZ = 0;
-    let maxZ = 0;
+    // Wasteland pieces: one whole-piece model over the cells (as on the board), each cell an empty holder.
+    const covered = new Set();
+    for (const piece of rival.pieces ?? []) {
+      const group = factory.createPiece(piece.shape, piece.rot);
+      if (!group) continue; // no model for this shape (yet): its cells get the single tiles below
+      const world = piece.cells.map(([x, z]) => hexToWorld(x, z));
+      const xs = world.map((w) => w.x);
+      const zs = world.map((w) => w.z);
+      group.position.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...zs) + Math.max(...zs)) / 2);
+      root.add(group);
+      for (const [x, z] of piece.cells) covered.add(key(x, z));
+    }
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
     for (const cell of rival.grid.cells.values()) {
-      const mesh = factory.create(cell.terrain);
-      mesh.position.set(cell.x, 0, cell.z);
+      const bare = covered.has(key(cell.x, cell.z));
+      const mesh = factory.create(cell.terrain, { bare });
+      const w = hexToWorld(cell.x, cell.z);
+      mesh.position.set(w.x, 0, w.z);
       root.add(mesh);
-      minX = Math.min(minX, cell.x);
-      maxX = Math.max(maxX, cell.x);
-      minZ = Math.min(minZ, cell.z);
-      maxZ = Math.max(maxZ, cell.z);
+      minX = Math.min(minX, w.x);
+      maxX = Math.max(maxX, w.x);
+      minZ = Math.min(minZ, w.z);
+      maxZ = Math.max(maxZ, w.z);
     }
     const cx = (minX + maxX) / 2;
     const cz = (minZ + maxZ) / 2;
@@ -56,7 +83,19 @@ export function createRivalView({ renderer, factory, rig }) {
     sun.shadow.camera.updateProjectionMatrix();
     ground.position.x = cx;
     ground.position.z = cz;
+    shown = { rival, version: rival.version ?? 0 };
     return { cx, cz, half, reach };
+  }
+
+  /** Clouds over everything but the city and the ring around it, as free placement leaves the board. */
+  function coverCity(rival) {
+    const f = ensureFog();
+    f.setQuality(fogQuality());
+    f.applySettings(true);
+    f.setVisible(true);
+    f.reset(rival.grid);
+    const r = fogSettings().openRadius ?? 1;
+    for (const cell of rival.grid.cells.values()) f.openAround(cell.x, cell.z, r, true);
   }
 
   /** Same sand fade as the board, centred on this city. This ground has its own alpha map. */
@@ -69,6 +108,7 @@ export function createRivalView({ renderer, factory, rig }) {
 
   function enter(rival) {
     const frame = build(rival);
+    coverCity(rival);
     if (!saved) {
       saved = {
         goal: rig.goal.clone(),
@@ -97,10 +137,28 @@ export function createRivalView({ renderer, factory, rig }) {
     return frame;
   }
 
+  /** The shown city grew (a season passed) or its models loaded: rebuild it in place, camera untouched. */
+  function refresh(force = false) {
+    if (!active || !shown) return;
+    const { rival, version } = shown;
+    if (!force && version === (rival.version ?? 0)) return;
+    build(rival);
+    coverCity(rival);
+  }
+
+  /** Per frame while a rival city is shown: the fog follows the camera; its offscreen pass comes before the scene. */
+  function update(dt, camera) {
+    if (!active || !fog) return;
+    fog.update(dt, rig.target, rig.distance);
+    fog.render(camera);
+  }
+
   /** Put the board camera back on the exact rig state from before the visit. */
   function exit() {
     clearRoot();
     active = false;
+    shown = null;
+    fog?.setVisible(false);
     if (!saved) return;
     rig.goal.copy(saved.goal);
     rig.goalDistance = saved.goalDistance;
@@ -121,8 +179,13 @@ export function createRivalView({ renderer, factory, rig }) {
     get active() {
       return active;
     },
+    get fog() {
+      return fog;
+    },
     build,
     enter,
     exit,
+    refresh,
+    update,
   };
 }

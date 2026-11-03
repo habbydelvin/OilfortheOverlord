@@ -1,6 +1,7 @@
 import { Grid } from './grid.js';
 import { TERRAINS } from './tiles.js';
 import { computeEconomy } from './economy.js';
+import { dealHand, playHand } from './rivalAI.js';
 
 /** Static rival city-states. Leaders are placeholders. `map` is a point on the war table, 0–100. */
 export const RIVALS = [
@@ -45,30 +46,6 @@ export const RIVALS = [
 /** The player's node on the war table. */
 export const PLAYER_NODE = { x: 50, y: 62, color: '#e8bf68' };
 
-/** Hawk: housing and refineries. Merchant: derricks (stations) and pumps. Synod: farms and housing. */
-const WEIGHTS = {
-  hawk: [
-    ['settlement', 5],
-    ['refinery', 4],
-    ['farm', 1],
-    ['station', 1],
-  ],
-  merchant: [
-    ['station', 5],
-    ['pump', 3],
-    ['settlement', 1],
-    ['refinery', 1],
-  ],
-  paranoid: [
-    ['farm', 5],
-    ['settlement', 4],
-    ['pump', 1],
-    ['station', 1],
-  ],
-};
-
-const LAYOUT_TILES = 24;
-
 export function mulberry32(seed) {
   let a = seed >>> 0;
   return function rng() {
@@ -77,28 +54,6 @@ export function mulberry32(seed) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-}
-
-function pickTerrain(rng, personality) {
-  const table = WEIGHTS[personality] ?? WEIGHTS.hawk;
-  const total = table.reduce((sum, [, weight]) => sum + weight, 0);
-  let roll = rng() * total;
-  for (const [terrain, weight] of table) {
-    roll -= weight;
-    if (roll <= 0) return terrain;
-  }
-  return table[0][0];
-}
-
-/** Capital at the origin, then buildings on frontier cells. No wasteland: those models live in another bundle. */
-export function generateLayout(grid, personality, rng, count = LAYOUT_TILES) {
-  grid.set(0, 0, { terrain: 'capital' });
-  for (let i = 0; i < count; i++) {
-    const open = [...grid.frontierKeys()];
-    if (!open.length) break;
-    const [x, z] = open[Math.floor(rng() * open.length)].split(',').map(Number);
-    grid.set(x, z, { terrain: pickTerrain(rng, personality) });
-  }
 }
 
 /** Display-only. `computeEconomy` is not written back onto the rival or the player. */
@@ -115,13 +70,30 @@ export function rivalStats(grid) {
   return { counts, buildings, oil, tiles: grid.size };
 }
 
-/** One layout per rival for this run. Phase 2 replaces the grids with turn-by-turn growth. */
+/**
+ * The rivals for this run: each opens like the player (a Capital and the same first hand, played at once),
+ * then plays one hand every season (advanceRivals). `pieces` keeps each Wasteland piece for its whole-piece model.
+ */
 export function createRivals(seed) {
   const base = seed >>> 0;
   return RIVALS.map((def, i) => {
     const grid = new Grid();
+    grid.set(0, 0, { terrain: 'capital' });
     const rng = mulberry32((base + Math.imul(i + 1, 0x9e3779b9)) >>> 0);
-    generateLayout(grid, def.personality, rng);
-    return { id: def.id, def, grid, stats: rivalStats(grid), tension: 0 };
+    const rival = { id: def.id, def, grid, pieces: [], rng, round: 1, season: 0, foodStore: 0, stats: null, tension: 0, version: 0 };
+    playHand(rival, dealHand(rival, true));
+    rival.stats = rivalStats(grid);
+    return rival;
   });
+}
+
+/** A season has passed: every rival plays its next hand (`round` is the player's year, for card unlocks). */
+export function advanceRivals(rivals, { round, season }) {
+  for (const rival of rivals ?? []) {
+    rival.round = round;
+    rival.season = season;
+    playHand(rival, dealHand(rival));
+    rival.stats = rivalStats(rival.grid);
+    rival.version++;
+  }
 }
