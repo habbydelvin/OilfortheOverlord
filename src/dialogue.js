@@ -19,9 +19,8 @@ export const PORTRAITS = {
   'The Overlord': '/portraits/TheOverlord01.png?v=20261027-1828',
   'Rebel Leader': '/portraits/TheRebel01.png?v=20261028-2054',
   'Bandit Leader': '/portraits/TheRaider01.png?v=20261028-2057',
-  'The Smuggler': '/portraits/TheRaider01.png?v=20261028-2057', // stand-in until the Smuggler has art
-  // No art yet: add an image path here to give them a portrait.
-  'Field Report': '',
+  'The Smuggler': '/portraits/TheSmuggler01.png?v=20261103-1940',
+  'Field Report': '/portraits/TheAide01.png?v=20261103-1930', // the Aide brings the field reports
 };
 
 /** Speaker ids stay English (they key PORTRAITS); this is the name shown on the plate. */
@@ -31,7 +30,7 @@ const speakerName = (speaker) =>
     'Rebel Leader': L('Rebel Leader', '叛军首领'),
     'Bandit Leader': L('Bandit Leader', '匪首'),
     'The Smuggler': L('The Smuggler', '走私贩'),
-    'Field Report': L('Field Report', '前线报告'),
+    'Field Report': L('Aide (Field Report)', '副官（前线报告）'),
   })[speaker] ?? speaker;
 
 const CHARS_PER_SEC = 55;
