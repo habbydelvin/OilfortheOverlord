@@ -3676,16 +3676,9 @@ function updateAimBar() {
   $('rivalAim').classList.toggle('hidden', !rival || rival.alive === false || (!q && !cards));
   $('rivalQueue').textContent = L(`${q} aimed · ${cards} in hand · fires after End Turn`, `已瞄准 ${q} · 手牌 ${cards} · 结束回合后发射`);
   const aimed = rival ? queuedStrikes(rival.id) : [];
-  rivalView.setMarkers(aimed.flatMap((s) => footprint(s.kind, s.at, s.size)), aimHover);
-  const arcAt = [];
-  const seen = new Set();
-  for (const p of [...aimed.map((s) => s.at), ...(aimHover ?? [])]) {
-    const k = `${p[0]},${p[1]}`;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    arcAt.push(p);
-  }
-  rivalView.setArcs(arcAt, rival ? homeBearing(rival) : null);
+  const aimedCells = aimed.map((s) => footprint(s.kind, s.at, s.size));
+  rivalView.setMarkers(aimedCells, aimHover);
+  rivalView.setArcs(aimHover ?? [], rival ? homeBearing(rival) : null, aimedCells.flat());
   globe?.setQueued(queuedStrikes().map((s) => ({ from: 'player', to: s.to })));
 }
 

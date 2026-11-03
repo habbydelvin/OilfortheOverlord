@@ -614,16 +614,9 @@ function homeBearing(r) {
 function drawAims(hover = null) {
   if (!shown) return;
   const mine = queue.filter((q) => q.to === shown.id);
-  rivalView.setMarkers(mine.flatMap((q) => footprint(q.kind, q.at)), hover);
-  const seen = new Set();
-  const arcs = [];
-  for (const p of [...mine.map((q) => q.at), ...(hover ?? [])]) {
-    const k = `${p[0]},${p[1]}`;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    arcs.push(p);
-  }
-  rivalView.setArcs(arcs, homeBearing(shown));
+  const aimed = mine.map((q) => footprint(q.kind, q.at));
+  rivalView.setMarkers(aimed, hover);
+  rivalView.setArcs(hover ?? [], homeBearing(shown), aimed.flat());
 }
 
 rig.onZoomPastMax = () => {

@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { createGround, createLights } from './scene.js';
 import { hexToWorld, key } from './grid.js';
 import { FogOfWar } from './fogOfWar.js';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 
 const BG = 0x000000;
 
@@ -25,17 +28,132 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   // One group for the city's tiles, kept for good: the fog's depth pass holds on to it.
   const root = new THREE.Group();
   scene.add(root);
-  // Target markers while aiming (queued strikes) and the hover ring under the cursor.
+  // Target reticles while aiming (First Strike style): two rings of slanted yellow dashes (parallelograms, the inner
+  // ring set in the outer ring's gaps) and a wide faint outer circle. Only while aiming: it wraps the picked card's
+  // footprint under the cursor (a salvo fan too) and fades out once that strike is aimed.
   const marks = new THREE.Group();
   marks.renderOrder = 20;
   scene.add(marks);
-  const ringGeo = new THREE.RingGeometry(0.32, 0.46, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
-  const markMat = new THREE.MeshBasicMaterial({ color: 0xff4a2a, transparent: true, opacity: 0.95, depthTest: false, toneMapped: false });
-  const hoverMat = new THREE.MeshBasicMaterial({ color: 0xffc08a, transparent: true, opacity: 0.7, depthTest: false, toneMapped: false });
-  // Aimed strikes: an arc from where Hive City lies (off past the horizon) down onto each target tile.
+  const markOpts = { transparent: true, depthTest: false, depthWrite: false, toneMapped: false, fog: false };
+  const faintMat = new THREE.MeshBasicMaterial({ color: 0xcfe6ff, opacity: 0.35, ...markOpts });
+  const dashMat = new THREE.MeshBasicMaterial({ color: 0xffd23a, opacity: 0.95, side: THREE.DoubleSide, ...markOpts });
+  const MARK_Y = 0.6;
+  const DASHES = 7; // per ring
+  const DASH_SHARE = 0.5; // share of each slot that is dash
+  const DASH_SLANT = 0.07; // radians the outer edge runs ahead of the inner one: the parallelogram lean
+  const FADE_TIME = 0.4; // seconds for an aimed reticle to fade out
+  const APPEAR_TIME = 0.25; // seconds for the reticle to fade in when a card first goes over a tile
+  let hoverMark = null; // { key, cells, g }: the reticle under the cursor
+  let markClock = 0;
+
+  /** Unit-radius reticle geometry, scaled per target. */
+  const ringPiece = (inner, outer, start = 0, len = Math.PI * 2, segs = 96) =>
+    new THREE.RingGeometry(inner, outer, segs, 1, start, len).rotateX(-Math.PI / 2);
+  const outerGeo = ringPiece(1.75, 1.77, 0, Math.PI * 2, 128);
+
+  /** One ring of parallelogram dashes between radii r0 and r1, starting at angle `phase`, merged into one geometry. */
+  function dashRing(r0, r1, phase) {
+    const slot = (Math.PI * 2) / DASHES;
+    const len = slot * DASH_SHARE;
+    const steps = 6; // the long edges follow the curve
+    const pos = [];
+    const index = [];
+    for (let d = 0; d < DASHES; d++) {
+      const a0 = phase + d * slot;
+      const base = pos.length / 3;
+      for (let i = 0; i <= steps; i++) {
+        const a = a0 + (len * i) / steps;
+        pos.push(Math.cos(a) * r0, 0, -Math.sin(a) * r0);
+        pos.push(Math.cos(a + DASH_SLANT) * r1, 0, -Math.sin(a + DASH_SLANT) * r1);
+      }
+      for (let i = 0; i < steps; i++) {
+        const v = base + i * 2;
+        index.push(v, v + 2, v + 1, v + 1, v + 2, v + 3);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(index);
+    return geo;
+  }
+  const slot = (Math.PI * 2) / DASHES;
+  const innerDashGeo = dashRing(1.0, 1.09, slot / 2);
+  const outerDashGeo = dashRing(1.2, 1.29, 0);
+
+  /** One reticle around `cells` ([[x, z]]), with its own materials so it can fade alone. */
+  function makeReticle(cells) {
+    const pts = cells.map(([x, z]) => hexToWorld(x, z));
+    const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+    const cz = pts.reduce((a, p) => a + p.z, 0) / pts.length;
+    const radius = Math.max(...pts.map((p) => Math.hypot(p.x - cx, p.z - cz))) + 0.55;
+    const g = new THREE.Group();
+    g.position.set(cx, MARK_Y, cz);
+    const add = (parent, geo, mat, order) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.renderOrder = order;
+      m.frustumCulled = false;
+      parent.add(m);
+    };
+    const body = new THREE.Group(); // scaled to the target
+    body.scale.setScalar(radius);
+    const faint = faintMat.clone();
+    const dash = dashMat.clone();
+    add(body, outerGeo, faint, 20);
+    const rotor = new THREE.Group();
+    add(rotor, innerDashGeo, dash, 21);
+    add(rotor, outerDashGeo, dash, 21);
+    body.add(rotor);
+    g.add(body);
+    faint.opacity = 0;
+    dash.opacity = 0;
+    g.userData = { rotor, mats: [faint, dash], appear: 0, fade: -1 };
+    return g;
+  }
+
+  function dropReticle(g) {
+    marks.remove(g);
+    for (const m of g.userData.mats) m.dispose();
+  }
+
+  function animateReticles(dt) {
+    markClock += dt;
+    for (const g of [...marks.children]) {
+      const u = g.userData;
+      u.rotor.rotation.y = -markClock * 1.1;
+      let k;
+      if (u.fade < 0) {
+        u.appear = Math.min(1, u.appear + dt / APPEAR_TIME);
+        k = u.appear;
+      } else {
+        u.fade += dt / FADE_TIME;
+        if (u.fade >= 1) {
+          dropReticle(g);
+          continue;
+        }
+        k = (1 - u.fade) * u.appear;
+      }
+      u.mats[0].opacity = faintMat.opacity * k;
+      u.mats[1].opacity = dashMat.opacity * k;
+    }
+  }
+  // While aiming: a thin unbroken trail from where Hive City lies (off past the horizon) down onto each target tile,
+  // as First Strike draws its flight paths. Additive, so its colour ramp is its fade: bright up high, gone at the tile.
   const arcs = new THREE.Group();
   scene.add(arcs);
-  const arcMat = new THREE.LineDashedMaterial({ color: 0xffb04a, dashSize: 0.35, gapSize: 0.2, transparent: true, opacity: 0.9, depthTest: false, toneMapped: false, fog: false });
+  const ARC_COLOUR = new THREE.Color(0xffe58a); // a paler cousin of the reticle's yellow
+  const ARC_POINTS = 64;
+  const arcMat = new LineMaterial({
+    linewidth: 1.6, // CSS px
+    vertexColors: true,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+    fog: false,
+  });
+  const arcSize = new THREE.Vector2();
+  const arcByKey = new Map(); // "x,z" -> the path onto that cell
   let fog = null;
   let active = false;
   let saved = null;
@@ -157,44 +275,118 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     coverCity(rival);
   }
 
-  /** Rings over `cells` ([[x, z]] queued targets) and `hover` (cells under the cursor, or null). */
-  function setMarkers(cells, hover = null) {
-    marks.clear();
-    const ring = (x, z, mat, y) => {
-      const m = new THREE.Mesh(ringGeo, mat);
-      const w = hexToWorld(x, z);
-      m.position.set(w.x, y, w.z);
-      m.renderOrder = 20;
-      marks.add(m);
-    };
-    for (const [x, z] of cells) ring(x, z, markMat, 0.6);
-    for (const [x, z] of hover ?? []) ring(x, z, hoverMat, 0.62);
+  /**
+   * The aiming reticle. `aimed`: [[[x, z], ...]] one footprint per queued strike; `hover`: the cells the picked card
+   * would hit under the cursor, or null. When the hover cells turn up among the aimed ones (the card was just played)
+   * the reticle fades out; otherwise a reticle that's no longer wanted goes at once. None over cells already aimed.
+   */
+  function setMarkers(aimed, hover = null) {
+    const done = new Set(aimed.flat().map(([x, z]) => key(x, z)));
+    const isAimed = (cells) => cells.every(([x, z]) => done.has(key(x, z)));
+    const want = hover?.length && !isAimed(hover) ? hover.map(([x, z]) => key(x, z)).join(';') : null;
+    let carry = 0; // moving tile to tile: the new reticle picks up where the old one's fade-in was
+    if (hoverMark && hoverMark.key !== want) {
+      if (isAimed(hoverMark.cells)) hoverMark.g.userData.fade = 0;
+      else {
+        carry = hoverMark.g.userData.appear;
+        dropReticle(hoverMark.g);
+      }
+      hoverMark = null;
+    }
+    if (want && !hoverMark) {
+      const g = makeReticle(hover);
+      g.userData.appear = carry;
+      marks.add(g);
+      hoverMark = { key: want, cells: hover, g };
+    }
+  }
+
+  /** One flight path onto cell (x, z), coming in from `dir`, with its own material so it can fade alone. */
+  function makeArc([x, z], dir) {
+    const end = hexToWorld(x, z);
+    const p0 = new THREE.Vector3(end.x + dir.x * 22, 9, end.z + dir.z * 22);
+    const p2 = new THREE.Vector3(end.x, 0.3, end.z);
+    const p1 = p0.clone().lerp(p2, 0.55).add(new THREE.Vector3(0, 6, 0));
+    const curve = new THREE.QuadraticBezierCurve3(p0, p1, p2);
+    const pos = [];
+    const col = [];
+    for (const [i, p] of curve.getPoints(ARC_POINTS).entries()) {
+      const t = i / ARC_POINTS; // 0 at the horizon, 1 at the tile
+      const k = THREE.MathUtils.smoothstep(t, 0, 0.12) * (1 - t) ** 0.7;
+      pos.push(p.x, p.y, p.z);
+      col.push(ARC_COLOUR.r * k, ARC_COLOUR.g * k, ARC_COLOUR.b * k);
+    }
+    const geo = new LineGeometry();
+    geo.setPositions(pos);
+    geo.setColors(col);
+    const mat = arcMat.clone();
+    mat.opacity = 0;
+    const line = new Line2(geo, mat);
+    line.renderOrder = 21;
+    line.frustumCulled = false;
+    line.userData = { appear: 0, fade: -1 };
+    return line;
+  }
+
+  function dropArc(line) {
+    arcs.remove(line);
+    line.geometry.dispose();
+    line.material.dispose();
   }
 
   /**
-   * Arcs for aimed strikes: [[x, z]] target cells, launched from `dir` (unit {x, z}: where Hive City lies from
-   * this city on the War Map). They come in over the horizon and dive onto the tile.
+   * Flight paths while aiming: one onto each of `cells` ([[x, z]], the picked card's cells under the cursor), coming
+   * in from `dir` (unit {x, z}: where Hive City lies from this city on the War Map), or none if `dir` is null. A path
+   * whose cell turns up in `aimed` ([[x, z]], the queued strikes' cells: the card was just played) fades out; any
+   * other path that's no longer wanted goes at once.
    */
-  function setArcs(cells, dir) {
-    for (const a of arcs.children) a.geometry.dispose();
-    arcs.clear();
-    if (!dir) return;
-    for (const [x, z] of cells) {
-      const end = hexToWorld(x, z);
-      const p0 = new THREE.Vector3(end.x + dir.x * 22, 9, end.z + dir.z * 22);
-      const p2 = new THREE.Vector3(end.x, 0.3, end.z);
-      const p1 = p0.clone().lerp(p2, 0.55).add(new THREE.Vector3(0, 6, 0));
-      const curve = new THREE.QuadraticBezierCurve3(p0, p1, p2);
-      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(curve.getPoints(48)), arcMat);
-      line.computeLineDistances();
-      line.renderOrder = 21;
-      line.frustumCulled = false;
+  function setArcs(cells, dir, aimed = []) {
+    const done = new Set(aimed.map(([x, z]) => key(x, z)));
+    const want = new Map(dir ? cells.filter(([x, z]) => !done.has(key(x, z))).map((c) => [key(c[0], c[1]), c]) : []);
+    let carry = 0; // moving tile to tile: new paths pick up where the old ones' fade-in was
+    for (const [k, line] of arcByKey) {
+      if (want.has(k)) continue;
+      arcByKey.delete(k);
+      if (done.has(k)) line.userData.fade = 0;
+      else {
+        carry = Math.max(carry, line.userData.appear);
+        dropArc(line);
+      }
+    }
+    for (const [k, c] of want) {
+      if (arcByKey.has(k)) continue;
+      const line = makeArc(c, dir);
+      line.userData.appear = carry;
       arcs.add(line);
+      arcByKey.set(k, line);
+    }
+  }
+
+  function animateArcs(dt) {
+    renderer.getSize(arcSize);
+    for (const line of [...arcs.children]) {
+      const u = line.userData;
+      line.material.resolution.copy(arcSize);
+      let k;
+      if (u.fade < 0) {
+        u.appear = Math.min(1, u.appear + dt / APPEAR_TIME);
+        k = u.appear;
+      } else {
+        u.fade += dt / FADE_TIME;
+        if (u.fade >= 1) {
+          dropArc(line);
+          continue;
+        }
+        k = (1 - u.fade) * u.appear;
+      }
+      line.material.opacity = k;
     }
   }
 
   /** Per frame while a rival city is shown: the fog follows the camera; its offscreen pass comes before the scene. */
   function update(dt, camera) {
+    animateReticles(dt);
+    animateArcs(dt);
     if (!active || !fog) return;
     fog.update(dt, rig.target, rig.distance);
     fog.render(camera);
@@ -203,8 +395,10 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   /** Put the board camera back on the exact rig state from before the visit. */
   function exit() {
     clearRoot();
-    marks.clear();
-    setArcs([], null);
+    for (const g of [...marks.children]) dropReticle(g);
+    hoverMark = null;
+    for (const line of [...arcs.children]) dropArc(line);
+    arcByKey.clear();
     active = false;
     shown = null;
     fog?.setVisible(false);
