@@ -626,12 +626,14 @@ export class TileFactory {
 
   /**
    * bare: an empty holder, for a cell covered by a whole-piece Wasteland model (the model is added separately).
+   * rot: the card's rotation, sixths of a turn clockwise on screen (like createPiece). The models are hexagons
+   * like the cells, so every turn still fits; it goes on the model, inside the holder the board moves around.
    */
   create(terrain, opts) {
     return applyTileGap(this.#create(terrain, opts));
   }
 
-  #create(terrain, { bare = false } = {}) {
+  #create(terrain, { bare = false, rot = 0 } = {}) {
     if (bare) return new THREE.Group();
     if (terrain.startsWith('wasteland')) {
       const holder = new THREE.Group();
@@ -649,8 +651,12 @@ export class TileFactory {
     // so placing or animating the tile does not undo that fit.
     const holder = new THREE.Group();
     const model = cloneModel(source);
-    holder.add(model);
+    const turn = new THREE.Group();
+    turn.rotation.y = (-rot * Math.PI) / 3;
+    turn.add(model);
+    holder.add(turn);
     holder.userData.blockout = true;
+    holder.userData.rot = rot;
     if (model.animations.length) this.#animate(model);
     return holder;
   }
@@ -726,9 +732,9 @@ export class TileFactory {
     return group && this.#ghost(group);
   }
 
-  /** Transparent copy for the placement ghost. Materials are not shared. */
-  preview(terrain) {
-    return this.#ghost(this.create(terrain));
+  /** Transparent copy for the placement ghost (turned `rot` sixths like the tile it previews). Materials are not shared. */
+  preview(terrain, rot = 0) {
+    return this.#ghost(this.create(terrain, { rot }));
   }
 
   #ghost(mesh) {
@@ -756,7 +762,7 @@ export class TileFactory {
   upgrade(mesh, terrain) {
     if (!hasBlockout(terrain) || !this.models?.has(terrain)) return mesh;
     if (mesh.userData.blockout) return mesh;
-    const next = this.create(terrain);
+    const next = this.create(terrain, { rot: mesh.userData.rot ?? 0 });
     next.position.copy(mesh.position);
     next.scale.copy(mesh.scale);
     next.visible = mesh.visible;
