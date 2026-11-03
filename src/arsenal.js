@@ -42,8 +42,14 @@ const idleAt = (idleKeys, cell) => idleKeys?.has(`${cell.x},${cell.z}`);
 export function factoryYield(grid, cell, idleKeys) {
   const nbs = near(grid, cell.x, cell.z);
   const recipe = nbs.some((n) => n.terrain === 'missilelab' && !idleAt(idleKeys, n));
-  const warhead = nbs.some((n) => n.terrain === 'warhead' && !idleAt(idleKeys, n));
-  return { count: 1 + (recipe ? 1 : 0), kind: warhead ? 'missile2' : 'missile' };
+  return { count: 1 + (recipe ? 1 : 0), kind: 'missile' };
+}
+
+/** Staffed Warhead Institutes: each adds 1 extra blast tile (not a whole ring). */
+export function warheadRadius(grid, idleKeys) {
+  let n = 0;
+  for (const c of grid.cells.values()) if (c.terrain === 'warhead' && !idleAt(idleKeys, c)) n++;
+  return n;
 }
 
 /** Intercept Networks adjacent to a cell, in placement order. */

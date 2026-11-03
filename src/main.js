@@ -28,7 +28,7 @@ import { Mysteries } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
 import { computeEconomy, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS } from './economy.js';
-import { FACTORY_OIL, OVERTIME_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity } from './arsenal.js';
+import { FACTORY_OIL, OVERTIME_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, warheadRadius } from './arsenal.js';
 import { pieceOf } from './pieces.js';
 import { findCiws } from './interceptMesh.js';
 import { queueDrawn, addMissile, missileCount, missileKinds, trimMissiles, resetMissiles, openCityStrike, drawStrikeHand, returnStrikeHand, bindCityStrikeUi, queueStrike, unqueueStrike, queuedStrikes, takeQueue, clearQueue } from './cityStrike.js';
@@ -155,6 +155,13 @@ const debug = RELEASE
   expansionMode: () => grid.expansionMode,
   onExpansionMode: (on) => (tutorialBlocks() ? undefined : setExpansionMode(on)),
   onSkipYear: (met) => (tutorialBlocks() ? 'Not during the tutorial' : debugSkipYear(met)),
+  giveKeys: [...Object.keys(TERRAINS).filter((k) => k !== 'capital' && !/^wasteland[2-4]$/.test(k)), ...Object.keys(ACTIONS)],
+  onGiveTile: (k) => {
+    if (!k) return 'Pick a tile';
+    hand.addPinned(k);
+    updateHUD();
+    return `Added ${k}`;
+  },
   onPerf: () => perf.setOpen(!perf.enabled),
   onResetTutorial: () => {
     localStorage.removeItem(TUTORIAL_KEY); // next reload starts with the tutorial again
@@ -401,7 +408,14 @@ const OPENING_HAND = ['farm', 'settlement', 'station', 'wasteland', 'wasteland']
 
 // The opening hand (first season, rerolls included) only has the basics: Wasteland, stations, farms, settlements.
 const OPENING_TILES = ['wasteland1', 'wasteland2', 'wasteland3', 'wasteland4', 'station', 'farm', 'settlement'];
+/** `?alltiles=1`: every tile unlocked, first hand is one of each, then the run plays as normal. */
+const ALL_TILES = new URLSearchParams(location.search).has('alltiles');
+const allPlaceableKeys = () => [
+  ...Object.keys(TERRAINS).filter((k) => k !== 'capital' && !/^wasteland[2-4]$/.test(k)),
+  ...Object.keys(ACTIONS),
+];
 hand.excluded = () => {
+  if (ALL_TILES) return [];
   if (turn.round === 1 && turn.season === 0)
     return [...Object.keys(TERRAINS), ...Object.keys(ACTIONS)].filter((k) => !OPENING_TILES.includes(k));
   const locked = SHOP_ITEMS.map(([k]) => k).filter((k) => !BASIC_SHOP.has(k) && !turn.unlocked.has(k));
@@ -3969,7 +3983,9 @@ function removeDecoy() {
 placement.decoyAt = (x, z) => Boolean(decoy && decoy.x === x && decoy.z === z);
 
 async function firePlayerMissile(cells, fromHand = null) {
-  const hits = placement.missileable(cells);
+  const size = warheadRadius(grid, idleKeySet());
+  const origin = cells[0];
+  const hits = placement.missileable(footprint('missile', origin, size));
   if (!hits.length) return;
   const aim = {
     x: Math.round(hits.reduce((s, [x]) => s + x, 0) / hits.length),
@@ -4202,9 +4218,10 @@ function aimAtPointer() {
     if (!rival.grid.has(at[0], at[1])) return toast(L('Aim at one of their tiles', '请瞄准对方的地块'), 'bad');
     if (piece.terrain === 'salvo') aimSalvo(rival, at);
     else {
-      queueDrawn(rival.id, at, piece.terrain, 1, { vis: true });
+      const size = warheadRadius(grid, idleKeySet());
+      queueDrawn(rival.id, at, piece.terrain, size, { vis: true });
       hand.consume();
-      playOutgoingRival(rival, [at], piece.terrain);
+      playOutgoingRival(rival, footprint('missile', at, size), piece.terrain);
     }
     confirm();
   }
@@ -4247,8 +4264,9 @@ function aimSalvo(rival, at) {
   if (!ammo.length) return toast(L('No missiles to fan out', '没有可铺开的导弹'), 'bad');
   const cells = spreadFrom(rival.grid, at, ammo.length);
   if (!cells.length) return toast(L('Aim at one of their tiles', '请瞄准对方的地块'), 'bad');
-  for (let i = 0; i < cells.length; i++) queueDrawn(rival.id, cells[i], ammo[i].terrain, 1, { vis: true });
-  playOutgoingRival(rival, cells, 'missile');
+  const size = warheadRadius(grid, idleKeySet());
+  for (let i = 0; i < cells.length; i++) queueDrawn(rival.id, cells[i], ammo[i].terrain, size, { vis: true });
+  playOutgoingRival(rival, cells.flatMap((at) => footprint('missile', at, size)), 'missile');
   const used = new Set(ammo.slice(0, cells.length));
   hand.cards = hand.cards.filter((p) => p.terrain !== 'salvo' && !used.has(p));
   hand.selected = -1;
@@ -4261,7 +4279,7 @@ function updateAimHover() {
   const c = piece ? rivalCell() : null;
   let next = null;
   if (c && piece.terrain === 'salvo') next = spreadFrom(rivalShown.grid, [c[0], c[1]], missileAmmoInHand().length);
-  else if (c) next = footprint(piece.terrain, [c[0], c[1]]);
+  else if (c) next = footprint(piece.terrain, [c[0], c[1]], warheadRadius(grid, idleKeySet()));
   const at = c && piece.terrain === 'salvo' ? [c[0], c[1]] : null;
   if (JSON.stringify(next) === JSON.stringify(aimHover) && JSON.stringify(at) === JSON.stringify(aimAt)) return;
   aimHover = next;
@@ -5046,15 +5064,27 @@ function resetIsland(opts) {
   addTile(0, 0, SEED_TERRAIN, 0, true); // the game opens with the Capital already standing
   mysteries.reset();
   frontier.rebuild(grid);
-  // Opening hand: always one of each basic building plus two Wasteland, in random order.
-  hand.deal(HAND_SIZE, OPENING_HAND);
-  hand.cards.sort(() => Math.random() - 0.5);
+  if (ALL_TILES) {
+    for (const [k] of SHOP_ITEMS) turn.unlocked.add(k);
+    turn.freeRerolls = 20;
+    turn.stockpile = Math.max(turn.stockpile, 30);
+    hand.deal(HAND_SIZE);
+  } else {
+    // Opening hand: always one of each basic building plus two Wasteland, in random order.
+    hand.deal(HAND_SIZE, OPENING_HAND);
+    hand.cards.sort(() => Math.random() - 0.5);
+  }
   hand.render();
   rig.focus(0, 0);
   updateHUD();
-  if (tut) tutorial.start(); // guides the first Spring once the opening scene is over
-  if (opts?.intro !== false) playIntro();
-  else tutorial.begin();
+  if (ALL_TILES) {
+    skipTutorial();
+    tutorial.begin();
+  } else {
+    if (tut) tutorial.start(); // guides the first Spring once the opening scene is over
+    if (opts?.intro !== false) playIntro();
+    else tutorial.begin();
+  }
 }
 
 /** Skip tutorial: the guiding stops and Spring carries on as a normal season. */

@@ -1,4 +1,4 @@
-import { DIRS, key } from './grid.js';
+import { DIRS, key, hexesAround } from './grid.js';
 import { TERRAINS } from './tiles.js';
 import { INTERCEPT, interceptorsNear } from './arsenal.js';
 
@@ -8,7 +8,7 @@ import { INTERCEPT, interceptorsNear } from './arsenal.js';
  * for the board (main.js applies the player's craters with its own cinematic).
  *
  * Rules, the same for every city:
- *  - A missile hits one tile; a warhead (missile2) the 4-cell diamond from where it's aimed.
+ *  - Blast is the aimed tile plus `size` extra neighbouring tiles (one per staffed Warhead Institute).
  *  - Each Intercept Network within INTERCEPT_RANGE (2) of the footprint gets one shot per attack phase: INTERCEPT_OIL from the
  *    defender's stockpile, INTERCEPT_CHANCE to stop the whole strike. A miss lets the next unused network try.
  *  - A hit turns the tiles into Toxic Craters. A hit on the Capital costs it HP (1, or 2 for a warhead) instead;
@@ -19,13 +19,10 @@ export const CAPITAL_HP = 5;
 /** Rivals hold their fire at the player before this year (the tutorial and first year stay calm). */
 export const GRACE_ROUNDS = 1;
 
-const WARHEAD = [[0, 0], [1, 0], [0, 1], [1, 1]];
-
 export function footprint(kind, [x, z], size) {
-  const n = Math.max(1, size ?? (kind === 'missile2' ? 2 : 1));
-  const cells = [];
-  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) cells.push([x + i, z + j]);
-  return cells;
+  const extra = size ?? (kind === 'missile2' ? 1 : 0);
+  const n = Math.max(1, 1 + extra);
+  return hexesAround(x, z, 5).slice(0, n);
 }
 
 /** BFS from `origin` over tiles that exist on `grid`, up to `n` cells (a salvo fan). */
@@ -74,7 +71,7 @@ export function resolve(strikes, cities, rng = Math.random) {
   for (const s of order) {
     const def = byId.get(s.to);
     const st = state.get(s.to);
-    const rec = { ...s, cells: footprint(s.kind, s.at), shots: [], hit: false, lost: [], capital: null, eliminated: false };
+    const rec = { ...s, cells: footprint(s.kind, s.at, s.size), shots: [], hit: false, lost: [], capital: null, eliminated: false };
     out.push(rec);
     // Every missile is already in the air: one whose own city falls this phase still lands.
     if (!def || !st || !st.alive) {
@@ -125,7 +122,7 @@ export function resolve(strikes, cities, rng = Math.random) {
       st.result.craters.push({ x, z, terrain: t });
     }
     if (capitalHit) {
-      const dmg = s.kind === 'missile2' ? 2 : 1;
+      const dmg = 1;
       st.hp = Math.max(0, st.hp - dmg);
       st.result.hpLost += dmg;
       rec.capital = st.hp;

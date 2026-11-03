@@ -120,7 +120,7 @@ export const TERRAINS = {
     category: 'building',
     buildable: false,
     weight: 0.5,
-    rule: "Adjacent factories' missiles destroy a 2×2",
+    rule: 'Each staffed lab adds 1 tile to missile blast (1 lab = 2 tiles)',
     stats: { manpower: -2 },
   },
   intercept: {
@@ -463,7 +463,7 @@ const ZH = {
   militia: { name: '派遣民兵', rule: '清除一个匪营或叛军营地' },
   milfactory: { name: '军事工厂', rule: '每季 -3 石油 · 一年后生产 1 枚导弹' },
   missilelab: { name: '导弹配方改良所', rule: '相邻军事工厂生产导弹数量 +1' },
-  warhead: { name: '弹头研究所', rule: '相邻工厂产出的导弹摧毁 2×2' },
+  warhead: { name: '弹头研究所', rule: '每座开工的研究所使导弹爆炸再多打 1 格' },
   intercept: { name: '拦截网络', rule: '花费 3 石油，阻止相邻建筑被攻击一次' },
   magazine: { name: '储弹仓', rule: '导弹容量 +1' },
   missile: { name: '导弹', rule: '摧毁 1 格建筑' },
