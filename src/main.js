@@ -48,7 +48,7 @@ import { ZoomIcons, ICON_PARAMS, ICON_DEFAULTS, loadIconConfig, saveIconConfig, 
 import { Perf } from './perfOverlay.js';
 import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig, applyGfx } from './graphics.js';
 import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
-import { MissileStrike, MISSILE_PARAMS, MISSILE_DEFAULTS, loadMissileConfig, saveMissileConfig, clearMissileConfig } from './missiles.js';
+import { MissileStrike, MISSILE_PARAMS, MISSILE_DEFAULTS, MISSILE_TAIL, loadMissileConfig, saveMissileConfig, clearMissileConfig } from './missiles.js';
 import { Tutorial, TUTORIAL_KEY, HINTS_KEY, tutorialDone, markTutorialDone } from './tutorial.js';
 import { L, both, isZh, toggleLang, onLangChange, applyStatic, textOf, retranslate } from './i18n.js';
 import { createRivals, advanceRivals, rivalStats } from './rivals.js';
@@ -725,7 +725,7 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
     ...t,
     ...toWorld(t),
     cell: { x: t.x, z: t.z },
-    from: t.from ? toWorld(t.from) : undefined,
+    from: t.from ? (t.from.world ? t.from : toWorld(t.from)) : undefined, // world: already a world point (hand card, silo)
     flight: t.from || t.flight ? t.flight : missileCfg.followFlight,
   }));
   const original = new Map(tracked.map((t, i) => [t, targets[i]]));
@@ -3186,7 +3186,122 @@ function worldFromHandCard() {
   const sy = r ? r.top + r.height * 0.38 : window.innerHeight * 0.82;
   flyV.set((sx / window.innerWidth) * 2 - 1, -(sy / window.innerHeight) * 2 + 1, 0.32);
   flyV.unproject(camera);
-  return { x: flyV.x, y: flyV.y, z: flyV.z };
+  return { x: flyV.x, y: flyV.y, z: flyV.z, world: true };
+}
+
+/** The Missile Magazine a player missile launches from: the nearest to its target that isn't already launching. */
+/** Missile Magazines that can fire now: built (their model loaded, with its Launch clip) and not mid-launch. */
+const readySilos = () =>
+  [...grid.cells.values()].filter((c) => c.terrain === 'magazine' && c.mesh && !c.mesh.userData.launching && factory.canCue(c.mesh, 'Launch'));
+
+/** The Missile Magazine a player missile launches from: the nearest to its target. */
+function launchSilo(aim) {
+  let best = null;
+  let bestD = Infinity;
+  for (const c of readySilos()) {
+    const d = hexDistance(c.x, c.z, aim.x, aim.z);
+    if (d < bestD) {
+      bestD = d;
+      best = c;
+    }
+  }
+  return best;
+}
+
+// The magazine's Launch clip (seconds): the petals are open by SILO_RELOAD; the missile reaches the silo's mouth at
+// SILO_CUT, and the flight takes over from there (the model's own missile and flame vanish; its launch smoke plays
+// on, and the petals close). A magazine firing several jumps back from SILO_AGAIN to SILO_RELOAD: the next one rises.
+const SILO_CUT = 3;
+const SILO_AGAIN = 3.6;
+const SILO_RELOAD = 1.5;
+const SILO_SPEED = 1.6;
+const SILO_PARTS = ['MissileMagazine_Missile', 'MissileMagazine_Flame'];
+const siloV = new THREE.Vector3();
+const siloS = new THREE.Vector3();
+
+/**
+ * A Missile Magazine fires `count` missiles, one after another: it opens and raises each to the silo's mouth, where
+ * launch(from, i) takes over. from: the world point there, carrying a copy of the magazine's missile as the flight's
+ * body (missiles.js). Resolves at the last launch (null: the model can't, see readySilos).
+ */
+function siloLaunch(cell, count, launch) {
+  const mesh = cell.mesh;
+  mesh.userData.launching = true;
+  return factory.cue(mesh, 'Launch', {
+    speed: SILO_SPEED,
+    cutAt: SILO_CUT,
+    hide: SILO_PARTS,
+    repeat: count - 1,
+    repeatFrom: SILO_AGAIN,
+    repeatAt: SILO_RELOAD,
+    onEnd: () => (mesh.userData.launching = false),
+    cut: (i) => {
+      const missile = mesh.getObjectByName(SILO_PARTS[0]);
+      if (!missile) return null;
+      boom();
+      dust.burst(cell.x, cell.z, 1.2);
+      camShake.add(0.25);
+      return launch(siloFrom(missile), i);
+    },
+  });
+}
+
+/** Where the magazine's missile stands, as a flight start: its tail lined up with the flight missile's. */
+function siloFrom(missile) {
+  missile.getWorldPosition(siloV);
+  const copy = missile.clone();
+  copy.position.set(0, -MISSILE_TAIL, 0);
+  copy.quaternion.identity();
+  copy.scale.setScalar(missile.parent.getWorldScale(siloS).y / missileCfg.missileScale); // (its own scale is 1 here)
+  copy.traverse((o) => (o.visible = true));
+  const body = new THREE.Group().add(copy);
+  return { x: siloV.x, y: siloV.y + MISSILE_TAIL * missileCfg.missileScale, z: siloV.z, world: true, silo: true, body };
+}
+
+/** The magazine opens and raises its missile; resolves with the flight's start at the silo's mouth. */
+function launchFromSilo(cell) {
+  // Keep the launch on screen: if the magazine is out of view, look between it and the board's middle.
+  const w = hexToWorld(cell.x, cell.z);
+  siloV.set(w.x, 0, w.z).project(camera);
+  if (Math.abs(siloV.x) > 0.85 || Math.abs(siloV.y) > 0.8) rig.focus(w.x / 2 + rig.target.x / 2, w.z / 2 + rig.target.z / 2);
+  return siloLaunch(cell, 1, (from) => from);
+}
+
+/**
+ * The attack phase opens on your board: the Missile Magazines open and fire the season's aimed missiles up out of
+ * the city (each its share, one after another), before the War Map shows them fly. No magazine: nothing to show.
+ */
+const SALVO_CLOSE = 8; // camera distance on one magazine
+async function launchSalvo(count) {
+  const idle = idleKeySet();
+  const silos = readySilos()
+    .sort((a, b) => idle.has(`${a.x},${a.z}`) - idle.has(`${b.x},${b.z}`)) // staffed ones first
+    .slice(0, count);
+  if (!count || !silos.length) return;
+  const run = runId;
+  document.body.classList.add('striking'); // the UI slides away, as for a strike
+  const mid = new THREE.Vector3();
+  const spots = silos.map((c) => hexToWorld(c.x, c.z));
+  for (const w of spots) mid.x += w.x / spots.length, mid.z += w.z / spots.length;
+  const spread = Math.max(...spots.map((w) => Math.hypot(w.x - mid.x, w.z - mid.z)));
+  followCamera(mid.setY(1.2), SALVO_CLOSE + spread * 2.2, 3);
+  await wait(0.5);
+  if (run !== runId) return;
+  camera.getWorldDirection(camDir);
+  camDir.y = 0;
+  camDir.normalize();
+  const flights = [];
+  const fire = (from) => {
+    const side = (Math.random() - 0.5) * 4;
+    const lean = { x: camDir.x * 5 - camDir.z * side, z: camDir.z * 5 + camDir.x * side }; // off over the horizon
+    flights.push(missiles.fire([{ x: from.x, z: from.z, from, away: true, lean, flight: 1.6, accel: 1.9 }]));
+  };
+  await Promise.all(
+    silos.map((cell, k) =>
+      wait(k * 0.35).then(() => run === runId && siloLaunch(cell, Math.ceil((count - k) / silos.length), fire)),
+    ),
+  );
+  await Promise.all(flights);
 }
 
 /**
@@ -3236,6 +3351,13 @@ async function firePlayerMissile(cells, fromHand = null) {
     accel: 1.25,
   };
   const run = runId;
+  // With a Missile Magazine built, the missile comes out of its silo instead of out of the card.
+  const silo = launchSilo(aim);
+  if (silo) {
+    const mouth = await launchFromSilo(silo);
+    if (run !== runId) return;
+    if (mouth) Object.assign(aim, { from: mouth, flight: 1.9, accel: 1.2 });
+  }
   await playMissileStrike([aim], {
     convert: false,
     follow: false,
@@ -3554,7 +3676,13 @@ async function runAttackPhase() {
   rig.locked = true;
   boardReturnDistance = rig.goalDistance;
   if (view === 'board') {
+    // Yours leave first: out of your Missile Magazines (the camera comes back to where it was afterwards).
+    const boardGoal = rig.goal.clone();
+    await launchSalvo(mine.length);
+    if (run !== runId) return true;
     await swapView(() => {
+      document.body.classList.remove('striking');
+      rig.goal.copy(boardGoal);
       setBoardFraming(false);
       view = 'globe';
       document.body.classList.add('globe-view');

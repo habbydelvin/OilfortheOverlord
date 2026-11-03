@@ -88,6 +88,7 @@ const HEX_YAW = Math.PI / 6;
  */
 const GLB_ONLY = {
   'MilitaryFactory.glb': 'MissileFactory',
+  'MissileMagazine.glb': 'MissileMagazine', // two clips: Idle (loops) and Launch (played when a missile is fired)
 };
 const OUT_GLB = path.join(ROOT, 'public/models/glb');
 const OUT_TEX = path.join(ROOT, 'public/models/tex');

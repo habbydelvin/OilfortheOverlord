@@ -642,11 +642,11 @@ export const shopReady = (key, unlocked) => {
  * Card pictures: front renders of each tile model (public/cards/snapshots, made by tools/card-snapshots.html).
  * Card key -> image; the four Wasteland colours share one. Bump SNAPSHOT_VERSION after re-rendering.
  */
-const SNAPSHOT_VERSION = '20261103-milfactory';
+const SNAPSHOT_VERSION = '20261103-magazine';
 const SNAPSHOTS = {
   capital: 'capital', settlement: 'settlement', farm: 'farm', pump: 'pump', station: 'station', refinery: 'refinery',
   oasis: 'oasis', tarpit: 'tarpit', labourcamp: 'labourcamp', cliffs: 'cliffs', ruins: 'ruins', crater: 'crater',
-  milfactory: 'milfactory',
+  milfactory: 'milfactory', magazine: 'magazine',
   raider: 'raider', bandit_raider: 'bandit_raider', bandit_siphon: 'bandit_siphon', bandit_scav: 'bandit_scav',
   wasteland1: 'wasteland', wasteland2: 'wasteland', wasteland3: 'wasteland', wasteland4: 'wasteland',
 };
@@ -655,6 +655,9 @@ for (const [key, file] of Object.entries(SNAPSHOTS)) if (TERRAINS[key]) TERRAINS
 export const TERRAIN_KEYS = Object.keys(TERRAINS);
 
 export const isBuilding = (terrain) => TERRAINS[terrain]?.category === 'building';
+
+/** Model clips that never loop: they play on cue (TileFactory.cue), like the Missile Magazine's Launch. */
+const EVENT_CLIPS = new Set(['Launch']);
 
 export const TILE = {
   gap: 0, // seam between tiles (world units); Game Debug → Graphics → Tile gap
@@ -791,19 +794,103 @@ export class TileFactory {
     return holder;
   }
 
-  /** @type {Set<{ mixer: THREE.AnimationMixer, root: THREE.Object3D, idle: number }>} */
+  /** @type {Set<{ mixer: THREE.AnimationMixer, root: THREE.Object3D, idle: number, cues: object[] }>} */
   #mixers = new Set();
 
-  /** Loop every clip baked into the model (for example, the Capital's sky traffic). */
+  /** Loop every clip baked into the model (for example, the Capital's sky traffic), except cue clips (EVENT_CLIPS). */
   #animate(model) {
     const mixer = new THREE.AnimationMixer(model);
     for (const clip of model.animations) {
+      if (EVENT_CLIPS.has(clip.name)) continue;
       const action = mixer.clipAction(clip);
       action.play();
       // Start each copy at a random point so two copies never fly in sync.
       action.time = Math.random() * clip.duration;
     }
-    this.#mixers.add({ mixer, root: model, idle: 0 });
+    const entry = { mixer, root: model, idle: 0, cues: [] };
+    model.userData.anim = entry;
+    this.#mixers.add(entry);
+  }
+
+  /** Whether a tile's model has the cue clip `name` (a stand-in, or a model without it, doesn't). */
+  canCue(holder, name) {
+    let entry = null;
+    holder.traverse((o) => (entry ??= o.userData.anim ?? null));
+    return !!entry?.root.animations.some((c) => c.name === name);
+  }
+
+  /**
+   * Play a cue clip (EVENT_CLIPS) once on a tile; when it ends the model is back in its rest pose and onEnd runs.
+   * At `cutAt` seconds into the clip `cut(i)` runs (e.g. reads where a part is), and the `hide` parts vanish (scale 0)
+   * from then on. With `repeat`, the clip then jumps back from `repeatFrom` to `repeatAt` that many times (the parts
+   * come back) and cuts again each time. Resolves at the last cut with what `cut` returned, or null (no such clip,
+   * or the tile went away first).
+   */
+  cue(holder, name, { speed = 1, cutAt = null, cut = null, hide = [], repeat = 0, repeatFrom = null, repeatAt = 0, onEnd = null } = {}) {
+    let entry = null;
+    holder.traverse((o) => (entry ??= o.userData.anim ?? null));
+    const clip = entry?.root.animations.find((c) => c.name === name);
+    if (!clip) {
+      onEnd?.();
+      return Promise.resolve(null);
+    }
+    const action = entry.mixer.clipAction(clip);
+    action.reset().setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = false;
+    action.timeScale = speed;
+    action.play();
+    // Each hidden part with its scale track: the mixer only writes values that change, so a part coming back gets
+    // its scale from the clip.
+    const parts = hide.flatMap((n) => {
+      const o = entry.root.getObjectByName(n);
+      if (!o) return [];
+      const ids = [o.name, o.uuid, THREE.PropertyBinding.sanitizeNodeName(o.name)];
+      const track = clip.tracks.find((t) => {
+        const b = THREE.PropertyBinding.parseTrackName(t.name);
+        return b.propertyName === 'scale' && ids.includes(b.nodeName);
+      });
+      return [{ o, scale: track?.createInterpolant() ?? null }];
+    });
+    return new Promise((resolve) => {
+      if (cutAt == null) resolve(null);
+      entry.cues.push({ action, cutAt, cut, parts, left: repeat, repeatFrom, repeatAt, onEnd, resolve, n: 0, phase: cutAt == null ? 'after' : 'before' });
+    });
+  }
+
+  /** After the mixer has posed the model this frame: cuts, repeats, hidden parts and finished cues. */
+  #runCues(entry) {
+    for (let i = entry.cues.length - 1; i >= 0; i--) {
+      const c = entry.cues[i];
+      if (!c.action.isRunning()) {
+        c.action.stop();
+        entry.cues.splice(i, 1);
+        c.resolve(null); // (no effect if it already resolved)
+        c.onEnd?.();
+        continue;
+      }
+      const t = c.action.time;
+      if (c.reveal) {
+        // Back after a repeat, now the mixer has posed the clip's earlier moment (not a frame before).
+        c.reveal = false;
+        c.hidden = false;
+        for (const p of c.parts) p.o.scale.fromArray(p.scale ? p.scale.evaluate(c.repeatAt) : [1, 1, 1]);
+      }
+      if (c.phase === 'before' && t >= c.cutAt) {
+        const value = c.cut?.(c.n++) ?? null;
+        if (c.left > 0) c.phase = 'repeat';
+        else {
+          c.phase = 'after';
+          c.resolve(value);
+        }
+        c.hidden = true;
+      } else if (c.phase === 'repeat' && t >= c.repeatFrom) {
+        c.left--;
+        c.action.time = c.repeatAt;
+        c.phase = 'before';
+        c.reveal = true;
+      }
+      if (c.hidden) for (const p of c.parts) p.o.scale.setScalar(0);
+    }
   }
 
   /** Advance tile animations. Copies that leave the scene (replaced, nuked, old ghosts) get dropped. */
@@ -817,9 +904,16 @@ export class TileFactory {
       }
       if (node.isScene) {
         entry.idle = 0;
-        if (!frozen) entry.mixer.update(dt);
+        // A cue (a magazine's launch) plays out even on an idle building.
+        if (!frozen || entry.cues.length) entry.mixer.update(dt);
+        if (entry.cues.length) this.#runCues(entry);
       } else if (++entry.idle > 120) {
         // About two seconds detached. The copy has been thrown away.
+        for (const c of entry.cues) {
+          c.resolve(null);
+          c.onEnd?.();
+        }
+        entry.cues.length = 0;
         entry.mixer.stopAllAction();
         entry.mixer.uncacheRoot(entry.root);
         this.#mixers.delete(entry);

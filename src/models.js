@@ -26,6 +26,7 @@ export const BLOCKOUTS = {
   crater: 'ToxicCraterCity01.fbx',
   labourcamp: 'LaborCampCity01.fbx',
   milfactory: 'MilitaryFactory.glb', // no FBX: a hexagonal .glb with its own animation (GLB_ONLY in tools/convert-models.mjs)
+  magazine: 'MissileMagazine.glb', // likewise; its Launch clip plays when the player fires a missile (main.js)
   // Camps: one model per camp, matched by its tent colour (TERRAINS[key].tent in tiles.js).
   raider: 'Camp04.fbx', // brown (rebels from starvation)
   bandit_raider: 'Camp03.fbx', // red
@@ -58,6 +59,7 @@ const FINISHED = {
   bandit_scav: { yaw: 0, fit: 'RaiderCampGreen_HiveCity' },
   settlement: { yaw: 0, fit: 'Village02_HiveCity' },
   milfactory: { yaw: 0, fit: 'MissileFactory_HiveCity' },
+  magazine: { yaw: 0, fit: 'MissileMagazine_HiveCity' },
 };
 
 /**
@@ -69,7 +71,7 @@ const USE_FBX = typeof location !== 'undefined' && new URLSearchParams(location.
 const MODEL_URL = USE_FBX ? '/art/models/' : '/models/glb/';
 const TEX_URL = '/models/tex/';
 // Bump after re-running the conversion (or re-exporting a model under the same name), so browsers drop cached copies.
-const MODEL_VERSION = '20261103-1400';
+const MODEL_VERSION = '20261103-1500';
 const ATLAS_URL = '/models/Atlas.jpg?v=20261026-1640';
 // Footprints measure about 96 × 97 cm. One board cell is 1 unit across.
 const CELL = 1; // full cell: the seam between tiles is TILE.gap, applied live by applyTileGap (tiles.js)

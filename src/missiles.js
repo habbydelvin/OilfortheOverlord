@@ -580,6 +580,11 @@ function buildMissileTemplate() {
   return g;
 }
 
+/** The template missile's tail (local units): a missile of another shape (a flight body) lines its tail up here. */
+export const MISSILE_TAIL = 0.35;
+/** How high a missile fired off the board climbs (out of view) before it's gone. */
+const AWAY_HEIGHT = 24;
+
 /** Quadratic Bézier point and tangent. */
 function bezier(out, p0, p1, p2, u) {
   const v = 1 - u;
@@ -888,6 +893,15 @@ export class MissileStrike {
    */
   #launchPath(m) {
     const c = this.cfg;
+    // Fired off the board (a Missile Magazine's salvo at a rival city): straight up and out of view, leaning by
+    // target.lean ({ x, z }); it never lands.
+    if (m.target.away) {
+      const f = m.target.from;
+      m.p0 = new THREE.Vector3(f.x, f.y, f.z);
+      m.p1 = m.p0.clone().addScaledVector(UP, AWAY_HEIGHT * 0.55);
+      m.p2 = m.p0.clone().add(new THREE.Vector3(m.target.lean?.x ?? 0, AWAY_HEIGHT, m.target.lean?.z ?? 0));
+      return;
+    }
     // Launched from the ground (a silo in Pre-war Ruins): a tall lob from the launch cell.
     if (m.target.from) {
       const f = m.target.from;
@@ -895,8 +909,9 @@ export class MissileStrike {
       const end = new THREE.Vector3(m.target.x, 0, m.target.z);
       const len = start.distanceTo(end);
       m.p0 = start;
-      // Ground silo: a tall lob. Hand / air launch: a shorter arc so it dives onto the tile.
-      const loft = f.y != null ? Math.max(2.5, len * 0.28) : Math.max(5, len * 1.4);
+      // Ground silo: a tall lob (a Missile Magazine's silo: a little lower). Hand / air launch: a shorter arc so it
+      // dives onto the tile.
+      const loft = f.silo ? Math.max(3, len * 1.1) : f.y != null ? Math.max(2.5, len * 0.28) : Math.max(5, len * 1.4);
       m.p1 = start.clone().lerp(end, 0.45).addScaledVector(UP, loft);
       m.p2 = end;
       return;
@@ -939,7 +954,8 @@ export class MissileStrike {
 
   #spawnMissile(m) {
     this.#launchPath(m);
-    const mesh = this.template.clone();
+    // from.body: a missile of its own (a Missile Magazine's), in the template's frame.
+    const mesh = (m.target.from?.body ?? this.template).clone();
     mesh.scale.setScalar(this.cfg.missileScale);
     const glow = new THREE.Sprite(
       new THREE.SpriteMaterial({ map: this.glow, color: this.cfg.exhaustColor, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false }),
@@ -1027,7 +1043,8 @@ export class MissileStrike {
         this.group.remove(m.mesh);
         m.glow.material.dispose();
         this.#missiles.splice(i, 1);
-        this.#detonate(m);
+        if (!m.target.away) this.#detonate(m);
+        else if (--m.job.left === 0) this.#finish(m.job);
       }
     }
 

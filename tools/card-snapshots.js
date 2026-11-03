@@ -29,7 +29,8 @@ const KEEP_GROUND = new Set(['oasis', 'tarpit', 'cliffs', 'ruins', 'crater', 'wa
 const GROUND_PART = /(_Sand|Ground|_SandTrim|_Pad\d+|_AshScorch)$/; // the ground plate's materials (see seamlessGround.js)
 /**
  * Per-card camera overrides: elevation (degrees), closeUp (share of the building kept), focus (aim height, 0-1),
- * margin, tile (seen from above, the tile's width fills the picture edge to edge, instead of what stands on it).
+ * margin, tile (seen from above, the tile's width fills the picture edge to edge, instead of what stands on it),
+ * underground: false (cut away what lies below the ground line: in the game the tile's ground hides it).
  */
 const VIEWS = {
   // Wasteland: the sand seen from straight above, close up (its original card picture).
@@ -41,7 +42,15 @@ const VIEWS = {
   crater: { elevation: 28 },
   // A wide layout (dome, rail cart, launch tower): a little closer, so it fills the slot like the other buildings.
   milfactory: { closeUp: 0.82 },
+  // A low silo: looked down on a little to show its closed hatch, and closer (its thin fence hardly shows on a card);
+  // its shaft below the ground is cut away.
+  magazine: { elevation: 30, closeUp: 0.72, underground: false },
 };
+
+const GROUND_CLIP = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // keeps y >= 0
+
+/** Clips the game plays on cue only (EVENT_CLIPS in src/tiles.js): the Missile Magazine's launch. */
+const CUE_CLIPS = new Set(['Launch']);
 
 /** Card key -> model key. The four Wasteland cards share the single-cell Wasteland piece. */
 const SNAPSHOT_MODELS = {
@@ -55,6 +64,7 @@ const SNAPSHOT_MODELS = {
   tarpit: 'tarpit',
   labourcamp: 'labourcamp',
   milfactory: 'milfactory',
+  magazine: 'magazine',
   cliffs: 'cliffs',
   ruins: 'ruins',
   crater: 'crater',
@@ -189,10 +199,10 @@ function snapshot(source, view = {}, key = '') {
   parkShip(model, key);
   const building = !KEEP_GROUND.has(key);
   if (building) hideGround(model);
-  // Freeze the animation a moment into its loop.
+  // Freeze the animation a moment into its loop (not the clips the game only plays on cue: the building at rest).
   if (model.animations.length) {
     const mixer = new THREE.AnimationMixer(model);
-    for (const clip of model.animations) mixer.clipAction(clip).play();
+    for (const clip of model.animations) if (!CUE_CLIPS.has(clip.name)) mixer.clipAction(clip).play();
     mixer.update(POSE_TIME);
   }
   scene.add(model);
@@ -202,6 +212,7 @@ function snapshot(source, view = {}, key = '') {
   const box = view.tile
     ? new THREE.Box3(new THREE.Vector3(-tileHalf, 0, -tileHalf / (WIDTH / HEIGHT)), new THREE.Vector3(tileHalf, 0.02, tileHalf / (WIDTH / HEIGHT)))
     : contentBounds(model, building ? MIN_FRAME_BUILDING : MIN_FRAME);
+  if (view.underground === false) box.min.y = Math.max(box.min.y, 0);
   const mid = box.getCenter(new THREE.Vector3());
   if (view.focus !== undefined) mid.y = box.min.y + (box.max.y - box.min.y) * view.focus; // aim lower or higher
   const half = box.getSize(new THREE.Vector3()).multiplyScalar((view.closeUp ?? CLOSE_UP) / 2);
@@ -210,7 +221,9 @@ function snapshot(source, view = {}, key = '') {
   sun.position.copy(center).add(SUN_OFFSET);
   sun.target.position.copy(center);
   sun.target.updateMatrixWorld();
+  renderer.clippingPlanes = view.underground === false ? [GROUND_CLIP] : [];
   renderer.render(scene, camera);
+  renderer.clippingPlanes = [];
   const url = renderer.domElement.toDataURL('image/webp', 0.92); // keeps the alpha channel
   scene.remove(model);
   return url;
