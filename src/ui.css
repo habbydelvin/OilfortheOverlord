@@ -2387,6 +2387,105 @@ body.striking #mapIcons {
   }
 }
 
+/* Zoom out: a mouse over the middle of the board, its wheel rolling down, chevrons going down and four corner
+   brackets opening outward (the view widening). */
+.coach-zoom {
+  position: fixed;
+  left: calc((100% - var(--panel-w)) / 2);
+  top: 44%;
+  width: 150px;
+  height: 150px;
+  translate: -50% -50%;
+  display: grid;
+  place-items: center;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.6));
+}
+.coach-zoom.hidden,
+.coach-keyhint.hidden {
+  display: none;
+}
+.cz-mouse {
+  width: 46px;
+  height: 69px;
+  margin-top: -18px;
+}
+.cz-roll {
+  animation: cz-roll 1.1s ease-in infinite;
+}
+@keyframes cz-roll {
+  0% { transform: translateY(0); opacity: 1; }
+  70% { transform: translateY(7px); opacity: 1; }
+  100% { transform: translateY(7px); opacity: 0; }
+}
+.cz-down {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 26px);
+  width: 26px;
+  height: 26px;
+  translate: -50% 0;
+  animation: cz-down 1.1s ease-in infinite;
+}
+@keyframes cz-down {
+  0% { transform: translateY(-4px); opacity: 0; }
+  40% { opacity: 1; }
+  100% { transform: translateY(8px); opacity: 0; }
+}
+.cz-corner {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border: 3px solid #ffb347;
+  animation: cz-open 1.6s ease-out infinite;
+}
+.cz-tl { left: 34px; top: 34px; border-right: 0; border-bottom: 0; --dx: -1; --dy: -1; }
+.cz-tr { right: 34px; top: 34px; border-left: 0; border-bottom: 0; --dx: 1; --dy: -1; }
+.cz-bl { left: 34px; bottom: 34px; border-right: 0; border-top: 0; --dx: -1; --dy: 1; }
+.cz-br { right: 34px; bottom: 34px; border-left: 0; border-top: 0; --dx: 1; --dy: 1; }
+@keyframes cz-open {
+  0% { transform: translate(0, 0); opacity: 0; }
+  25% { opacity: 1; }
+  100% { transform: translate(calc(var(--dx) * 26px), calc(var(--dy) * 26px)); opacity: 0; }
+}
+/* The strike lesson: a big K key over the board, pressed again and again. */
+.coach-keyhint {
+  position: fixed;
+  left: calc((100% - var(--panel-w)) / 2);
+  top: 30%;
+  translate: -50% -50%;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(16, 18, 20, 0.85);
+  box-shadow: 0 0 0 1px rgba(232, 191, 104, 0.6), 0 6px 16px rgba(0, 0, 0, 0.5);
+}
+.coach-keyhint .coach-key {
+  width: 46px;
+  height: 46px;
+  font-size: 24px;
+}
+/* The planet in view (the War Map, full screen): a gold ring sweeping out over it. */
+.coach-reveal {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: min(72vh, 60vw);
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 214, 140, 0.9);
+  box-shadow: 0 0 24px 6px rgba(255, 190, 90, 0.55), inset 0 0 24px 6px rgba(255, 190, 90, 0.35);
+  opacity: 0;
+  pointer-events: none;
+}
+.coach-reveal.on {
+  animation: coach-reveal 1.5s ease-out;
+}
+@keyframes coach-reveal {
+  0% { transform: scale(0.25); opacity: 0; }
+  20% { opacity: 1; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+
 /* "×2" rising over a boosted building: lettered like the payout numbers (.floater), in its neon colour. */
 .coach-pop {
   position: fixed;

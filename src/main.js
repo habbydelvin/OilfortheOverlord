@@ -285,6 +285,21 @@ const tutorial = new Tutorial({
     cursor: () => hoveredCell(),
     focus: (x, z) => rig.focus(x, z),
     skip: () => skipTutorial(),
+    /** Which screen is up ('board' | 'globe' | 'rival'), and whether a switch or the globe's flight is under way. */
+    view: () => view,
+    moving: () => switching || (view === 'globe' && globe.busy),
+    /** On the War Map: fly to a city ('player' is Hive City), when its label can't be pointed at. */
+    visit: (id) => globe.visit(id),
+    rivalIds: () => rivals.map((r) => r.id),
+    /** The planet is in view (the guided zoom-out): the season clock's latch. */
+    reveal: () => latch(),
+    /** The strike lesson: a free missile, a decoy outpost to fire at (returns its cell), whether the strike screen is up. */
+    giveMissile: () => {
+      tryStoreMissile('missile');
+      updateHUD();
+    },
+    placeDecoy: () => placeDecoy(),
+    strikeOpen: () => strikeOpen,
   },
 });
 // While it runs, only the card, cells and buttons the advisor asks for respond.
@@ -292,9 +307,12 @@ hand.guard = (action, piece) => !busy() && tutorial.allows(action, piece);
 hand.onBlocked = () => tutorial.nudge();
 placement.guard = (cells, piece) => tutorial.placeGuard(cells, piece);
 /** Debug tools and shortcuts are off during the tutorial (it has to stay on script). */
-/** True while something owns the screen (dialogue, missiles, shop, payout, tutorial): the War Map stays shut. */
-const screenBusy = () => eventOpen || striking || shopOpen || payout.active || turn.over || tutorial.active;
-/** Also true off the board, so the hand, the ghost and placement ignore the War Map and rival cities. */
+/** True while something owns the screen (dialogue, missiles, shop, payout). */
+const screenBusy = () => eventOpen || striking || shopOpen || payout.active || turn.over;
+/** The War Map stays shut while the screen is busy, and during the tutorial (except on its own trip to the planet). */
+const mapBlocked = () => screenBusy() || (tutorial.active && !tutorial.allows('globe'));
+/** Also true off the board, so the hand, the ghost and placement ignore the War Map and rival cities. (Not the
+    tutorial: its guard decides which cards it lets through.) */
 const busy = () => screenBusy() || view !== 'board';
 const tutorialBlocks = () => {
   if (!tutorial.active) return false;
@@ -3069,7 +3087,10 @@ function tryPlace() {
     hand.consume();
     if (played === 'spark') spark(cells);
     else if (played === 'militia') militia(...cells[0]);
-    else if (played === 'missile' || played === 'missile2') firePlayerMissile(cells, fromHand);
+    else if (played === 'missile' || played === 'missile2') {
+      firePlayerMissile(cells, fromHand);
+      tutorial.notify('placed', cells); // the strike lesson's guided shot
+    }
     else if (played === 'overtime') workOvertime(...cells[0]);
     else if (piece.terrain === 'demolish2') {
       const targets = placement.demolishable(cells);
@@ -3112,6 +3133,42 @@ function worldFromHandCard() {
   return { x: flyV.x, y: flyV.y, z: flyV.z };
 }
 
+/**
+ * The tutorial's strike lesson: a ruined enemy outpost to fire the free missile at. Only a model on the board, never a
+ * tile (it doesn't touch the economy); missiles may target it (placement.decoyAt), and a hit removes it.
+ */
+let decoy = null; // { x, z, mesh }
+function placeDecoy() {
+  removeDecoy();
+  // A free cell two steps from your land, not on a "?" site.
+  let best = null;
+  for (const c of grid.cells.values()) {
+    for (const [dx, dz] of DIRS) {
+      for (const [ex, ez] of DIRS) {
+        const x = c.x + dx + ex;
+        const z = c.z + dz + ez;
+        if (grid.has(x, z) || grid.touchesIsland(x, z) || mysteries.has(x, z) || !inWorld(x, z)) continue;
+        const d = hexDistance(0, 0, x, z);
+        if (!best || d < best.d) best = { x, z, d };
+      }
+    }
+  }
+  if (!best) return null;
+  const mesh = factory.create('raider');
+  const w = hexToWorld(best.x, best.z);
+  mesh.position.set(w.x, 0, w.z);
+  tiles.add(mesh);
+  decoy = { x: best.x, z: best.z, mesh };
+  return [best.x, best.z];
+}
+function removeDecoy() {
+  if (!decoy) return;
+  decoy.mesh.removeFromParent();
+  dust.burst(decoy.x, decoy.z, 1.2);
+  decoy = null;
+}
+placement.decoyAt = (x, z) => Boolean(decoy && decoy.x === x && decoy.z === z);
+
 async function firePlayerMissile(cells, fromHand = null) {
   const hits = placement.missileable(cells);
   if (!hits.length) return;
@@ -3130,7 +3187,7 @@ async function firePlayerMissile(cells, fromHand = null) {
     trackCamera: false,
     holdAfter: 0.9,
     onCover: () => {
-      hits.forEach(([x, z]) => demolish(x, z, true));
+      hits.forEach(([x, z]) => (decoy && decoy.x === x && decoy.z === z ? removeDecoy() : demolish(x, z, true)));
     },
   });
   if (run !== runId) return;
@@ -3323,7 +3380,7 @@ async function swapView(change) {
 function openGlobe() {
   if (switching || view === 'globe') return;
   if (view === 'board') {
-    if (screenBusy()) return;
+    if (mapBlocked()) return;
     boardReturnDistance = rig.goalDistance;
     hand.select(-1);
   }
@@ -3486,7 +3543,7 @@ window.addEventListener('keydown', (e) => {
     toast(msg, msg.includes('Finish') || msg.includes('请先') ? 'bad' : 'good');
   }
   else if (k === 'k' && !e.repeat) {
-    if (tutorial.active) return tutorial.nudge();
+    if (tutorial.active && !tutorial.allows('strike')) return tutorial.nudge();
     openCityStrike();
   }
   else if (k === 'enter') endTurn();
@@ -3561,6 +3618,7 @@ $('btnReplayTutorial').addEventListener('click', (e) => {
 function resetIsland(opts) {
   const tut = opts?.tutorial === true || !tutorialDone();
   resetView();
+  removeDecoy();
   rivals = createRivals((Math.random() * 0x100000000) >>> 0);
   runId++; // stops a missile strike / failure speech still running
   introRun++; // and an opening scene
@@ -3636,6 +3694,7 @@ function resetIsland(opts) {
 function skipTutorial() {
   markTutorialDone();
   tutorial.stop();
+  removeDecoy(); // skipped in the middle of the strike lesson
 }
 
 /**
@@ -3878,6 +3937,7 @@ function frame(now) {
     flattenCurve(); // the War Map has its own hex-planet bend; the board's map shape never applies here
     globe.update(dt);
     globe.render();
+    tutorial.update(time); // the guided trip to the planet points at cities here
     perf.gpuEnd();
     perf.end('render (cpu)');
     perf.frameEnd();
@@ -3894,6 +3954,7 @@ function frame(now) {
     updateCurve(camera, rig.target); // rival cities follow the Graphics map shape (Flat / Planet), like the board
     rivalView.update(dt, camera); // its fog of war (offscreen pass before the scene)
     renderer.render(rivalView.scene, camera);
+    tutorial.update(time); // the guided trip: back to the War Map from here
     perf.gpuEnd();
     perf.end('render (cpu)');
     perf.frameEnd();

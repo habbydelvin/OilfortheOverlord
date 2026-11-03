@@ -170,6 +170,7 @@ export class Placement {
   /** Buildings a player missile may destroy (not a Capital). */
   missileable(cells) {
     return cells.filter(([x, z]) => {
+      if (this.decoyAt?.(x, z)) return true; // the tutorial's decoy outpost (main.js)
       const cell = this.grid.get(x, z);
       return cell && isBuilding(cell.terrain) && cell.terrain !== 'capital';
     });
@@ -197,6 +198,8 @@ export class Placement {
       return { ok: true, reason: '' };
     }
     if (this.piece?.terrain === 'missile' || this.piece?.terrain === 'missile2') {
+      const guarded = this.guard?.(cells, this.piece); // the tutorial: only its target
+      if (guarded) return guarded;
       if (!this.missileable(cells).length) return { ok: false, reason: L('No building to destroy here', '这里没有可摧毁的建筑') };
       return { ok: true, reason: '' };
     }
