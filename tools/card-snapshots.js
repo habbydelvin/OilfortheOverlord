@@ -69,6 +69,7 @@ const SNAPSHOT_MODELS = {
   magazine: 'magazine',
   warhead: 'warhead',
   intercept: 'intercept',
+  missilelab: 'missilelab',
   cliffs: 'cliffs',
   ruins: 'ruins',
   crater: 'crater',

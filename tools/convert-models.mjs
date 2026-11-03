@@ -95,6 +95,7 @@ const GLB_ONLY = {
   'MissileMagazine.glb': 'MissileMagazine', // two clips: Idle (loops) and Launch (played when a missile is fired)
   'WasteCamp.glb': 'WasteCamp', // the Raider Hideout
   'WarheadInstitute.glb': 'WarheadInstitute',
+  'MissileRecipeLab.glb': 'MissileRecipeLab',
   'InterceptNetwork.glb': 'InterceptNetwork', // Idle (with the gun's sweep) and Fire; the game aims the gun (tiles.js)
 };
 /**
