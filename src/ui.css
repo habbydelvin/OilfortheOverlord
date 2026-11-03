@@ -826,6 +826,13 @@ body.paying #btnReroll {
   animation: slidein 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
 
+#btnHive {
+  display: none;
+}
+body.globe-view #btnHive {
+  display: block;
+}
+
 @keyframes slidein {
   from {
     opacity: 0;

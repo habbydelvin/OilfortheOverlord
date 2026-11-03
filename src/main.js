@@ -1058,6 +1058,7 @@ showLangButton();
  */
 function labelMainButtons() {
   for (const [id, zh] of [
+    ['btnHive', '返回蜂巢城'],
     ['btnNext', '下一回合'],
     ['btnReroll', '重抽手牌'],
   ]) {
@@ -4348,6 +4349,10 @@ $('btnReroll').addEventListener('click', (e) => {
   turn.stockpile -= cost;
   updateHUD();
   toast(L(`Hand rerolled: -${cost} oil (next reroll costs ${rerollCost()})`, `已重抽手牌：-${cost} 石油（下次重抽花费 ${rerollCost()}）`));
+});
+$('btnHive').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  closeGlobe();
 });
 $('btnNext').addEventListener('click', (e) => {
   e.currentTarget.blur(); // so Space doesn't re-click it
