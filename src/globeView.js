@@ -3,6 +3,7 @@ import { createGlobeBend } from './globeBend.js';
 import { WHEEL_GAP, wheelUnits } from './controls.js';
 import { L, onLangChange } from './i18n.js';
 import { PLAYER_NODE } from './rivals.js';
+import { buildMissileTemplate, glowTexture as missileGlow } from './missiles.js';
 import { SAND, sandTexture } from './seamlessGround.js';
 import { FOG, BILLOW_SHADE } from './fogOfWar.js';
 
@@ -333,7 +334,8 @@ export function clearGlobeConfig() {
   localStorage.removeItem(GLOBE_STORAGE_KEY);
 }
 
-export function createGlobeView({ renderer, root, factory, playerBuildings, playerHp = () => 5, onVisit, onDive = () => {} }) {
+/** freeDuringWar: cities can still be visited mid attack phase (the playback keeps running: call tickWar). */
+export function createGlobeView({ renderer, root, factory, playerBuildings, playerHp = () => 5, onVisit, onDive = () => {}, freeDuringWar = false, onArrive = null }) {
   const dom = renderer.domElement;
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(BG);
@@ -1143,7 +1145,8 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
       const next = THREE.MathUtils.clamp(goalDistance * Math.exp(dy * 0.0012), D_MIN, D_MAX);
       // Zoomed in fully: scrolling in further dives toward the city under the cursor (scrubbed, reversible).
-      if (dive || (dy < 0 && goalDistance <= D_MIN + 1e-3)) {
+      // Mid attack phase the dive into a city would stop the playback (unless the page keeps it ticking).
+      if (dive || (dy < 0 && goalDistance <= D_MIN + 1e-3 && (!war || freeDuringWar))) {
         const now = performance.now();
         const units = wheelUnits(e, wheelAt);
         wheelAt = now;
@@ -1197,7 +1200,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
   let visiting = false;
   /** Fly down onto a node, then report it. main.js fades and swaps the view. */
   async function visit(id) {
-    if (war) return; // no flying off mid attack phase
+    if (war && !freeDuringWar) return; // no flying off mid attack phase
     const n = nodes.find((node) => node.id === id);
     if (n?.rival && n.rival.alive === false) return; // nothing left to visit
     if (!n || visiting || dive || !active) return;
@@ -1326,6 +1329,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     camera.lookAt(0, 0, 0);
     camera.updateMatrixWorld();
     updateWar(dt);
+    updateQueued();
     updateSky(dt); // after the scroll for this frame, so the moon turns with the drag
 
     // Hover: label first, then the planet under the pointer.
@@ -1388,6 +1392,59 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
   const headGeo = new THREE.SphereGeometry(0.09, 8, 6);
   const burstGeo = new THREE.SphereGeometry(1, 12, 8);
   let war = null; // { items, t, speed, done }
+  const missileModel = buildMissileTemplate();
+  const glowTex = missileGlow();
+  const UPV = new THREE.Vector3(0, 1, 0);
+  const TAN = new THREE.Vector3();
+
+  // Aimed but not yet fired: a dashed arc per strike from its city to the target, redrawn as the globe turns.
+  let queued = []; // { from, to, line }
+  const queuedMat = new THREE.LineDashedMaterial({ color: 0xffd08a, dashSize: 0.18, gapSize: 0.12, transparent: true, opacity: 0.85, toneMapped: false });
+
+  /** strikes: [{ from, to }] (one arc per pair and count). Pass [] to clear. */
+  function setQueued(strikes) {
+    for (const q of queued) {
+      warRoot.remove(q.line);
+      q.line.geometry.dispose();
+    }
+    queued = strikes.map((s, i) => {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(40 * 3), 3));
+      const line = new THREE.Line(geo, queuedMat);
+      line.frustumCulled = false;
+      warRoot.add(line);
+      return { from: s.from, to: s.to, line, lift: 1 + 0.08 * i };
+    });
+  }
+
+  function updateQueued() {
+    for (const q of queued) {
+      const a = nodes.find((n) => n.id === q.from);
+      const b = nodes.find((n) => n.id === q.to);
+      q.line.visible = Boolean(a && b) && !war;
+      if (!q.line.visible) continue;
+      const d = bend.wrapDelta(b.p.x, b.p.y, a.p, new THREE.Vector2());
+      const it = { from: a.p, d, H: Math.min(RADIUS * 0.45, 0.8 + 0.28 * d.length()) * q.lift };
+      const pa = q.line.geometry.attributes.position;
+      for (let i = 0; i < pa.count; i++) {
+        arcPoint(it, i / (pa.count - 1), P);
+        pa.setXYZ(i, P.x, P.y, P.z);
+      }
+      pa.needsUpdate = true;
+      q.line.computeLineDistances();
+    }
+  }
+
+  /** A small missile (the board's model) with its exhaust glow, for the globe flights. */
+  function globeMissile() {
+    const m = missileModel.clone();
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffb04a, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false }));
+    glow.position.y = -0.45;
+    glow.scale.setScalar(0.5);
+    m.add(glow);
+    m.userData.glow = glow;
+    return m;
+  }
   const P = new THREE.Vector3();
   const Q = new THREE.Vector2();
 
@@ -1438,7 +1495,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       const d = bend.wrapDelta(b.p.x, b.p.y, a.p, new THREE.Vector2());
       const dist = d.length();
       const color = a.color.clone().lerp(new THREE.Color(0xffffff), 0.35);
-      const head = new THREE.Mesh(headGeo, new THREE.MeshBasicMaterial({ color: 0xfff2c0, toneMapped: false }));
+      const head = globeMissile();
       warRoot.add(head);
       items.push({
         s,
@@ -1446,8 +1503,9 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
         to: b,
         d,
         H: Math.min(RADIUS * 0.45, 0.8 + 0.28 * dist),
-        start: 0.2 * i,
-        dur: 1.8 + 0.06 * dist,
+        // Slow enough to follow (or zoom in on) across the planet.
+        start: 0.35 * i,
+        dur: 4 + 0.12 * dist,
         head,
         trail: makeTrail(color),
         shots: s.shots.map((shot, k) => ({ ...shot, at: 0.7 + 0.08 * k, line: null, done: false })),
@@ -1493,6 +1551,12 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     let live = 0;
     for (const it of war.items) {
       const u = (war.t - it.start) / it.dur;
+      // Its countdown ran out: the strike lands on the city now (the city view plays it, shown or not).
+      if (!it.arrived && u >= 1) {
+        it.arrived = true;
+        onArrive?.(it.s);
+      }
+      if (!it.arrived) live++; // the phase lasts until every countdown has run out, even one shot down on the way
       const fn = (v, out) => arcPoint(it, v, out);
       if (it.ended) {
         // The trail drains away from the launch end.
@@ -1511,6 +1575,12 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       it.head.visible = it.trail.visible = true;
       const uu = Math.min(1, u);
       arcPoint(it, uu, it.head.position);
+      // Nose along the arc; it shrinks as it nears the target city (it's far below, seen from orbit).
+      arcPoint(it, Math.min(1, uu + 0.01), TAN);
+      TAN.sub(it.head.position);
+      if (TAN.lengthSq() > 1e-10) it.head.quaternion.setFromUnitVectors(UPV, TAN.normalize());
+      it.head.scale.setScalar(0.34 * THREE.MathUtils.lerp(1, 0.3, uu * uu));
+      it.head.userData.glow.scale.setScalar(0.45 + Math.random() * 0.2);
       setTrail(it.trail, fn, Math.max(0, uu - 0.35), uu);
       // Interceptors climb from the target city toward the missile.
       for (const [k, shot] of it.shots.entries()) {
@@ -1566,6 +1636,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       const done = war.done;
       for (const it of war.items) {
         warRoot.remove(it.head, it.trail);
+        it.head.userData.glow.material.dispose();
         it.trail.geometry.dispose();
         for (const sh of it.shots) if (sh.line) warRoot.remove(sh.line);
       }
@@ -1622,6 +1693,19 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       return Boolean(anim) || visiting || Boolean(war);
     },
     playAttack,
+    /** Keep the attack playback running while the globe isn't shown (the flights land on time). */
+    tickWar(dt) {
+      if (!active && war) updateWar(dt);
+    },
+    /** Flights still in the air: [{ to, from, eta (s until impact, playback speed included) }]. */
+    arrivals() {
+      if (!war) return [];
+      return war.items.filter((it) => !it.arrived).map((it) => ({ to: it.s.to, from: it.s.from, eta: Math.max(0, (it.start + it.dur - war.t) / war.speed) }));
+    },
+    get attacking() {
+      return Boolean(war);
+    },
+    setQueued,
     skipAttack,
     renderLabels: () => renderLabels(),
     scene,

@@ -192,7 +192,7 @@ function puffTexture() {
 }
 
 /** Soft round glow for fire, flashes and the exhaust. */
-function glowTexture() {
+export function glowTexture() {
   const size = 64;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
@@ -558,7 +558,7 @@ class Blast {
 }
 
 // ---------- the missile ----------
-function buildMissileTemplate() {
+export function buildMissileTemplate() {
   const g = new THREE.Group();
   const metal = new THREE.MeshStandardMaterial({ color: 0x3d3b36, metalness: 0.6, roughness: 0.45, fog: false });
   const red = new THREE.MeshStandardMaterial({ color: 0x9e2a1c, metalness: 0.3, roughness: 0.5, fog: false });

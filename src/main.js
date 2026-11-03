@@ -51,7 +51,7 @@ import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
 import { MissileStrike, MISSILE_PARAMS, MISSILE_DEFAULTS, MISSILE_TAIL, loadMissileConfig, saveMissileConfig, clearMissileConfig } from './missiles.js';
 import { Tutorial, TUTORIAL_KEY, HINTS_KEY, tutorialDone, markTutorialDone } from './tutorial.js';
 import { L, both, isZh, toggleLang, onLangChange, applyStatic, textOf, retranslate } from './i18n.js';
-import { createRivals, advanceRivals, rivalStats } from './rivals.js';
+import { createRivals, advanceRivals, rivalStats, PLAYER_NODE } from './rivals.js';
 import { createRivalView } from './rivalView.js';
 import { createGlobeView, GLOBE_PARAMS, GLOBE_DEFAULTS, loadGlobeConfig, saveGlobeConfig, clearGlobeConfig } from './globeView.js';
 import { createCloudTransition } from './cloudTransition.js';
@@ -308,14 +308,16 @@ const tutorial = new Tutorial({
   },
 });
 // While it runs, only the card, cells and buttons the advisor asks for respond.
-hand.guard = (action, piece) => !busy() && tutorial.allows(action, piece);
+// In a rival city with the missile hand out, missile cards can be picked (and dragged onto a tile to aim them).
+hand.guard = (action, piece) =>
+  (view === 'rival' && rivalHand && isPlayerMissile(piece?.terrain) && !screenBusy()) || (!busy() && tutorial.allows(action, piece));
 hand.onBlocked = () => tutorial.nudge();
 placement.guard = (cells, piece) => tutorial.placeGuard(cells, piece);
 /** Debug tools and shortcuts are off during the tutorial (it has to stay on script). */
 /** True while something owns the screen (dialogue, missiles, shop, payout). */
 const screenBusy = () => eventOpen || striking || shopOpen || payout.active || turn.over;
 /** The War Map stays shut while the screen is busy, and during the tutorial (except on its own trip to the planet). */
-const mapBlocked = () => screenBusy() || (tutorial.active && !tutorial.allows('globe'));
+const mapBlocked = () => (screenBusy() && !attackLive) || (tutorial.active && !tutorial.allows('globe'));
 /** Also true off the board, so the hand, the ghost and placement ignore the War Map and rival cities. (Not the
     tutorial: its guard decides which cards it lets through.) */
 const busy = () => screenBusy() || view !== 'board';
@@ -559,6 +561,8 @@ function nukeRandomTile(quiet = false) {
 let runId = 0;
 /** True while the strike cinematic plays (camera locked, game keys ignored). */
 let striking = false;
+/** True while the attack phase's missiles are in the air: you can look around (board, War Map, rivals) but not play. */
+let attackLive = false;
 const wait = (s) => new Promise((r) => setTimeout(r, s * 1000));
 
 /** Missiles for the nth missed tribute (Game Debug → Missiles: 1, 3, 5). */
@@ -648,19 +652,28 @@ function strikeCamera(targets) {
  * mushroom cloud (unless `convert` is off: a dry-run preview). The caller owns `eventOpen` afterwards.
  * Returns the names of the tiles destroyed.
  */
-async function playMissileStrike(targets, { convert = true, restoreCamera = true, follow = false, prelude = null, onCover = null, holdAfter = null, skipLead = false, trackCamera = true } = {}) {
+async function playMissileStrike(targets, { convert = true, restoreCamera = true, follow = false, prelude = null, onCover = null, holdAfter = null, skipLead = false, trackCamera = true, free = false } = {}) {
   const run = runId;
   const lost = [];
   const interceptUsed = new Set();
   if (!targets.length) return lost;
   const prevEvent = eventOpen;
-  striking = true;
-  eventOpen = true;
-  hand.select(-1);
-  if (previewing) cancelPreview();
-  document.body.classList.add('striking');
+  // free: no cinematic at all (the attack phase). The camera, HUD and keys stay yours; the missiles come in
+  // from just off the edge of whatever you're looking at.
+  if (free) {
+    restoreCamera = false;
+    trackCamera = false;
+    skipLead = true;
+  } else {
+    striking = true;
+    eventOpen = true;
+    hand.select(-1);
+    if (previewing) cancelPreview();
+    document.body.classList.add('striking');
+    rig.locked = true;
+  }
   const saved = { goal: rig.goal.clone(), distance: rig.goalDistance };
-  rig.locked = true;
+  const endStrike = (prev) => !free && endCinematic(prev);
   if (follow) {
     // Ground launch: close up on the launch cell, then the camera rides along with the missile.
     const from = targets[0].from;
@@ -811,7 +824,7 @@ function fireDefences(t, u) {
   }
 }
 
-function endStrike(prevEvent) {
+function endCinematic(prevEvent) {
   document.body.classList.remove('striking');
   striking = false;
   eventOpen = prevEvent;
@@ -1700,7 +1713,7 @@ function updateInspect(cell) {
 /** Next turn: tiles hop and flash what they produce, then the turn is settled. */
 function endTurn() {
   if (view !== 'board') return; // the HUD stays up on the War Map, but turns are played on the board
-  if (turn.over || shopOpen || eventOpen || strikeOpen) return;
+  if (turn.over || shopOpen || eventOpen || strikeOpen || warPending) return;
   if (payout.active) {
     if (previewing) cancelPreview();
     else {
@@ -1718,9 +1731,18 @@ function endTurn() {
   }
   hand.select(-1);
   tutorial.notify('endTurn');
-  const e = economyNow();
-  runPayout(e, () => finishSeasonFx(e));
+  // Combat first: every city's missiles fly, then the season is scored on what's left standing.
+  const run = runId;
+  warPending = true;
+  runAttackPhase().then((over) => {
+    warPending = false;
+    if (run !== runId || over) return;
+    const e = economyNow();
+    runPayout(e, () => finishSeasonFx(e));
+  });
 }
+/** True from End Turn until the attack phase has finished (a second press does nothing). */
+let warPending = false;
 
 /** Oil has landed: factories pay and produce, then the year can wrap up. */
 function finishSeasonFx(e) {
@@ -2222,12 +2244,8 @@ function settleTurn(e) {
 
   $('report').innerHTML = lines.join('<br />');
 
-  // The attack phase: every city's strikes fly now, after the season is scored (and before the next hand / shop).
-  const warRun = runId;
-  runAttackPhase().then((over) => {
-    if (warRun !== runId || over) return;
-    afterWar();
-  });
+  // (The attack phase already played at End Turn, before the payout.)
+  afterWar();
 
   function afterWar() {
   // Missed tribute: no shop this year. The Overlord comes in person; on the last strike he razes the city.
@@ -3500,7 +3518,7 @@ let aimHover = null;
 const aimPiece = () => (view === 'rival' && rivalHand && isPlayerMissile(hand.piece?.terrain) ? hand.piece : null);
 
 function openRivalHand(rival) {
-  if (rivalHand || rival.alive === false || turn.over || !missileCount()) return;
+  if (rivalHand || rival.alive === false || turn.over || attackLive || !missileCount()) return;
   rivalHand = hand.snapshot();
   hand.replaceHand(drawStrikeHand(missileCount()));
   document.body.classList.add('rival-hand');
@@ -3525,6 +3543,16 @@ function updateAimBar() {
   $('rivalAim').classList.toggle('hidden', !rival || rival.alive === false || (!q && !cards));
   $('rivalQueue').textContent = L(`${q} aimed · ${cards} in hand · fires after End Turn`, `已瞄准 ${q} · 手牌 ${cards} · 结束回合后发射`);
   rivalView.setMarkers(rival ? queuedStrikes(rival.id).flatMap((s) => footprint(s.kind, s.at)) : [], aimHover);
+  rivalView.setArcs(rival ? queuedStrikes(rival.id).map((s) => s.at) : [], rival ? homeBearing(rival) : null);
+  globe?.setQueued(queuedStrikes().map((s) => ({ from: 'player', to: s.to })));
+}
+
+/** Which way Hive City lies from a rival on the War Map (unit vector in the rival city's ground plane). */
+function homeBearing(rival) {
+  const dx = PLAYER_NODE.x - rival.def.map.x;
+  const dz = PLAYER_NODE.y - rival.def.map.y;
+  const len = Math.hypot(dx, dz) || 1;
+  return { x: dx / len, z: dz / len };
 }
 
 /** Old name kept for the callers that cancel aiming (leaving a city, a reset). */
@@ -3654,6 +3682,121 @@ $('btnWarSkip').addEventListener('click', (e) => {
   globe.skipAttack();
 });
 
+// ---------- the attack phase, live: each strike lands when its countdown runs out ----------
+let landing = []; // strikes still playing in a city view: the phase waits for them
+let rivalMissiles = null; // our missiles coming down on a rival city (its own scene), made with the rival view
+
+/** Craters from one strike written onto a rival's grid (applyToRival writes the same again at the end). */
+function craterRival(r, rec) {
+  if (!rec.hit || !rec.lost.length) return;
+  for (const c of rec.lost) r.grid.set(c.x, c.z, { terrain: 'crater' });
+  const hitCells = new Set(rec.lost.map((c) => `${c.x},${c.z}`));
+  r.pieces = (r.pieces ?? []).filter((p) => !p.cells.some(([x, z]) => hitCells.has(`${x},${z}`)));
+  r.version = (r.version ?? 0) + 1;
+  if (rivalShown === r) rivalView.refresh();
+}
+
+/** Our missile into the rival city on screen: their interceptors' flak meets it (or misses) on the way down. */
+function playRivalStrike(r, rec) {
+  rivalMissiles ??= new MissileStrike(rivalView.scene, camera, missileCfg);
+  const w = hexToWorld(rec.at[0], rec.at[1]);
+  const t = { x: w.x, z: w.z, rec, shots: rec.shots, flight: missileCfg.followFlight, fired: 0 };
+  return rivalMissiles.fire([t], {
+    onMove: (_pos, tt, u) => {
+      while (tt.fired < tt.shots.length && u >= CIWS_START + CIWS_GAP * tt.fired) {
+        const shot = tt.shots[tt.fired++];
+        const pad = hexToWorld(shot.x, shot.z);
+        rivalMissiles.fireCIWS(null, new THREE.Vector3(pad.x, 0.35, pad.z), () => rivalMissiles.position(tt), {
+          success: shot.success,
+          onKill: () => rivalMissiles.destroy(tt) && boom(),
+        });
+      }
+    },
+    onImpact: () => {
+      boom();
+      if (view === 'rival') camShake.add(missileCfg.shake);
+    },
+    onCover: () => craterRival(r, rec),
+  });
+}
+
+/** A flight's countdown ran out: play it in the city on screen, or settle it quietly if that city isn't shown. */
+function arrive(rec) {
+  if (rec.fizzled) return;
+  if (rec.to === 'player') {
+    if (view === 'board') {
+      landing.push(
+        playMissileStrike([{ x: rec.at[0], z: rec.at[1], rec, shots: rec.shots, mustStop: !rec.hit && rec.shots.some((q) => q.success) }], {
+          free: true,
+          onCover: (_cell, t) => {
+            for (const c of t?.rec?.lost ?? []) craterAt(c.x, c.z);
+          },
+        }),
+      );
+    } else {
+      for (const c of rec.lost) craterAt(c.x, c.z);
+      toast(
+        rec.hit
+          ? L(`Hive City hit${rec.lost.length ? `: lost ${listLost(rec.lost.map((c) => TERRAINS[c.terrain]?.name ?? c.name))}` : ''}`, `蜂巢城被击中${rec.lost.length ? `：损失${listLost(rec.lost.map((c) => TERRAINS[c.terrain]?.name ?? c.name))}` : ''}`)
+          : L('A missile on Hive City was intercepted', '一枚射向蜂巢城的导弹被拦截'),
+        rec.hit ? 'bad' : '',
+      );
+    }
+    return;
+  }
+  const r = rivals.find((x) => x.id === rec.to);
+  if (!r) return;
+  if (view === 'rival' && rivalShown === r && rec.from === 'player') landing.push(playRivalStrike(r, rec));
+  else craterRival(r, rec);
+}
+
+/** The phase in one line (instead of the old report popup). */
+function toastWarSummary(res) {
+  const mine = res.filter((s) => s.from === 'player');
+  const at = res.filter((s) => s.to === 'player' && !s.fizzled);
+  const parts = [];
+  if (mine.length) parts.push(L(`Your missiles: ${mine.filter((s) => s.hit).length}/${mine.length} hit`, `你的导弹：命中 ${mine.filter((s) => s.hit).length}/${mine.length}`));
+  if (at.length) parts.push(L(`Incoming: ${at.filter((s) => s.hit).length}/${at.length} got through`, `来袭：${at.filter((s) => s.hit).length}/${at.length} 命中`));
+  const fell = res.filter((s) => s.eliminated && s.to !== 'player').map((s) => cityName(s.to));
+  if (fell.length) parts.push(L(`${fell.join(', ')} fell`, `${fell.join('、')}陷落`));
+  if (parts.length) toast(parts.join(' · '));
+}
+
+/** The countdown: when the missiles in the air reach the city in view, and every other target. */
+const warTimer = $('warTimer');
+function updateWarTimer() {
+  const flights = globe?.arrivals() ?? [];
+  if (!flights.length) {
+    warTimer.classList.add('hidden');
+    return;
+  }
+  const here = view === 'rival' ? rivalShown?.id : view === 'board' ? 'player' : null;
+  const by = new Map();
+  for (const f of flights) {
+    const g = by.get(f.to) ?? { n: 0, eta: Infinity, mine: 0 };
+    g.n++;
+    g.eta = Math.min(g.eta, f.eta);
+    if (f.from === 'player') g.mine++;
+    by.set(f.to, g);
+  }
+  const fmt = (t) => `${t.toFixed(1)}s`;
+  const lines = [];
+  if (here) {
+    const g = by.get(here);
+    lines.push(
+      g
+        ? `<b>${L(`${g.n} missile${g.n === 1 ? '' : 's'} arriving at ${cityName(here)} in ${fmt(g.eta)}`, `${g.n} 枚导弹将在 ${fmt(g.eta)} 后抵达${cityName(here)}`)}</b>`
+        : `<b>${L(`Nothing inbound on ${cityName(here)}`, `${cityName(here)}无来袭导弹`)}</b>`,
+    );
+  } else lines.push(`<b>${L(`Missiles in the air: ${flights.length}`, `空中导弹：${flights.length}`)}</b>`);
+  for (const [to, g] of [...by].sort((a, b) => a[1].eta - b[1].eta)) {
+    if (to === here) continue;
+    lines.push(`<span class="${to === 'player' ? 'bad' : g.mine ? 'good' : ''}">${cityName(to)}: ${g.n} · ${fmt(g.eta)}</span>`);
+  }
+  warTimer.innerHTML = lines.join('');
+  warTimer.classList.remove('hidden');
+}
+
 /**
  * After the season is scored: the player's aimed strikes and the rivals' choices fly together on the War Map,
  * then the player's board takes its hits. Resolves true if the run ended (Capital lost, or every rival gone).
@@ -3661,6 +3804,7 @@ $('btnWarSkip').addEventListener('click', (e) => {
 async function runAttackPhase() {
   const run = runId;
   const cities = warCities();
+  globe.setQueued([]); // the aimed arcs become real flights now
   const mine = takeQueue()
     .filter((q) => rivals.find((r) => r.id === q.to)?.alive !== false)
     .map((q) => ({ from: 'player', to: q.to, at: q.at, kind: q.kind }));
@@ -3670,68 +3814,37 @@ async function runAttackPhase() {
   setAiming(false);
   const { strikes: res, results } = resolveWar(strikes, cities, Math.random);
 
-  // Show it on the War Map: every city's missiles at once.
-  eventOpen = true;
+  // Every city's missiles leave at once. You stay where you are (no camera takeover): the countdown shows when
+  // each lands, and a strike plays in whichever city you're looking at when its countdown runs out (arrive()).
+  eventOpen = true; // no card play while they're in the air; looking around is still allowed (attackLive)
+  attackLive = true;
   hand.select(-1);
-  rig.locked = true;
-  boardReturnDistance = rig.goalDistance;
-  if (view === 'board') {
-    // Yours leave first: out of your Missile Magazines (the camera comes back to where it was afterwards).
-    const boardGoal = rig.goal.clone();
-    await launchSalvo(mine.length);
-    if (run !== runId) return true;
-    await swapView(() => {
-      document.body.classList.remove('striking');
-      rig.goal.copy(boardGoal);
-      setBoardFraming(false);
-      view = 'globe';
-      document.body.classList.add('globe-view');
-      globe.enter(rivals, 'player');
-    });
-    if (run !== runId) return true;
-    await wait(1.3); // the globe's pull-back
-  }
-  if (run !== runId) return true;
-  $('warUI').classList.remove('hidden');
-  $('btnWarSkip').classList.remove('hidden');
-  await announceIncoming(theirs);
-  if (run !== runId) return true;
+  landing = [];
+  warTimer.classList.remove('hidden');
+  announceIncoming(theirs);
   await globe.playAttack(res);
+  await Promise.all(landing);
+  attackLive = false;
+  warTimer.classList.add('hidden');
   if (run !== runId) return true;
 
-  // The real state, now the playback has shown it.
+  // The real state, now every strike has landed.
   for (const r of rivals) {
     applyToRival(r, results.get(r.id));
     noteAttacks(r, res);
     r.stats = rivalStats(r.grid, r);
+    if (rivalShown === r) {
+      rivalView.refresh();
+      fillRivalBar(r);
+    }
   }
   const me = results.get('player');
   turn.stockpile = Math.max(0, turn.stockpile - (me?.oilSpent ?? 0));
   turn.capitalHp = Math.max(0, turn.capitalHp - (me?.hpLost ?? 0));
   globe.renderLabels();
-  updateHUD();
-  await showWarReport(res);
-  if (run !== runId) return true;
-  $('warUI').classList.add('hidden');
-
-  await closeGlobe();
-  if (run !== runId) return true;
-  // Your board takes the strikes aimed at it with the strike cinematic: your CIWS bunkers open up on each one;
-  // a hit lands and its tiles become craters under the cloud, a stopped one bursts in the air.
-  const incoming = res
-    .filter((r) => r.to === 'player' && !r.fizzled)
-    .map((r) => ({ x: r.at[0], z: r.at[1], rec: r, shots: r.shots, mustStop: !r.hit && r.shots.some((q) => q.success) }));
-  if (incoming.length) {
-    await playMissileStrike(incoming, {
-      onCover: (_cell, t) => {
-        for (const c of t?.rec?.lost ?? []) craterAt(c.x, c.z);
-      },
-    });
-    if (run !== runId) return true;
-  }
   eventOpen = false;
-  rig.locked = false;
   updateHUD();
+  toastWarSummary(res);
 
   if (turn.capitalHp <= 0) {
     gameOver(() => L('Rival missiles have levelled your Capital. Hive City has fallen.', '敌方导弹夷平了你的首都。蜂巢城已陷落。'));
@@ -3749,12 +3862,9 @@ async function announceIncoming(strikes) {
   const at = strikes.filter((x) => x.to === 'player');
   if (!at.length) return;
   const from = [...new Set(at.map((x) => x.from))].map(cityName).join(L(', ', '、'));
-  const el = $('warAlert');
-  el.innerHTML = `<b>${L('Incoming missiles!', '导弹来袭！')}</b><span>${L(`${from} launched ${at.length} missile${at.length === 1 ? '' : 's'} at Hive City`, `${from}向蜂巢城发射了 ${at.length} 枚导弹`)}</span>`;
-  el.classList.remove('hidden');
+  // A toast, not a banner: nothing stops you looking around while they fly.
+  toast(L(`Incoming! ${from} launched ${at.length} missile${at.length === 1 ? '' : 's'} at Hive City`, `导弹来袭！${from}向蜂巢城发射了 ${at.length} 枚导弹`), 'bad', 2600);
   buzz();
-  await wait(2.2);
-  el.classList.add('hidden');
 }
 
 /** Every rival city has fallen and the tribute still flows: the run is won. */
@@ -3856,6 +3966,7 @@ function openGlobe() {
     view = 'globe';
     document.body.classList.add('globe-view');
     globe.enter(rivals, from);
+    globe.setQueued(queuedStrikes().map((s) => ({ from: 'player', to: s.to })));
   });
 }
 
@@ -3914,6 +4025,8 @@ globe = createGlobeView({
   onDive: (k) => {
     if (!switching) clouds.setPeek(k);
   },
+  freeDuringWar: true, // look around (board, planet, rival cities) while the missiles are in the air
+  onArrive: (s) => arrive(s),
 });
 rig.onZoomPastMax = () => {
   if (view === 'board' || view === 'rival') openGlobe();
@@ -4103,6 +4216,9 @@ function resetIsland(opts) {
   piecesPlaced = 0;
   if (strikeOpen) closeStrikeScreen();
   resetMissiles(); // and any aimed strikes
+  warPending = false;
+  attackLive = false;
+  landing = [];
   setAiming(false);
   $('warUI').classList.add('hidden');
   $('warReport').classList.add('hidden');
@@ -4393,6 +4509,14 @@ function frame(now) {
   perf.begin('camera');
   rig.update(dt);
   if (!switching && view !== 'globe') clouds.setPeek(rig.stretch ** 0.8 * 0.92);
+  // The attack phase keeps time wherever you're looking: flights on the planet, strikes in every city.
+  if (view !== 'globe') globe.tickWar(dt);
+  if (view !== 'board') {
+    missiles.update(dt);
+    dust.update(dt);
+  }
+  rivalMissiles?.update(dt);
+  updateWarTimer();
   if (view === 'globe') {
     perf.end('camera');
     perf.begin('render (cpu)');
@@ -4415,6 +4539,7 @@ function frame(now) {
     perf.begin('render (cpu)');
     perf.gpuBegin();
     updateCurve(camera, rig.target); // rival cities follow the Graphics map shape (Flat / Planet), like the board
+    camShake.update(dt, rig.distance);
     rivalView.update(dt, camera); // its fog of war (offscreen pass before the scene)
     updateAimHover();
     renderer.render(rivalView.scene, camera);
@@ -4654,4 +4779,4 @@ factory.extrasReady.then(async (extras) => {
 if (RELEASE) for (const id of ['debugDock', 'libraryLink']) document.getElementById(id)?.remove();
 
 // Handy for debugging in the console (dev builds only).
-if (!RELEASE) window.tileIsland = { tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, openCityStrike, drawStrikeHand, missileCount, _t: { openGlobe, globeCfg, clear: () => (eventOpen = false) } };
+if (!RELEASE) window.tileIsland = { tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, openCityStrike, drawStrikeHand, missileCount, _t: { openGlobe, globeCfg, clear: () => (eventOpen = false), war: { addMissile, queueDrawn, updateAimBar, runAttackPhase, rivals: () => rivals } } };

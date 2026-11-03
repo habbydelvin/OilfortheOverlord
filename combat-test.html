@@ -65,6 +65,36 @@
       a {
         color: #d8b27a;
       }
+      #globeUI { position: fixed; inset: 0; z-index: 4; pointer-events: none; }
+      #globeUI.hidden, .hidden { display: none; }
+      .globe-title { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); font-size: 20px; letter-spacing: 0.18em; text-transform: uppercase; color: #e8bf68; }
+      .globe-node { position: fixed; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; border: 0; background: none; color: #f0e4c8; font: inherit; font-size: 13px; cursor: pointer; pointer-events: auto; }
+      .globe-node.off { opacity: 0; pointer-events: none; }
+      .globe-node.far { opacity: 0.7; }
+      .globe-node i { display: none; }
+      .globe-node span { padding: 2px 7px; border-radius: 3px; background: rgba(12, 10, 8, 0.7); box-shadow: inset 0 -2px 0 var(--node); white-space: nowrap; }
+      .globe-node.hover span { color: #e8bf68; }
+      .globe-node.dead span { text-decoration: line-through; opacity: 0.6; }
+      .globe-hp { font-size: 11px; color: #ff8a6a; }
+      .globe-crown { font-size: 16px; color: #e8bf68; }
+      .globe-card { position: fixed; left: 0; top: 0; width: 200px; padding: 8px 10px; border-radius: 4px; background: rgba(16, 14, 12, 0.92); font-size: 12px; }
+      .globe-card div { display: flex; justify-content: space-between; }
+      #viewBtn { margin-left: 6px; }
+      #warTimer { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 7; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 16px; border-radius: 6px; background: rgba(40, 10, 6, 0.85); box-shadow: inset 0 0 0 1px #c8453a; font-size: 13px; pointer-events: none; }
+      #warTimer b { font-size: 17px; color: #ffb08a; letter-spacing: 0.03em; }
+      #warTimer .bad { color: #ff8a6a; }
+      #warTimer .good { color: #9fd38a; }
+      #viewClouds { position: fixed; inset: 0; z-index: 95; width: 100%; height: 100%; display: none; pointer-events: none; }
+      #viewClouds.on { display: block; }
+      #viewClouds.blocking { pointer-events: auto; }
+      #missileHand { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; gap: 10px; }
+      #missileHand.hidden { display: none; }
+      .mcard { width: 80px; height: 110px; border-radius: 8px; background: linear-gradient(#7a3a2a, #4e241a); box-shadow: inset 0 0 0 2px #c8a060, 0 4px 12px #000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #f3e2c0; cursor: grab; user-select: none; touch-action: none; transition: transform 0.12s; }
+      .mcard:hover { transform: translateY(-8px); }
+      .mcard b { font-size: 30px; color: #ffb04a; }
+      .mcard small { font-size: 10px; color: #d8c0a0; }
+      .mcard.lifted { opacity: 0.3; }
+      .mcard.ghost { position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none; opacity: 0.9; cursor: grabbing; transition: none; }
       .tune-head {
         display: flex;
         justify-content: space-between;
@@ -97,10 +127,19 @@
   <body>
     <div id="app"></div>
     <div id="crt" style="position: fixed; inset: 0; pointer-events: none"></div>
+    <div id="globeUI" class="hidden">
+      <div class="globe-title">War Map</div>
+      <div id="globeLabels"></div>
+      <div id="globeCard" class="globe-card hidden"></div>
+    </div>
+    <div id="warTimer" class="hidden"></div>
+    <canvas id="viewClouds"></canvas>
+    <div id="missileHand" class="hidden"></div>
     <div id="panel">
       <h1>Combat test</h1>
-      <p>A prebuilt city. Next turn sends missiles in, filmed with the game's strike camera. Each Intercept Network is a CIWS bunker: its turret swings onto the missile and fills the sky with rounds. A hit brings it down in mid-air; a miss streams past behind it. Drag / scroll / WASD to move the camera.</p>
-      <button id="next" type="button" disabled>Next turn</button>
+      <p>Zoom out past max (or press War Map) to see the planet. Click a rival city to enter it, drag a missile card from your hand onto one of its tiles to aim it (click an aimed tile to take it back). Your hand holds one missile per armed silo slot, refilled every turn, then End turn: every city fires, the flights cross the planet, then strikes on Hive City play here. Next turn sends missiles in, filmed with the game's strike camera. Each Intercept Network is a CIWS bunker: its turret swings onto the missile and fills the sky with rounds. A hit brings it down in mid-air; a miss streams past behind it. Drag / scroll / WASD to move the camera.</p>
+      <button id="next" type="button" disabled>End turn</button>
+      <button id="viewBtn" type="button">War Map</button>
       <div id="status">Loading the city…</div>
       <div id="log"></div>
       <div class="tune-head">

@@ -3102,10 +3102,14 @@ body.rival-aiming canvas {
   color: #ff8a6a;
   text-shadow: 0 2px 8px #000;
 }
-#btnWarSkip {
+#warUI #btnWarSkip {
   position: absolute;
   bottom: 24px;
-  right: 24px;
+  right: calc(var(--panel-w, 300px) + 24px);
+  left: auto;
+  width: auto;
+  min-width: 0;
+  padding: 8px 22px;
   pointer-events: auto;
 }
 .war-report {
@@ -3195,3 +3199,10 @@ body.rival-view.rival-hand #hand {
   from { box-shadow: inset 0 0 0 2px #c8453a, 0 0 14px rgba(200, 69, 58, 0.3); }
   to { box-shadow: inset 0 0 0 2px #ff6a4a, 0 0 40px rgba(255, 80, 50, 0.7); }
 }
+
+/* Attack phase countdown: when the missiles in the air land on the city in view (no camera takeover). */
+#warTimer { position: fixed; top: 72px; left: 50%; transform: translateX(-50%); z-index: 40; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 16px; border-radius: 6px; background: rgba(40, 10, 6, 0.85); box-shadow: inset 0 0 0 1px #c8453a; font-size: 13px; pointer-events: none; }
+#warTimer.hidden { display: none; }
+#warTimer b { font-size: 17px; color: #ffb08a; letter-spacing: 0.03em; }
+#warTimer .bad { color: #ff8a6a; }
+#warTimer .good { color: #9fd38a; }

@@ -32,6 +32,10 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   const ringGeo = new THREE.RingGeometry(0.32, 0.46, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6);
   const markMat = new THREE.MeshBasicMaterial({ color: 0xff4a2a, transparent: true, opacity: 0.95, depthTest: false, toneMapped: false });
   const hoverMat = new THREE.MeshBasicMaterial({ color: 0xffc08a, transparent: true, opacity: 0.7, depthTest: false, toneMapped: false });
+  // Aimed strikes: an arc from where Hive City lies (off past the horizon) down onto each target tile.
+  const arcs = new THREE.Group();
+  scene.add(arcs);
+  const arcMat = new THREE.LineDashedMaterial({ color: 0xffb04a, dashSize: 0.35, gapSize: 0.2, transparent: true, opacity: 0.9, depthTest: false, toneMapped: false, fog: false });
   let fog = null;
   let active = false;
   let saved = null;
@@ -167,6 +171,28 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     for (const [x, z] of hover ?? []) ring(x, z, hoverMat, 0.62);
   }
 
+  /**
+   * Arcs for aimed strikes: [[x, z]] target cells, launched from `dir` (unit {x, z}: where Hive City lies from
+   * this city on the War Map). They come in over the horizon and dive onto the tile.
+   */
+  function setArcs(cells, dir) {
+    for (const a of arcs.children) a.geometry.dispose();
+    arcs.clear();
+    if (!dir) return;
+    for (const [x, z] of cells) {
+      const end = hexToWorld(x, z);
+      const p0 = new THREE.Vector3(end.x + dir.x * 22, 9, end.z + dir.z * 22);
+      const p2 = new THREE.Vector3(end.x, 0.3, end.z);
+      const p1 = p0.clone().lerp(p2, 0.55).add(new THREE.Vector3(0, 6, 0));
+      const curve = new THREE.QuadraticBezierCurve3(p0, p1, p2);
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(curve.getPoints(48)), arcMat);
+      line.computeLineDistances();
+      line.renderOrder = 21;
+      line.frustumCulled = false;
+      arcs.add(line);
+    }
+  }
+
   /** Per frame while a rival city is shown: the fog follows the camera; its offscreen pass comes before the scene. */
   function update(dt, camera) {
     if (!active || !fog) return;
@@ -178,6 +204,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   function exit() {
     clearRoot();
     marks.clear();
+    setArcs([], null);
     active = false;
     shown = null;
     fog?.setVisible(false);
@@ -209,6 +236,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     },
     build,
     setMarkers,
+    setArcs,
     enter,
     exit,
     refresh,
