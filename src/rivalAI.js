@@ -2,7 +2,7 @@ import { DIRS, key, hexDistance } from './grid.js';
 import { TERRAINS, MILITARY } from './tiles.js';
 import { SHAPES, ROTATIONS, rotateCells } from './pieces.js';
 import { computeEconomy } from './economy.js';
-import { FACTORY_OIL, INTERCEPT_OIL, INTERCEPT, factoryYield, interceptorsBeside, interceptorsNear, missileCapacity, warheadRadius } from './arsenal.js';
+import { FACTORY_OIL, INTERCEPT_OIL, INTERCEPT, factoryYield, interceptorsBeside, interceptorsNear, missileCapacity, blastExtra } from './arsenal.js';
 import { hexesAround } from './grid.js';
 
 /**
@@ -438,7 +438,7 @@ export function chooseStrikes(rival, cities, { round, chance, playerArmed = true
       break;
     }
     aimed.add(key(...at));
-    out.push({ from: rival.id, to: target.id, at, kind, size: warheadRadius(rival.grid) });
+    out.push({ from: rival.id, to: target.id, at, kind, size: blastExtra(rival.grid) });
   }
   // Once it opens fire on a city, it stays wary of it.
   rival.tension[target.id] = Math.max(rival.tension[target.id] ?? 0, FIRE_AT);

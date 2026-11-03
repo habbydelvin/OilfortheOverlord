@@ -5,6 +5,8 @@ import { hexPlane, hexPrism } from './hexGeometry.js';
 import { hasBlockout } from './models.js';
 import { ACTIONS, TERRAINS, cardDef, isBuilding, isCamp, applyTileGap, fitFull } from './tiles.js';
 import { L, both, onLangChange } from './i18n.js';
+import { blastExtra } from './arsenal.js';
+import { footprint } from './war.js';
 
 const OK_COLOR = new THREE.Color(0x8be39a);
 const BAD_COLOR = new THREE.Color(0xe0563f);
@@ -120,8 +122,10 @@ export class Placement {
     if (action) {
       // Action cards: no blocks, just a footprint over the cells they affect.
       this.offsets = [];
-      // `size`: a diamond of 4 cells with the hovered one at its top; `range`: every cell within that many steps.
-      this.offsets = action.size ? [[0, 0], [1, 0], [0, 1], [1, 1]] : hexesAround(0, 0, action.range);
+      if (piece.terrain === 'missile' || piece.terrain === 'missile2')
+        this.offsets = footprint('missile', [0, 0], blastExtra(this.grid), this.grid);
+      else
+        this.offsets = action.size ? [[0, 0], [1, 0], [0, 1], [1, 1]] : hexesAround(0, 0, action.range);
       for (const [ox, oz] of this.offsets) {
         const f = cellPart(this.footGeo, this.footMat);
         const w = hexToWorld(ox, oz);
@@ -154,6 +158,8 @@ export class Placement {
   }
 
   cellsAt(cell) {
+    if (this.piece?.terrain === 'missile' || this.piece?.terrain === 'missile2')
+      return footprint('missile', cell, blastExtra(this.grid), this.grid);
     return this.offsets.map(([ox, oz]) => [cell[0] + ox, cell[1] + oz]);
   }
 
@@ -242,6 +248,17 @@ export class Placement {
     const wasHidden = !this.blocks.visible;
     if (!this.cell || this.cell[0] !== cell[0] || this.cell[1] !== cell[1]) {
       this.cell = cell;
+      if (this.piece?.terrain === 'missile' || this.piece?.terrain === 'missile2') {
+        const abs = footprint('missile', cell, blastExtra(this.grid), this.grid);
+        this.offsets = abs.map(([x, z]) => [x - cell[0], z - cell[1]]);
+        this.feet.clear();
+        for (const [ox, oz] of this.offsets) {
+          const f = cellPart(this.footGeo, this.footMat);
+          const w = hexToWorld(ox, oz);
+          f.position.set(w.x, 0.015, w.z);
+          this.feet.add(f);
+        }
+      }
       this.result = this.validate(this.cellsAt(cell));
     }
 

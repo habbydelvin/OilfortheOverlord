@@ -66,6 +66,8 @@ export const MISSILE = {
   holdAfter: 2, // seconds to watch the clouds after the last impact
   camFollowRate: 14, // ease speed while the camera tracks the missiles in flight (high: stays centred on it)
   followFlight: 2.2, // the Overlord's missiles fly this long (s) while tracked, so the camera can keep up
+  damage: 1, // HP taken from a Capital on a direct hit
+  blast: 1, // tiles hit: 1 = aimed cell only; each step adds one neighbour
   // preview (M)
   previewCount: 3,
   previewCapital: 'no',
@@ -74,6 +76,8 @@ export const MISSILE = {
 
 export const MISSILE_PARAMS = [
   { group: 'Missiles · strike' },
+  { key: 'damage', label: 'Damage to capital (HP)', min: 1, max: 5, step: 1, hint: 'HP taken from a Capital' },
+  { key: 'blast', label: 'Blast tiles', min: 1, max: 7, step: 1, hint: '1 = the aimed tile; +1 adds one neighbour, not a full ring' },
   { key: 'count1', label: '1st miss: missiles', min: 1, max: 12, step: 1 },
   { key: 'count2', label: '2nd miss: missiles', min: 1, max: 12, step: 1 },
   { key: 'count3', label: '3rd miss: missiles', min: 1, max: 12, step: 1, hint: 'one always hits the Capital' },

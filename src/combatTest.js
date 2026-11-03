@@ -14,7 +14,7 @@ import { applyToRival, footprint, spreadFrom } from './war.js';
 import { PLAYER_NODE } from './rivals.js';
 import { TileFactory, TERRAINS, cardDef, cardText, hex, snapHTML, cardArtHTML } from './tiles.js';
 import { FogOfWar, loadFogConfig } from './fogOfWar.js';
-import { MissileStrike, loadMissileConfig } from './missiles.js';
+import { MissileStrike, MISSILE, loadMissileConfig, saveMissileConfig } from './missiles.js';
 import { Dust } from './dust.js';
 import { CameraShake, loadShakeConfig } from './cameraShake.js';
 import { loadGfxConfig, applyGfx } from './graphics.js';
@@ -202,7 +202,11 @@ renderer.domElement.addEventListener('pointermove', (e) => {
 });
 
 // ---------- debug tuning panel ----------
+const blastN = () => Math.max(0, (MISSILE.blast ?? 1) - 1);
+
 const SLIDERS = [
+  { label: 'Blast tiles', min: 1, max: 7, step: 1, get: () => MISSILE.blast ?? 1, set: (v) => (MISSILE.blast = v), saveMissile: true },
+  { label: 'Damage to capital (HP)', min: 1, max: 5, step: 1, get: () => MISSILE.damage ?? 1, set: (v) => (MISSILE.damage = v), saveMissile: true },
   { label: 'Intercept range (cells)', min: 1, max: 8, step: 1, get: () => INTERCEPT.range, set: (v) => (INTERCEPT.range = v), save: true },
   { label: 'Hit chance per shot', min: 0, max: 1, step: 0.05, get: () => INTERCEPT.chance, set: (v) => (INTERCEPT.chance = v), save: true },
   { label: 'Oil per shot', min: 0, max: 10, step: 1, get: () => INTERCEPT.oil, set: (v) => (INTERCEPT.oil = v), save: true },
@@ -225,8 +229,10 @@ function buildTuning() {
     input.addEventListener('input', () => {
       sl.set(Number(input.value));
       if (sl.save) saveIntercept();
+      if (sl.saveMissile) saveMissileConfig(MISSILE);
       show();
       drawRings();
+      renderHand();
       paint();
     });
     show();
@@ -624,15 +630,15 @@ function homeBearing(r) {
 function drawAims(hover = null, at = null) {
   if (!shown) return;
   const mine = queue.filter((q) => q.to === shown.id);
-  const aimed = mine.map((q) => footprint(q.kind, q.at));
+  const aimed = mine.map((q) => footprint(q.kind, q.at, q.size ?? blastN(), shown.grid));
   rivalView.setMarkers(aimed, hover, at);
   rivalView.setArcs(hover ? [hover] : [], homeBearing(shown), aimed.flat(), at);
   // What's queued keeps its reticle and path until End turn fires it: one per card played (a salvo's tiles together).
   const cards = new Map();
   for (const q of mine) {
     const k = q.card ?? key(q.at[0], q.at[1]);
-    if (!cards.has(k)) cards.set(k, { key: k, cells: [], at: q.centre ?? null });
-    cards.get(k).cells.push(...footprint(q.kind, q.at));
+    if (!cards.has(k)) cards.set(k, { key: k, cells: [], at: q.centre ?? q.at });
+    cards.get(k).cells.push(...footprint(q.kind, q.at, q.size ?? blastN(), shown.grid));
   }
   rivalView.setAimed([...cards.values()], homeBearing(shown));
 }
@@ -708,9 +714,9 @@ function moveDrag(e) {
   const c = onCanvas ? rivalCellAt(e.clientX, e.clientY) : null;
   let hover = null;
   if (c && shown?.grid.has(c[0], c[1])) {
-    hover = drag.kind === 'salvo' ? spreadFrom(shown.grid, c, silo) : footprint('missile', c);
+    hover = drag.kind === 'salvo' ? spreadFrom(shown.grid, c, silo) : footprint('missile', c, blastN(), shown.grid);
   }
-  drawAims(hover, hover && drag.kind === 'salvo' ? c : null);
+  drawAims(hover, c);
 }
 window.addEventListener('pointermove', moveDrag);
 window.addEventListener('pointerup', (e) => {
@@ -729,11 +735,11 @@ window.addEventListener('pointerup', (e) => {
       for (const at of spreadFrom(shown.grid, c, silo)) {
         if (silo <= 0) break;
         if (taken(at)) continue;
-        queue.push({ to: shown.id, at, kind: 'missile', card, centre: [c[0], c[1]] });
+        queue.push({ to: shown.id, at, kind: 'missile', size: blastN(), card, centre: [c[0], c[1]] });
         silo--;
       }
     } else if (!taken(c)) {
-      queue.push({ to: shown.id, at: [c[0], c[1]], kind: 'missile' });
+      queue.push({ to: shown.id, at: [c[0], c[1]], kind: 'missile', size: blastN() });
       silo--;
     }
   }

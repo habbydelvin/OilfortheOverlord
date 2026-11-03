@@ -28,7 +28,7 @@ import { Mysteries } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
 import { computeEconomy, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS } from './economy.js';
-import { FACTORY_OIL, OVERTIME_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, warheadRadius } from './arsenal.js';
+import { FACTORY_OIL, OVERTIME_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, blastExtra } from './arsenal.js';
 import { pieceOf } from './pieces.js';
 import { findCiws } from './interceptMesh.js';
 import { queueDrawn, addMissile, missileCount, missileKinds, trimMissiles, resetMissiles, openCityStrike, drawStrikeHand, returnStrikeHand, bindCityStrikeUi, queueStrike, unqueueStrike, queuedStrikes, takeQueue, clearQueue } from './cityStrike.js';
@@ -201,6 +201,10 @@ const debug = RELEASE
     cfg: missileCfg,
     save: saveMissileConfig,
     clear: clearMissileConfig,
+    onChange: () => {
+      hand.render();
+      if (hand.piece) placement.setPiece(hand.piece);
+    },
   },
   gfx: {
     params: GFX_PARAMS,
@@ -3983,9 +3987,9 @@ function removeDecoy() {
 placement.decoyAt = (x, z) => Boolean(decoy && decoy.x === x && decoy.z === z);
 
 async function firePlayerMissile(cells, fromHand = null) {
-  const size = warheadRadius(grid, idleKeySet());
+  const size = blastExtra(grid, idleKeySet());
   const origin = cells[0];
-  const hits = placement.missileable(footprint('missile', origin, size));
+  const hits = placement.missileable(footprint('missile', origin, size, grid));
   if (!hits.length) return;
   const aim = {
     x: Math.round(hits.reduce((s, [x]) => s + x, 0) / hits.length),
@@ -4009,7 +4013,17 @@ async function firePlayerMissile(cells, fromHand = null) {
     trackCamera: false,
     holdAfter: 0.9,
     onCover: () => {
-      hits.forEach(([x, z]) => (decoy && decoy.x === x && decoy.z === z ? removeDecoy() : craterAt(x, z)));
+      const size = blastExtra(grid, idleKeySet());
+      for (const [x, z] of footprint('missile', origin, size, grid)) {
+        if (decoy && decoy.x === x && decoy.z === z) {
+          removeDecoy();
+          continue;
+        }
+        const t = grid.get(x, z)?.terrain;
+        if (t === 'capital') continue;
+        if (t) craterAt(x, z);
+        else if (inWorld(x, z)) addTile(x, z, 'crater');
+      }
     },
   });
   if (run !== runId) return;
@@ -4171,7 +4185,7 @@ function updateAimBar() {
   $('rivalAim').classList.toggle('hidden', !rival || rival.alive === false || (!q && !cards));
   $('rivalQueue').textContent = L(`${q} aimed · ${cards} in hand · fires after End Turn`, `已瞄准 ${q} · 手牌 ${cards} · 结束回合后发射`);
   const aimed = rival ? queuedStrikes(rival.id) : [];
-  const aimedCells = aimed.map((s) => footprint(s.kind, s.at, s.size));
+  const aimedCells = aimed.map((s) => footprint(s.kind, s.at, s.size, rival.grid));
   rivalView.setMarkers(aimedCells, aimHover, aimAt);
   rivalView.setArcs(aimHover ? [aimHover] : [], rival ? homeBearing(rival) : null, aimedCells.flat(), aimAt);
   globe?.setQueued(queuedStrikes().map((s) => ({ from: 'player', to: s.to })));
@@ -4218,10 +4232,10 @@ function aimAtPointer() {
     if (!rival.grid.has(at[0], at[1])) return toast(L('Aim at one of their tiles', '请瞄准对方的地块'), 'bad');
     if (piece.terrain === 'salvo') aimSalvo(rival, at);
     else {
-      const size = warheadRadius(grid, idleKeySet());
+      const size = blastExtra(grid, idleKeySet());
       queueDrawn(rival.id, at, piece.terrain, size, { vis: true });
       hand.consume();
-      playOutgoingRival(rival, footprint('missile', at, size), piece.terrain);
+      playOutgoingRival(rival, footprint('missile', at, size, rival.grid), piece.terrain);
     }
     confirm();
   }
@@ -4264,9 +4278,9 @@ function aimSalvo(rival, at) {
   if (!ammo.length) return toast(L('No missiles to fan out', '没有可铺开的导弹'), 'bad');
   const cells = spreadFrom(rival.grid, at, ammo.length);
   if (!cells.length) return toast(L('Aim at one of their tiles', '请瞄准对方的地块'), 'bad');
-  const size = warheadRadius(grid, idleKeySet());
+  const size = blastExtra(grid, idleKeySet());
   for (let i = 0; i < cells.length; i++) queueDrawn(rival.id, cells[i], ammo[i].terrain, size, { vis: true });
-  playOutgoingRival(rival, cells.flatMap((at) => footprint('missile', at, size)), 'missile');
+  playOutgoingRival(rival, cells.flatMap((at) => footprint('missile', at, size, rival.grid)), 'missile');
   const used = new Set(ammo.slice(0, cells.length));
   hand.cards = hand.cards.filter((p) => p.terrain !== 'salvo' && !used.has(p));
   hand.selected = -1;
@@ -4279,8 +4293,8 @@ function updateAimHover() {
   const c = piece ? rivalCell() : null;
   let next = null;
   if (c && piece.terrain === 'salvo') next = spreadFrom(rivalShown.grid, [c[0], c[1]], missileAmmoInHand().length);
-  else if (c) next = footprint(piece.terrain, [c[0], c[1]], warheadRadius(grid, idleKeySet()));
-  const at = c && piece.terrain === 'salvo' ? [c[0], c[1]] : null;
+  else if (c) next = footprint(piece.terrain, [c[0], c[1]], blastExtra(grid, idleKeySet()), rivalShown.grid);
+  const at = c ? [c[0], c[1]] : null;
   if (JSON.stringify(next) === JSON.stringify(aimHover) && JSON.stringify(at) === JSON.stringify(aimAt)) return;
   aimHover = next;
   aimAt = at;

@@ -1,4 +1,5 @@
 import { DIRS, hexesAround } from './grid.js';
+import { MISSILE } from './missiles.js';
 
 /** Oil a Military Factory spends each season it works. */
 export const FACTORY_OIL = 3;
@@ -45,11 +46,16 @@ export function factoryYield(grid, cell, idleKeys) {
   return { count: 1 + (recipe ? 1 : 0), kind: 'missile' };
 }
 
-/** Staffed Warhead Institutes: each adds 1 extra blast tile (not a whole ring). */
+/** Staffed Warhead Institutes: each grows blast by 1×1 (0 labs = 1×1, 1 lab = 2×2). */
 export function warheadRadius(grid, idleKeys) {
   let n = 0;
   for (const c of grid.cells.values()) if (c.terrain === 'warhead' && !idleAt(idleKeys, c)) n++;
   return n;
+}
+
+/** Extra n×n steps: debug blast slider plus staffed Warhead Institutes. */
+export function blastExtra(grid, idleKeys) {
+  return Math.max(0, (MISSILE.blast ?? 1) - 1) + warheadRadius(grid, idleKeys);
 }
 
 /** Intercept Networks adjacent to a cell, in placement order. */

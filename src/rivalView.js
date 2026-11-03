@@ -452,7 +452,8 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   }
 
   /**
-   * Queued strikes that fire at End Turn (combat test): each keeps a reticle and a flight path until it goes.
+   * Queued strikes that fire at End Turn (combat test): each keeps its red tiles and a flight path until it goes, but
+   * not the yellow rings (several of those overlapping are a mess): the hover reticle's rings fade out as it's aimed.
    * `groups`: [{ key, cells: [[x, z]], at }] one per played card (a salvo's tiles together, centred on cell `at`, or
    * null for their middle); `dir` as setArcs. New ones fade in, gone ones fade out, changed ones glide.
    */
@@ -472,6 +473,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
         continue;
       }
       const g = makeReticle(cells, at);
+      g.userData.ring.visible = false; // red tiles only
       const line = makeArc(cells, dir, at);
       marks.add(g);
       arcs.add(line);
