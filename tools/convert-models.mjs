@@ -95,6 +95,8 @@ const GLB_ONLY = {
   'MissileMagazine.glb': 'MissileMagazine', // two clips: Idle (loops) and Launch (played when a missile is fired)
   'WasteRock.glb': 'WasteRock', // the Cliffs tile
   'WasteCamp.glb': 'WasteCamp', // the Raider Hideout
+  'WarheadInstitute.glb': 'WarheadInstitute',
+  'InterceptNetwork.glb': 'InterceptNetwork', // Idle (with the gun's sweep) and Fire; the game aims the gun (tiles.js)
 };
 /**
  * Wasteland pieces: every art/models/hex/WasteHex_<Name>.glb, one model per piece shape. The game matches each to its

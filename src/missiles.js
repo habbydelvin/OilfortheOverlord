@@ -698,11 +698,13 @@ export class MissileStrike {
 
   /**
    * CIWS fire at the missile flying toward `aim()` (a moving world point, null once it's gone).
-   * gun: { turret, pivot, muzzles } (interceptMesh.js) or null (then `from` is the muzzle). The turret swings onto
+   * gun: { turret, pivot, muzzles } (interceptMesh.js; a model's rig also has begin(), fire(seconds) and end(), see
+   * tiles.js) or null (then `from` is the muzzle). The turret swings onto
    * the missile, then pours rounds at where it's going. success: the spread closes on it and after `kill` s of
    * firing onKill() runs (the caller shoots it down); a miss streams past behind it until `dur` runs out.
    */
   fireCIWS(gun, from, aim, { dur = 0.9, kill = 0.5, success = true, onKill, onFire } = {}) {
+    gun?.begin?.();
     this.#guns.push({ gun, from: from.clone(), aim, dur, kill, success, onKill, onFire, age: 0, acc: 0, barrel: 0, last: null, vel: new THREE.Vector3(), killed: false, firing: false });
   }
 
@@ -763,6 +765,7 @@ export class MissileStrike {
       const t = g.last;
       if (!t) {
         this.#guns.splice(i, 1);
+        g.gun?.end?.();
         continue;
       }
       // Lead the target: aim where it will be when a round gets there.
@@ -775,11 +778,13 @@ export class MissileStrike {
       if (fireT < 0) continue;
       if (fireT > stopAt || (g.killed && fireT > g.kill + 0.12) || (!target && fireT > 0.1)) {
         this.#guns.splice(i, 1);
+        g.gun?.end?.();
         continue;
       }
       if (!g.firing) {
         g.firing = true;
         g.onFire?.(g.success ? g.kill + 0.12 : g.dur);
+        g.gun?.fire?.(g.success ? g.kill + 0.12 : g.dur);
       }
       // A hit closes the spread onto the missile; a miss stays wide and trails behind it.
       const spread = g.success ? THREE.MathUtils.lerp(0.9, 0.06, Math.min(1, fireT / g.kill)) : 0.75;
@@ -1228,6 +1233,7 @@ export class MissileStrike {
     this.#missiles.length = 0;
     for (const u of this.#upright) this.group.remove(u.mesh);
     this.#upright.length = 0;
+    for (const g of this.#guns) g.gun?.end?.();
     this.#guns.length = 0;
     this.#rounds.length = 0;
     this.#blasts.length = 0;

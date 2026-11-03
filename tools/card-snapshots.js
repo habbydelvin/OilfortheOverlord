@@ -51,8 +51,8 @@ const VIEWS = {
 
 const GROUND_CLIP = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // keeps y >= 0
 
-/** Clips the game plays on cue only (EVENT_CLIPS in src/tiles.js): the Missile Magazine's launch. */
-const CUE_CLIPS = new Set(['Launch']);
+/** Clips the game plays on cue only (EVENT_CLIPS in src/tiles.js): the Missile Magazine's launch, a gun's fire. */
+const CUE_CLIPS = new Set(['Launch', 'Fire']);
 
 /** Card key -> model key. The four Wasteland cards share the single-cell Wasteland piece. */
 const SNAPSHOT_MODELS = {
@@ -67,6 +67,8 @@ const SNAPSHOT_MODELS = {
   labourcamp: 'labourcamp',
   milfactory: 'milfactory',
   magazine: 'magazine',
+  warhead: 'warhead',
+  intercept: 'intercept',
   cliffs: 'cliffs',
   ruins: 'ruins',
   crater: 'crater',

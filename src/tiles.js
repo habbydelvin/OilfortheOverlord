@@ -642,11 +642,11 @@ export const shopReady = (key, unlocked) => {
  * Card pictures: front renders of each tile model (public/cards/snapshots, made by tools/card-snapshots.html).
  * Card key -> image; the four Wasteland colours share one. Bump SNAPSHOT_VERSION after re-rendering.
  */
-const SNAPSHOT_VERSION = '20261103-sandhex';
+const SNAPSHOT_VERSION = '20261103-warhead';
 const SNAPSHOTS = {
   capital: 'capital', settlement: 'settlement', farm: 'farm', pump: 'pump', station: 'station', refinery: 'refinery',
   oasis: 'oasis', tarpit: 'tarpit', labourcamp: 'labourcamp', cliffs: 'cliffs', ruins: 'ruins', crater: 'crater',
-  milfactory: 'milfactory', magazine: 'magazine',
+  milfactory: 'milfactory', magazine: 'magazine', warhead: 'warhead', intercept: 'intercept',
   raider: 'raider', bandit_raider: 'bandit_raider', bandit_siphon: 'bandit_siphon', bandit_scav: 'bandit_scav',
   wasteland1: 'wasteland', wasteland2: 'wasteland', wasteland3: 'wasteland', wasteland4: 'wasteland',
 };
@@ -656,8 +656,13 @@ export const TERRAIN_KEYS = Object.keys(TERRAINS);
 
 export const isBuilding = (terrain) => TERRAINS[terrain]?.category === 'building';
 
-/** Model clips that never loop: they play on cue (TileFactory.cue), like the Missile Magazine's Launch. */
-const EVENT_CLIPS = new Set(['Launch']);
+/**
+ * Model clips that never loop: they play on cue, like the Missile Magazine's Launch (TileFactory.cue) and the
+ * Intercept Network's Fire (its gun rig, TileFactory.#ciwsRig).
+ */
+const EVENT_CLIPS = new Set(['Launch', 'Fire']);
+/** Seconds an Intercept Network's gun takes to swing back into its idle sweep after firing. */
+const CIWS_EASE_BACK = 0.8;
 
 export const TILE = {
   gap: 0, // seam between tiles (world units); Game Debug → Graphics → Tile gap
@@ -808,9 +813,80 @@ export class TileFactory {
       // Start each copy at a random point so two copies never fly in sync.
       action.time = Math.random() * clip.duration;
     }
-    const entry = { mixer, root: model, idle: 0, cues: [] };
+    const entry = { mixer, root: model, idle: 0, cues: [], rig: null };
     model.userData.anim = entry;
+    if (model.userData.ciwsParts) entry.rig = this.#ciwsRig(model, entry);
     this.#mixers.add(entry);
+  }
+
+  /**
+   * A model's CIWS gun (models.js splitCiws), for the attack phase: missiles.js fireCIWS turns `turret` and lifts
+   * `pivot` itself between begin() and end(). Meanwhile the idle sweep (the 'Aim' clip) holds where it was, fire(s)
+   * plays the Fire clip (barrels spinning, muzzle flash, tracers) over about s seconds, and afterwards the gun eases
+   * back into its sweep. Kept as model.userData.ciws, where findCiws (interceptMesh.js) finds it.
+   */
+  #ciwsRig(model, entry) {
+    const parts = model.userData.ciwsParts;
+    const turret = model.getObjectByName(parts.turret);
+    const pivot = model.getObjectByName(parts.gun);
+    if (!turret || !pivot) return null;
+    const aimClip = model.animations.find((c) => c.name === 'Aim');
+    const fireClip = model.animations.find((c) => c.name === 'Fire');
+    const sweep = aimClip ? entry.mixer.clipAction(aimClip) : null;
+    // The sweep's pose at any moment, to ease back into it.
+    const poses = (aimClip?.tracks ?? [])
+      .filter((t) => THREE.PropertyBinding.parseTrackName(t.name).propertyName === 'quaternion')
+      .map((t) => ({ node: model.getObjectByName(THREE.PropertyBinding.parseTrackName(t.name).nodeName), it: t.createInterpolant() }))
+      .filter((p) => p.node);
+    const q = new THREE.Quaternion();
+    const rig = {
+      turret,
+      pivot,
+      muzzles: [model.getObjectByName(parts.muzzle) ?? pivot],
+      busy: 0,
+      back: null,
+      clock: 0, // the sweep's time while it's paused
+      get active() {
+        return rig.busy > 0 || rig.back !== null;
+      },
+      begin() {
+        if (rig.busy++ > 0) return;
+        rig.back = null;
+        if (!sweep?.isRunning()) return;
+        rig.clock = sweep.time;
+        const held = poses.map((p) => p.node.quaternion.clone());
+        sweep.stop(); // (that puts the rest pose back: hold the sweep's instead)
+        poses.forEach((p, i) => p.node.quaternion.copy(held[i]));
+      },
+      fire(seconds = 0.9) {
+        if (!fireClip) return;
+        const a = entry.mixer.clipAction(fireClip);
+        a.reset().setLoop(THREE.LoopOnce, 1);
+        a.clampWhenFinished = false;
+        a.timeScale = 1 / Math.max(0.3, seconds); // its second of muzzle flash, over the burst
+        a.play();
+        a.time = 0.2; // straight into the firing
+      },
+      end() {
+        if (rig.busy === 0 || --rig.busy > 0 || !sweep) return;
+        rig.back = { t: 0, from: poses.map((p) => p.node.quaternion.clone()) };
+      },
+      update(dt) {
+        if (!rig.active) return;
+        rig.clock += dt;
+        if (!rig.back) return;
+        rig.back.t += dt;
+        const k = Math.min(1, rig.back.t / CIWS_EASE_BACK);
+        const time = rig.clock % aimClip.duration;
+        poses.forEach((p, i) => p.node.quaternion.copy(rig.back.from[i]).slerp(q.fromArray(p.it.evaluate(time)), k * k * (3 - 2 * k)));
+        if (k < 1) return;
+        rig.back = null;
+        sweep.reset().play();
+        sweep.time = time;
+      },
+    };
+    model.userData.ciws = rig;
+    return rig;
   }
 
   /** Whether a tile's model has the cue clip `name` (a stand-in, or a model without it, doesn't). */
@@ -905,9 +981,10 @@ export class TileFactory {
       }
       if (node.isScene) {
         entry.idle = 0;
-        // A cue (a magazine's launch) plays out even on an idle building.
-        if (!frozen || entry.cues.length) entry.mixer.update(dt);
+        // A cue (a magazine's launch) or a gun in action plays out even on an idle building.
+        if (!frozen || entry.cues.length || entry.rig?.active) entry.mixer.update(dt);
         if (entry.cues.length) this.#runCues(entry);
+        entry.rig?.update(dt);
       } else if (++entry.idle > 120) {
         // About two seconds detached. The copy has been thrown away.
         for (const c of entry.cues) {
@@ -915,6 +992,7 @@ export class TileFactory {
           c.onEnd?.();
         }
         entry.cues.length = 0;
+        if (entry.root.userData.ciws === entry.rig) delete entry.root.userData.ciws;
         entry.mixer.stopAllAction();
         entry.mixer.uncacheRoot(entry.root);
         this.#mixers.delete(entry);
