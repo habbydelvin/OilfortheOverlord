@@ -53,6 +53,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   const GLIDE = 16; // 1/s: how fast the reticle, its tiles and its path catch up when the cursor moves to another tile
   const glide = (dt) => 1 - Math.exp(-GLIDE * dt);
   let hoverMark = null; // { key, cells, g }: the reticle under the cursor
+  const aimedMarks = new Map(); // setAimed's key -> { g, line }: reticles and paths kept on queued strikes
   let markClock = 0;
 
   /** Unit-radius reticle geometry, scaled per target. */
@@ -450,6 +451,34 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     for (const line of spare) dropArc(line);
   }
 
+  /**
+   * Queued strikes that fire at End Turn (combat test): each keeps a reticle and a flight path until it goes.
+   * `groups`: [{ key, cells: [[x, z]], at }] one per played card (a salvo's tiles together, centred on cell `at`, or
+   * null for their middle); `dir` as setArcs. New ones fade in, gone ones fade out, changed ones glide.
+   */
+  function setAimed(groups, dir) {
+    const want = new Map(dir ? groups.filter((gr) => gr.cells.length).map((gr) => [gr.key, gr]) : []);
+    for (const [k, m] of aimedMarks) {
+      if (want.has(k)) continue;
+      aimedMarks.delete(k);
+      m.g.userData.fade = 0;
+      m.line.userData.fade = 0;
+    }
+    for (const [k, { cells, at }] of want) {
+      const m = aimedMarks.get(k);
+      if (m) {
+        aimReticle(m.g, cells, at, false);
+        Object.assign(m.line.userData, { cells, dir, goal: centreOf(cells, at) });
+        continue;
+      }
+      const g = makeReticle(cells, at);
+      const line = makeArc(cells, dir, at);
+      marks.add(g);
+      arcs.add(line);
+      aimedMarks.set(k, { g, line });
+    }
+  }
+
   function animateArcs(dt) {
     renderer.getSize(arcSize);
     const f = glide(dt);
@@ -493,6 +522,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     hoverMark = null;
     for (const line of [...arcs.children]) dropArc(line);
     arcByKey.clear();
+    aimedMarks.clear();
     active = false;
     shown = null;
     fog?.setVisible(false);
@@ -525,6 +555,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     build,
     setMarkers,
     setArcs,
+    setAimed,
     enter,
     exit,
     refresh,

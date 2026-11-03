@@ -455,33 +455,6 @@ function craterRival(r, rec) {
   if (rivalView.rival === r) rivalView.refresh();
 }
 
-/** Dropping a card: dive onto the aimed tiles now (the turn still resolves them later). */
-function playOutgoing(r, cells) {
-  const d = homeBearing(r);
-  const targets = cells.map((at) => {
-    const w = hexToWorld(at[0], at[1]);
-    const cell = r.grid.get(at[0], at[1]);
-    const rec = {
-      at,
-      kind: 'missile',
-      shots: [],
-      lost:
-        cell && cell.terrain !== 'crater' && cell.terrain !== 'capital'
-          ? [{ x: at[0], z: at[1], terrain: cell.terrain, name: TERRAINS[cell.terrain]?.name ?? cell.terrain }]
-          : [],
-    };
-    rec.hit = rec.lost.length > 0 || cell?.terrain === 'capital';
-    return { x: w.x, z: w.z, rec, from: { x: w.x + d.x * 16, y: 9, z: w.z + d.z * 16 }, flight: 1.55, accel: 1.2 };
-  });
-  rivalMissiles.fire(targets, {
-    onImpact: () => {
-      boom();
-      if (view === 'rival') camShake.add(missileCfg.shake);
-    },
-    onCover: (t) => craterRival(r, t.rec),
-  });
-}
-
 function playRival(r, rec) {
   const w = hexToWorld(rec.at[0], rec.at[1]);
   const t = { x: w.x, z: w.z, rec, flight: missileCfg.followFlight, fired: 0 };
@@ -556,7 +529,7 @@ function arrive(rec) {
   }
   const r = rivals.find((x) => x.id === rec.to);
   if (!r) return;
-  if (view === 'rival' && shown === r && rec.from === 'player' && !rec.vis) landing.push(playRival(r, rec));
+  if (view === 'rival' && shown === r && rec.from === 'player') landing.push(playRival(r, rec));
   else craterRival(r, rec);
 }
 const viewBtn = document.getElementById('viewBtn');
@@ -654,6 +627,14 @@ function drawAims(hover = null, at = null) {
   const aimed = mine.map((q) => footprint(q.kind, q.at));
   rivalView.setMarkers(aimed, hover, at);
   rivalView.setArcs(hover ? [hover] : [], homeBearing(shown), aimed.flat(), at);
+  // What's queued keeps its reticle and path until End turn fires it: one per card played (a salvo's tiles together).
+  const cards = new Map();
+  for (const q of mine) {
+    const k = q.card ?? key(q.at[0], q.at[1]);
+    if (!cards.has(k)) cards.set(k, { key: k, cells: [], at: q.centre ?? null });
+    cards.get(k).cells.push(...footprint(q.kind, q.at));
+  }
+  rivalView.setAimed([...cards.values()], homeBearing(shown));
 }
 
 rig.onZoomPastMax = () => {
@@ -708,6 +689,7 @@ function rivalCellAt(x, y) {
 }
 
 let drag = null;
+let salvos = 0; // names each salvo played, so its queued tiles share one reticle
 function startDrag(e) {
   if (view !== 'rival' || busy || e.button !== 0) return;
   e.preventDefault();
@@ -741,21 +723,19 @@ window.addEventListener('pointerup', (e) => {
   const c = onCanvas ? rivalCellAt(e.clientX, e.clientY) : null;
   if (c && shown?.grid.has(c[0], c[1]) && silo > 0) {
     const taken = (at) => queue.some((q) => q.to === shown.id && q.at[0] === at[0] && q.at[1] === at[1]);
-    const aimed = [];
+    // Aimed only: everything queued fires together at End turn.
     if (kind === 'salvo') {
+      const card = `salvo${++salvos}`;
       for (const at of spreadFrom(shown.grid, c, silo)) {
         if (silo <= 0) break;
         if (taken(at)) continue;
-        queue.push({ to: shown.id, at, kind: 'missile', vis: true });
+        queue.push({ to: shown.id, at, kind: 'missile', card, centre: [c[0], c[1]] });
         silo--;
-        aimed.push(at);
       }
     } else if (!taken(c)) {
-      queue.push({ to: shown.id, at: [c[0], c[1]], kind: 'missile', vis: true });
+      queue.push({ to: shown.id, at: [c[0], c[1]], kind: 'missile' });
       silo--;
-      aimed.push(c);
     }
-    if (aimed.length) playOutgoing(shown, aimed);
   }
   renderHand();
   drawAims();
