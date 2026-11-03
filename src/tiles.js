@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { clone as cloneModel } from 'three/addons/utils/SkeletonUtils.js';
-import { hasBlockout, loadCoreModels, loadBundle } from './models.js';
+import { hasBlockout, loadCoreModels, loadBundle, loadWastePieces, pieceCuts } from './models.js';
 import { buildRaiderCamp } from './raiderMesh.js';
 import { buildLabourCamp } from './labourCampMesh.js';
 import { buildInterceptBunker } from './interceptMesh.js';
@@ -642,7 +642,7 @@ export const shopReady = (key, unlocked) => {
  * Card pictures: front renders of each tile model (public/cards/snapshots, made by tools/card-snapshots.html).
  * Card key -> image; the four Wasteland colours share one. Bump SNAPSHOT_VERSION after re-rendering.
  */
-const SNAPSHOT_VERSION = '20261103-magazine';
+const SNAPSHOT_VERSION = '20261103-sandhex';
 const SNAPSHOTS = {
   capital: 'capital', settlement: 'settlement', farm: 'farm', pump: 'pump', station: 'station', refinery: 'refinery',
   oasis: 'oasis', tarpit: 'tarpit', labourcamp: 'labourcamp', cliffs: 'cliffs', ruins: 'ruins', crater: 'crater',
@@ -694,7 +694,7 @@ export class TileFactory {
   /** @type {Map<string, THREE.Object3D> | null} */
   models = null;
   ready;
-  /** Wasteland piece models by shape key, loaded in the background after the buildings. */
+  /** Wasteland piece models by shape key (each a list: a shape can have several), loaded after the core models. */
   pieces = null;
   piecesReady;
 
@@ -722,8 +722,8 @@ export class TileFactory {
         this.models = new Map();
       });
     this.piecesReady = this.ready
-      .then(() => loadBundle('waste'))
-      .then((roots) => (this.pieces = new Map([...roots].map(([key, root]) => [key.slice('waste-'.length), root]))))
+      .then(() => loadWastePieces())
+      .then((byShape) => (this.pieces = byShape))
       .catch((error) => {
         console.error('Wasteland piece models failed to load; Wasteland stays as coloured blocks.', error);
         return null;
@@ -757,6 +757,7 @@ export class TileFactory {
 
   /**
    * bare: an empty holder, for a cell covered by a whole-piece Wasteland model (the model is added separately).
+   * seed: a lone Wasteland cell's look (cellSeed in grid.js: the same cell always looks the same).
    * rot: the card's rotation, sixths of a turn clockwise on screen (like createPiece). The models are hexagons
    * like the cells, so every turn still fits; it goes on the model, inside the holder the board moves around.
    */
@@ -764,11 +765,11 @@ export class TileFactory {
     return applyTileGap(this.#create(terrain, opts));
   }
 
-  #create(terrain, { bare = false, rot = 0 } = {}) {
+  #create(terrain, { bare = false, rot = 0, seed = 0 } = {}) {
     if (bare) return new THREE.Group();
     if (terrain.startsWith('wasteland')) {
       const holder = new THREE.Group();
-      this.fillWaste(holder, terrain);
+      this.fillWaste(holder, terrain, seed);
       return holder;
     }
     const tagSoil = (g) => (g.traverse((o) => o.geometry === this.soilGeo && fitFull(o)), g);
@@ -921,26 +922,58 @@ export class TileFactory {
     }
   }
 
-  /** A lone Wasteland cell: the Single wasteland model, or a coloured block until the pieces have loaded. */
-  fillWaste(holder, terrain) {
+  /** One of a shape's piece models (null: none loaded). seed: the same piece always gets the same one. */
+  #pieceModel(shape, seed = 0) {
+    const list = this.pieces?.get(shape);
+    return list?.length ? list[Math.abs(Math.round(seed)) % list.length] : null;
+  }
+
+  /**
+   * A lone Wasteland cell: one of the 'mono' looks (the Single models and every piece model's cells, see
+   * loadWastePieces), turned any of the six ways, both picked by `seed`; a coloured block until the pieces have loaded.
+   */
+  fillWaste(holder, terrain, seed = 0) {
     holder.clear();
-    const source = this.pieces?.get('mono');
-    if (source) {
-      const model = cloneModel(source);
-      holder.add(model);
-      if (model.animations.length) this.#animate(model);
-    } else holder.add(this.#block(terrain));
+    const source = this.#pieceModel('mono', seed);
+    if (source) this.#fillWith(holder, source, (seed >>> 8) % 6);
+    else holder.add(this.#block(terrain));
     holder.userData.blockout = Boolean(source);
     applyTileGap(holder);
   }
 
   /**
-   * A whole Wasteland piece as one model, turned to the piece's rotation (rot quarter turns clockwise from
-   * above, like rotateCells). Centred on the origin: place it at the centre of the piece's cells.
-   * Null until the piece models have loaded.
+   * A cell left over from a Wasteland piece (a building took another of its cells): its own part of the piece's
+   * model, just as it was, so the rest of the piece looks unchanged. piece: { shape, rot, seed } as it was placed;
+   * offset: [x, z] from the middle of the piece's cells to this one (world units). Falls back to fillWaste.
    */
-  createPiece(shape, rot = 0) {
-    const source = this.pieces?.get(shape);
+  fillWastePart(holder, terrain, piece, offset, seed = 0) {
+    const cuts = pieceCuts(this.#pieceModel(piece.shape, piece.seed));
+    // Where this cell sits in the piece before its turn.
+    const at = new THREE.Vector3(offset[0], 0, offset[1]).applyAxisAngle(THREE.Object3D.DEFAULT_UP, (piece.rot * Math.PI) / 3);
+    const cut = cuts?.find((c) => Math.hypot(c.q[0] - at.x, c.q[1] - at.z) < 0.25);
+    if (!cut) return this.fillWaste(holder, terrain, seed);
+    holder.clear();
+    this.#fillWith(holder, cut.root, piece.rot);
+    holder.userData.blockout = true;
+    applyTileGap(holder);
+  }
+
+  #fillWith(holder, source, rot) {
+    const turn = new THREE.Group();
+    turn.rotation.y = (-rot * Math.PI) / 3;
+    const model = cloneModel(source);
+    turn.add(model);
+    holder.add(turn);
+    if (model.animations.length) this.#animate(model);
+  }
+
+  /**
+   * A whole Wasteland piece as one model, turned to the piece's rotation (rot sixths of a turn, like rotateCells).
+   * Centred on the origin: place it at the middle of the piece's cells (cellsCentre in grid.js). seed picks among a
+   * shape's models (the piece's id: its ghost and the placed piece match). Null until the piece models have loaded.
+   */
+  createPiece(shape, rot = 0, seed = 0) {
+    const source = this.#pieceModel(shape, seed);
     if (!source) return null;
     const group = new THREE.Group();
     const model = cloneModel(source);
@@ -951,8 +984,8 @@ export class TileFactory {
   }
 
   /** Ghost copy of a whole Wasteland piece for the placement preview. */
-  previewPiece(shape, rot = 0) {
-    const group = this.createPiece(shape, rot);
+  previewPiece(shape, rot = 0, seed = 0) {
+    const group = this.createPiece(shape, rot, seed);
     return group && this.#ghost(group);
   }
 

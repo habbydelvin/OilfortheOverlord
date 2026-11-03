@@ -8,7 +8,7 @@ import { createScene } from './scene.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
 import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws } from './sfx.js';
 import { CameraRig } from './controls.js';
-import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance } from './grid.js';
+import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
 import { preloadCardArt } from './tiles.js';
 import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, shopReady, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
@@ -421,7 +421,7 @@ function addTile(x, z, terrain, delay = 0, instant = false, { bare = false, rot 
   const onRuins = old?.terrain === 'ruins' || (old?.onRuins ?? false);
   if (old) removeMesh(old.mesh);
 
-  const mesh = factory.create(terrain, { bare, rot });
+  const mesh = factory.create(terrain, { bare, rot, seed: cellSeed(x, z) });
   mesh.userData.rot = rot; // kept for the stand-in -> model swap (factory.upgrade)
   const w = hexToWorld(x, z);
   mesh.position.set(w.x, 0, w.z);
@@ -465,8 +465,8 @@ function removeMesh(mesh) {
  */
 function addWastePiece(piece, cells) {
   const [lx, lz] = [...cells].sort((a, b) => a[1] - b[1] || a[0] - b[0])[0];
-  const rec = { shape: piece.shape, rot: piece.rot, cells: cells.map(([x, z]) => plotKey(x, z)), lead: plotKey(lx, lz), group: null, broken: false };
-  const group = factory.createPiece(piece.shape, piece.rot);
+  const rec = { shape: piece.shape, rot: piece.rot, seed: piece.id, cells: cells.map(([x, z]) => plotKey(x, z)), lead: plotKey(lx, lz), group: null, broken: false };
+  const group = factory.createPiece(piece.shape, piece.rot, piece.id);
   cells.forEach(([x, z], i) => {
     addTile(x, z, piece.terrain, i * 0.05, Boolean(group), { bare: Boolean(group) });
     grid.get(x, z).mesh.userData.piece = rec;
@@ -477,10 +477,8 @@ function addWastePiece(piece, cells) {
 /** Put a piece's model over its cells; `drop` makes it stomp in like a placed tile, with dust under every cell. */
 function placeWasteGroup(rec, group, drop) {
   const pts = rec.cells.map((k) => k.split(',').map(Number));
-  const world = pts.map(([x, z]) => hexToWorld(x, z));
-  const xs = world.map((w) => w.x);
-  const zs = world.map((w) => w.z);
-  group.position.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...zs) + Math.max(...zs)) / 2);
+  const mid = cellsCentre(pts);
+  group.position.set(mid.x, 0, mid.z);
   rec.group = group;
   tiles.add(group);
   if (drop) {
@@ -489,7 +487,10 @@ function placeWasteGroup(rec, group, drop) {
   }
 }
 
-/** A cell of the piece was removed or replaced: the whole-piece model goes, the cells left become single Wasteland. */
+/**
+ * A cell of the piece was removed or replaced: the whole-piece model goes, and each cell left shows its own part of
+ * it, just where it was (so the rest of the piece looks the same).
+ */
 function breakWastePiece(rec, removed) {
   rec.broken = true;
   if (rec.group) {
@@ -500,9 +501,16 @@ function breakWastePiece(rec, removed) {
   for (const k of rec.cells) {
     const c = grid.cells.get(k);
     if (!c || c.mesh === removed || c.mesh.userData.piece !== rec) continue;
-    if (rec.group) factory.fillWaste(c.mesh, c.terrain); // (without a model the cells already show blocks)
+    if (rec.group) fillLeftover(c, rec); // (without a model the cells already show blocks)
     c.mesh.visible = true;
   }
+}
+
+/** A cell left of a broken Wasteland piece: its part of the piece's model (factory.fillWastePart). */
+function fillLeftover(c, rec) {
+  const mid = cellsCentre(rec.cells.map((k) => k.split(',').map(Number)));
+  const w = hexToWorld(c.x, c.z);
+  factory.fillWastePart(c.mesh, c.terrain, rec, [w.x - mid.x, w.z - mid.z], cellSeed(c.x, c.z));
 }
 
 /** The mesh that hops for a cell in the payout: a whole Wasteland piece hops once, on its first cell. */
@@ -521,18 +529,21 @@ function adoptWastePieces() {
     if (rec && !rec.broken) {
       if (rec.group || done.has(rec)) continue;
       done.add(rec);
-      const group = factory.createPiece(rec.shape, rec.rot);
+      const group = factory.createPiece(rec.shape, rec.rot, rec.seed);
       if (!group) {
-        // No whole-piece model for this shape (hex pieces, until they're modelled): each cell gets the single one.
+        // No whole-piece model for this shape: each cell gets a lone cell's look.
         for (const k of rec.cells) {
           const c = grid.cells.get(k);
-          if (c && !c.mesh.userData.blockout) factory.fillWaste(c.mesh, c.terrain);
+          if (c && !c.mesh.userData.blockout) factory.fillWaste(c.mesh, c.terrain, cellSeed(c.x, c.z));
         }
         continue;
       }
       for (const k of rec.cells) grid.cells.get(k)?.mesh.clear();
       placeWasteGroup(rec, group, false);
-    } else if (!cell.mesh.userData.blockout) factory.fillWaste(cell.mesh, cell.terrain);
+    } else if (!cell.mesh.userData.blockout) {
+      if (rec) fillLeftover(cell, rec); // broken before the models came: its part of the piece all the same
+      else factory.fillWaste(cell.mesh, cell.terrain, cellSeed(cell.x, cell.z));
+    }
   }
   if (hand.piece) placement.setPiece(hand.piece);
 }
@@ -4895,10 +4906,10 @@ factory.ready.then(() => {
   });
 });
 
-// The Wasteland piece models (about 330 MB) load after the buildings, while the intro plays.
+// The Wasteland piece models load after the core buildings, while the intro plays (by shape: a list per shape).
 factory.piecesReady.then(async (pieces) => {
   if (!pieces) return;
-  await warmUpModelsGradually(pieces);
+  await warmUpModelsGradually(new Map([...pieces.values()].flat().map((root, i) => [i, root])));
   adoptWastePieces();
   rivalView.refresh(true); // a rival city on screen swaps its blocks for the piece models too
 });

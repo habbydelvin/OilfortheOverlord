@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { recolourSalt } from './saltRecolour.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeSeamless, copySeam } from './seamlessGround.js';
 import { GROUND_Y } from './scene.js';
+import { SHAPES } from './shapes.js';
 
 /**
  * Blockout tiles. Maya exports these in centimetres with the mesh pivot
@@ -21,7 +23,7 @@ export const BLOCKOUTS = {
   refinery: 'RefineryCity01.fbx',
   oasis: 'Oasis.fbx',
   tarpit: 'TarPit01.fbx',
-  cliffs: 'Cliff01.fbx',
+  cliffs: 'WasteRock.glb', // no FBX: a hexagonal .glb (GLB_ONLY in tools/convert-models.mjs), like the camp and pieces
   ruins: 'Ruins01.fbx',
   crater: 'ToxicCraterCity01.fbx',
   labourcamp: 'LaborCampCity01.fbx',
@@ -29,7 +31,7 @@ export const BLOCKOUTS = {
   magazine: 'MissileMagazine.glb', // likewise; its Launch clip plays when the player fires a missile (main.js)
   // Camps: one model per camp, matched by its tent colour (TERRAINS[key].tent in tiles.js).
   raider: 'Camp04.fbx', // brown (rebels from starvation)
-  bandit_raider: 'Camp03.fbx', // red
+  bandit_raider: 'WasteCamp.glb', // red tents
   bandit_siphon: 'Camp05.fbx', // grey (near-black tent)
   bandit_scav: 'Camp01.fbx', // green (olive tent)
 };
@@ -49,12 +51,12 @@ const FINISHED = {
   pump: { yaw: 0, fit: 'PumpStation_HiveCity' },
   oasis: { yaw: 0, fit: 'WasteOasis_HiveCity' },
   labourcamp: { yaw: 0, fit: 'LaborCamp_HiveCity' },
-  // Ruins has no _HiveCity group: its 12 × 12 ground plate is the footprint.
-  cliffs: { yaw: 0, fit: 'SandCliffs_HiveCity' },
+  // Ruins: its hexagonal ground plate is the footprint.
+  cliffs: { yaw: 0, fit: 'WasteRock_HiveCity' },
   ruins: { yaw: 0, fit: 'WasteRuins_Ground' },
   crater: { yaw: 0, fit: 'ToxicCrater_HiveCity' },
   raider: { yaw: 0, fit: 'RaiderCampBrown_HiveCity' },
-  bandit_raider: { yaw: 0, fit: 'RaiderCampRed_HiveCity' },
+  bandit_raider: { yaw: 0, fit: 'WasteCamp_HiveCity' },
   bandit_siphon: { yaw: 0, fit: 'RaiderCampGray_HiveCity' },
   bandit_scav: { yaw: 0, fit: 'RaiderCampGreen_HiveCity' },
   settlement: { yaw: 0, fit: 'Village02_HiveCity' },
@@ -71,7 +73,7 @@ const USE_FBX = typeof location !== 'undefined' && new URLSearchParams(location.
 const MODEL_URL = USE_FBX ? '/art/models/' : '/models/glb/';
 const TEX_URL = '/models/tex/';
 // Bump after re-running the conversion (or re-exporting a model under the same name), so browsers drop cached copies.
-const MODEL_VERSION = '20261103-1500';
+const MODEL_VERSION = '20261103-1700';
 const ATLAS_URL = '/models/Atlas.jpg?v=20261026-1640';
 // Footprints measure about 96 × 97 cm. One board cell is 1 unit across.
 const CELL = 1; // full cell: the seam between tiles is TILE.gap, applied live by applyTileGap (tiles.js)
@@ -387,45 +389,62 @@ function drawAfterGround(root) {
 
 // ---------- Wasteland pieces ----------
 /**
- * One finished model per Wasteland piece shape (keys of SHAPES in pieces.js). Each model spans its whole
- * piece, authored at 12 Blender units per cell in the shape's default orientation, so it can be laid over
- * the piece's cells and turned with it. File: Waste<Name>City01.fbx, footprint node: Waste<Name>_HiveCity.
+ * The Wasteland piece models (art/models/hex/WasteHex_<Name>.glb). Each spans a whole piece; which piece shape it
+ * is goes by the cells its ground covers (measured offline, see pieceCells in tools/convert-models.mjs), not by its
+ * name: fitHexPiece matches them to SHAPES (shapes.js). A shape with two models picks one per piece; a shape with
+ * none uses the mirror image of one that matches it mirrored (loadWastePieces).
  */
-export const WASTE_PIECES = {
-  mono: 'Single',
-  domino: 'Pair',
-  i3: 'Line3',
-  v3: 'Corner',
-  i4: 'I',
-  o: 'O',
-  t: 'T',
-  s: 'S',
-  z: 'Z',
-  l: 'L',
-  j: 'J',
-};
-const BLENDER_CELL = 12;
-/** A one-cell footprint deeper than wide (hexagon: depth / width = 2 / √3). */
-const isHexFootprint = (size, w = 1, h = 1) => w * h === 1 && size.z > size.x * 1.08;
+export const WASTE_PIECE_FILES = ['Single', 'Pair', 'Line3', 'Bend3', 'Tri3', 'Bar', 'Diamond', 'Pistol', 'PistolM', 'Spiral', 'Zigzag', 'ZigzagM', 'Arch', 'HookM', 'Snake'];
+const ROW = Math.sqrt(3) / 2;
 
-/** Scale a piece model to its cells (keeping the seam at its outer edge) and centre its footprint on the origin. */
-function fitPiece(raw, base) {
-  raw.position.set(0, 0, 0);
-  raw.rotation.set(0, 0, 0);
-  raw.scale.set(1, 1, 1);
-  raw.updateMatrixWorld(true);
-  const box = footprintBox(raw) ?? new THREE.Box3().setFromObject(base);
-  const size = box.getSize(new THREE.Vector3());
-  const center = box.getCenter(new THREE.Vector3());
-  const w = Math.max(1, Math.round(size.x / BLENDER_CELL));
-  const h = Math.max(1, Math.round(size.z / BLENDER_CELL));
-  const sx = w / size.x;
-  // A one-cell piece is a pointy-top hexagon (12 wide, 13.86 deep): same scale both ways, like the finished tiles.
-  const sz = isHexFootprint(size, w, h) ? sx : h / size.z;
-  raw.userData.fit = { sx, sz, cx: center.x, cz: center.z, w, h };
-  raw.scale.set(sx, (sx + sz) / 2, sz);
-  // Blender ground is y = 0 (pits and the worm sink below it and must not lift the piece).
-  raw.position.set(-center.x * sx, 0, -center.z * sz);
+/** Cells [x, z] shifted so the smallest x and z are 0, as one comparable string. */
+function cellKey(cells) {
+  const mx = Math.min(...cells.map((c) => c[0]));
+  const mz = Math.min(...cells.map((c) => c[1]));
+  return JSON.stringify(cells.map(([x, z]) => [x - mx + 0, z - mz + 0]).sort((a, b) => a[0] - b[0] || a[1] - b[1]));
+}
+const SHAPE_KEYS = new Map(Object.entries(SHAPES).map(([k, s]) => [cellKey(s.cells), k]));
+
+/**
+ * The shape a piece model's cells make once it is mirrored (z -> -z) or not, then turned `turn` sixths the way the
+ * board turns pieces (rotation.y = -turn·60°): the first fit, or null. centres: [x, z] in cell units.
+ */
+function shapeOf(centres, mirror) {
+  const v = new THREE.Vector3();
+  const [x0, z0] = centres[0];
+  for (let turn = 0; turn < 6; turn++) {
+    // Offsets from the first cell (whole steps of the cell lattice), in axial coordinates (grid.js).
+    const cells = centres.map(([x, z]) => {
+      v.set(x - x0, 0, mirror ? z0 - z : z - z0).applyAxisAngle(THREE.Object3D.DEFAULT_UP, (-turn * Math.PI) / 3);
+      const cz = v.z / ROW;
+      return [Math.round(v.x - cz / 2), Math.round(cz)];
+    });
+    const shape = SHAPE_KEYS.get(cellKey(cells));
+    if (shape) return { shape, turn };
+  }
+  return null;
+}
+
+/**
+ * A hexagonal piece model to the board: one cell per unit, its cells' middle on the origin, turned (and mirrored
+ * when `mirror`) into its shape's own orientation (rot 0), so createPiece only has to turn it like the piece.
+ * Stores what it matched as userData.piece ({ shape, turn, mirror }), or null when its cells make no piece shape.
+ */
+function fitHexPiece(root, mirror = false) {
+  const { cells, cell } = root.userData;
+  const centres = cells.map(([x, z]) => [x / cell, z / cell]);
+  const match = shapeOf(centres, mirror);
+  root.userData.piece = match && { ...match, mirror };
+  root.userData.mirrorPiece = mirror ? null : shapeOf(centres, true); // what its mirror image would be
+  if (!match) return null;
+  const s = 1 / cell;
+  const c = new THREE.Vector3(cells.reduce((a, p) => a + p[0], 0) / cells.length, 0, cells.reduce((a, p) => a + p[1], 0) / cells.length);
+  root.scale.set(s, s, mirror ? -s : s);
+  root.rotation.set(0, (-match.turn * Math.PI) / 3, 0);
+  root.position.copy(c.multiply(root.scale).applyEuler(root.rotation).negate());
+  // A single cell keeps the tile gap tag (applyTileGap re-centres it the same way when it isn't turned).
+  if (cells.length === 1 && !match.turn && !mirror) root.userData.fit = { sx: s, sz: s, cx: cells[0][0], cz: cells[0][1], w: 1, h: 1 };
+  return match;
 }
 
 /** Resolves once the texture's image has arrived (FBXLoader hands textures back before their images load). */
@@ -518,17 +537,19 @@ function averageLinear(texture) {
  * scaled by their own brightness so the crack pattern stays as darker sand. The small Waste<Name>_Salt part
  * is tinted to the same sand colour. Grounds with almost no salt are left alone (grey pebbles stay grey).
  */
-async function matchSaltToSand(raw, name) {
-  const ground = raw.getObjectByName(`Waste${name}_Ground`);
-  const groundMap = [ground?.material].flat()[0]?.map;
-  if (!groundMap?.image?.width) return;
+const SAND_PART = /_Sand$/; // a part of plain desert sand (seamlessGround.js)
+async function matchSaltToSand(raw, prefix) {
+  const ground = raw.getObjectByName(`${prefix}_Ground`);
+  const groundMaterial = [ground?.material].flat()[0];
+  const groundMap = groundMaterial?.map;
+  if (!groundMap?.image?.width || SAND_PART.test(groundMaterial.name)) return; // plain desert sand: nothing painted on it
   const { ref, share } = (await recolourInWorker(groundMap)) ?? recolourOnMainThread(groundMap);
   if (!ref) return;
   // The separate salt part: tinted so its texture averages out at the same sand colour (linear RGB).
   const toLinear = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
   const sandLin = ref.map(toLinear);
   const parts = [];
-  raw.traverse((obj) => obj.isMesh && obj.name === `Waste${name}_Salt` && parts.push(obj));
+  raw.traverse((obj) => obj.isMesh && obj.name === `${prefix}_Salt` && parts.push(obj));
   for (const obj of parts) {
     for (const m of [obj.material].flat()) await decodeImage(m.map?.image);
     const recolour = (m) => {
@@ -540,7 +561,7 @@ async function matchSaltToSand(raw, name) {
     };
     obj.material = Array.isArray(obj.material) ? obj.material.map(recolour) : recolour(obj.material);
   }
-  if (share > 0.02) console.info(`Wasteland ${name}: salt recoloured to sand (${Math.round(share * 100)}% of the ground).`);
+  if (share > 0.02) console.info(`Wasteland ${prefix}: salt recoloured to sand (${Math.round(share * 100)}% of the ground).`);
 }
 
 /** The recolour on the main thread (a blocking ~0.5 s per ground): only when the worker can't be used. */
@@ -651,9 +672,8 @@ async function recolourInWorker(groundMap) {
 export const CORE_MODELS = ['capital', 'settlement', 'farm', 'station'];
 export const BUNDLES = {
   core: CORE_MODELS,
-  // The board is hexagonal now (grid.js): every Wasteland cell shows the single-cell model, until whole-piece hex
-  // models exist. The square piece models (WASTE_PIECES) aren't loaded.
-  waste: ['waste-mono'],
+  // One model per Wasteland piece shape (WASTE_PIECE_FILES); loadWastePieces sorts them by shape.
+  waste: WASTE_PIECE_FILES.map((name) => `waste-${name}`),
   extra: Object.keys(BLOCKOUTS).filter((k) => FINISHED[k] && !CORE_MODELS.includes(k)),
 };
 export const MAX_TEXTURE = 2048; // larger textures are never shown at full size at game zoom
@@ -661,9 +681,8 @@ export const MAX_TEXTURE = 2048; // larger textures are never shown at full size
 /** What a model key needs: its FBX file, and how it is fitted (building cell or Wasteland piece). */
 function modelSpec(key) {
   if (key.startsWith('waste-')) {
-    const shape = key.slice(6);
-    const name = WASTE_PIECES[shape];
-    return { key, shape, piece: name, file: `Waste${name}City01.fbx`, base: `Waste${name}_HiveCity` };
+    const prefix = `WasteHex_${key.slice(6)}`;
+    return { key, piece: prefix, file: `${prefix}.glb`, base: `${prefix}_HiveCity` };
   }
   return { key, file: BLOCKOUTS[key], finished: FINISHED[key], base: FINISHED[key]?.fit };
 }
@@ -676,7 +695,7 @@ function footprintBox(root) {
 
 /**
  * Measured in the same root state the fit leaves it in (fitToCell keeps the root's own X rotation and resets the
- * rest; fitPiece resets everything). Some files (Cliff, Ruins) carry Blender's axis rotation and the object's
+ * rest; for pieces everything is reset). Some files (Cliff, Ruins) carry Blender's axis rotation and the object's
  * position on the root itself, so measuring before that reset would put the footprint off to the side.
  */
 function storeFootprint(root, baseName, piece) {
@@ -765,7 +784,7 @@ async function loadFbx(loader, spec, track) {
     })
     .filter((clip) => clip.tracks.length);
   storeFootprint(raw, spec.base, Boolean(spec.piece));
-  const groundMap = spec.piece ? [raw.getObjectByName(`Waste${spec.piece}_Ground`)?.material].flat()[0]?.map : null;
+  const groundMap = spec.piece ? [raw.getObjectByName(`${spec.piece}_Ground`)?.material].flat()[0]?.map : null;
   await releaseImageBlobs(raw, new Set(groundMap ? [groundMap] : []));
   raw.name = spec.key;
   return raw;
@@ -966,7 +985,10 @@ async function prepareFromFbx(keys, { track = false, parallel = false } = {}) {
   for (const s of specs) {
     await breathe();
     const root = roots.get(s.key);
-    if (s.piece) await matchSaltToSand(root, s.piece); // before the merge: it finds the ground by name
+    if (s.piece) {
+      await matchSaltToSand(root, s.piece); // before the merge: it finds the ground by name
+      root.userData.groundMaterial = [root.getObjectByName(`${s.piece}_Ground`)?.material].flat()[0]?.name; // (splitPieceCells)
+    }
     // ?nomerge in the URL keeps the original meshes (for A/B checks).
     if (!new URLSearchParams(location.search).has('nomerge')) {
       try {
@@ -1445,8 +1467,8 @@ function finishModel(root, spec) {
     if (!o.isMesh) return;
     for (const m of [o.material].flat()) for (const k of ['map', 'normalMap', 'emissiveMap']) if (m[k]) m[k].anisotropy = 8;
   });
-  // One-cell tiles become hexagons like the board cells (multi-cell Wasteland pieces stay as they are).
-  if (!spec.piece || spec.shape === 'mono') {
+  // One-cell tiles become hexagons like the board cells (the Wasteland pieces are hexagons already).
+  if (!spec.piece) {
     const t0 = performance.now();
     const cut = hexCut(root);
     if (cut) console.info(`[models] ${spec.key}: ${cut} parts cut to the hexagon (${Math.round(performance.now() - t0)} ms)`);
@@ -1456,14 +1478,13 @@ function finishModel(root, spec) {
   if (flat || batched) console.info(`[models] ${spec.key}: ${flat} flat parts skip shadows, ${batched} animated draws batched`);
   // Still in the state storeFootprint measured it in, so the footprint lines up with the parts.
   const fp = footprintBox(root);
-  if (fp) {
-    const size = fp.getSize(new THREE.Vector3());
-    const grid = spec.piece ? [Math.max(1, Math.round(size.x / BLENDER_CELL)), Math.max(1, Math.round(size.z / BLENDER_CELL))] : [1, 1];
-    makeSeamless(root, fp, grid);
-  }
+  // A Wasteland piece of several cells: its ground meets the desert along the outline of those cells.
+  const cells = spec.piece && root.userData.cells?.length > 1 ? { centres: root.userData.cells, cell: root.userData.cell } : null;
+  if (fp) makeSeamless(root, fp, [1, 1], cells);
   if (spec.piece) {
-    fitPiece(root, root);
-    root.name = `waste-${spec.shape}`;
+    const match = fitHexPiece(root);
+    if (!match) console.warn(`[models] ${spec.key}: its ${root.userData.cells?.length} cells make no piece shape`);
+    root.name = match ? `waste-${match.shape}` : spec.key;
   } else {
     fitToCell(root, { ground: 0, width: true, ...spec.finished });
     root.name = spec.key;
@@ -1473,6 +1494,335 @@ function finishModel(root, spec) {
   if (sunk) console.info(`[models] ${spec.key}: ${sunk} below-ground parts drawn after the sand plane`);
   if (!spec.piece) extractShip(root, spec.key);
   return root;
+}
+
+/**
+ * The Wasteland piece models by piece shape (Map shape -> roots, ready to clone; one or more per shape). A shape no
+ * model matches takes the mirror image of one that does once mirrored (none: its pieces show single cells).
+ */
+export async function loadWastePieces() {
+  const byShape = new Map();
+  const add = (root) => byShape.set(root.userData.piece.shape, [...(byShape.get(root.userData.piece.shape) ?? []), root]);
+  const roots = [...(await loadBundle('waste')).values()].filter((root) => root.userData.piece);
+  const parts = new Map(); // fitted root -> its cells' parts (a mirrored copy shares its model's)
+  let ms = 0;
+  for (const root of roots) {
+    add(root);
+    await breathe();
+    const t0 = performance.now();
+    parts.set(root, splitPieceCells(root));
+    ms += performance.now() - t0;
+  }
+  // Mirror images: a second look for a shape that is its own mirror image, and the only one for a shape no model has.
+  for (const root of roots) {
+    const m = root.userData.mirrorPiece;
+    if (!m || (m.shape !== root.userData.piece.shape && byShape.has(m.shape))) continue;
+    const copy = cloneModelForMirror(root);
+    if (!fitHexPiece(copy, true)) continue;
+    add(copy);
+    parts.set(copy, parts.get(root));
+  }
+  // Every model's cells on their own: a cell a building leaves keeps its part (pieceCuts), and lone cells (the
+  // 'mono' list: the Single models, then every cell with enough on it that wasn't cut through) show any of them.
+  const kinds = { pit: [...(byShape.get('mono') ?? [])], spires: [], other: [] };
+  for (const [shape, list] of byShape) {
+    for (const root of list) {
+      const cuts = cellModels(root, parts.get(root));
+      PIECE_CUTS.set(root, cuts);
+      if (shape === 'mono') continue;
+      for (const c of cuts) if (c.props >= LONE_DETAIL && !c.clipped) kinds[lookKind(c)].push(c.root);
+    }
+  }
+  byShape.set('mono', mixLooks(kinds));
+  const missing = Object.keys(SHAPES).filter((k) => !byShape.has(k));
+  if (missing.length) console.warn(`[models] no Wasteland model for ${missing.join(', ')}: those pieces show single cells`);
+  const looks = [...byShape].reduce((n, [shape, l]) => n + (shape === 'mono' ? 0 : l.length), 0);
+  const count = Object.entries(kinds).map(([k, l]) => `${l.length} ${k}`).join(', ');
+  console.info(`[models] Wasteland: ${roots.length} piece models, ${looks} piece looks; lone cells: ${count} (cut in ${Math.round(ms)} ms)`);
+  return byShape;
+}
+
+/**
+ * How often each kind of look comes up on lone cells. Every model has one worm pit and most cells are clusters of
+ * petrified spires, so drawn evenly a patch of lone cells would be all pits and spires: the rest (rocks, salt, tan
+ * bands, dunes) come up as often as the spires, and the pits (the boldest look) one cell in five.
+ */
+const LOOK_SHARES = { pit: 0.2, spires: 0.4, other: 0.4 };
+
+/** A cell's kind of look: its worm pit, or whichever part covers most of it (by triangles, ground aside). */
+function lookKind(cut) {
+  if (cut.props >= WORM_DETAIL) return 'pit';
+  const by = new Map();
+  cut.root.traverse((o) => {
+    if (!o.isMesh) return;
+    const name = [o.material].flat()[0]?.name ?? '';
+    by.set(name, (by.get(name) ?? 0) + (o.geometry.index?.count ?? o.geometry.attributes.position.count) / 3);
+  });
+  by.delete([...by.keys()].find((n) => n === cut.ground)); // (its ground)
+  const top = [...by].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
+  return /Petrified/.test(top) ? 'spires' : 'other';
+}
+
+/** One list for the seeded picks (list[seed % n]): each look repeated so each kind comes up its LOOK_SHARES share. */
+function mixLooks(kinds) {
+  const live = Object.entries(kinds).filter(([, l]) => l.length);
+  const each = live.map(([k, l]) => (LOOK_SHARES[k] ?? 0.1) / l.length);
+  const unit = Math.min(...each) / 2;
+  return live.flatMap(([, l], i) => Array.from({ length: Math.max(1, Math.round(each[i] / unit)) }, () => l).flat());
+}
+
+const PIECE_CUTS = new WeakMap(); // fitted piece root -> cellModels
+/** How much a cell needs on it (triangles besides its ground) to be a lone cell's look: bare sand reads as no tile. */
+const LONE_DETAIL = 150;
+const WORM_DETAIL = 1000; // a cell's worm counts this much (splitPieceCells): it has the pit
+/** A piece model's cells as models of their own ([{ q, root, clipped }], see cellModels), or null. */
+export const pieceCuts = (root) => PIECE_CUTS.get(root) ?? null;
+
+/**
+ * A fitted Wasteland piece cut into its cells (splitPieceCells), each as a model of its own in the piece's frame
+ * (rot 0), centred on its cell: [{ q: [x, z] where that cell's centre sits in the fitted piece, root, clipped, props }]
+ * (props: how much stands on it, see splitPieceCells).
+ */
+function cellModels(root, parts) {
+  root.updateMatrix();
+  return parts.map((part, i) => {
+    const cell = new THREE.Group();
+    cell.name = `${root.name}:${i}`;
+    const q = new THREE.Vector3(part.centre[0], 0, part.centre[1]).applyMatrix4(root.matrix);
+    cell.position.copy(root.position).sub(q);
+    cell.quaternion.copy(root.quaternion);
+    cell.scale.copy(root.scale);
+    for (const m of part.meshes) {
+      const mesh = new THREE.Mesh(m.geometry, m.material);
+      Object.assign(mesh, { name: m.name, castShadow: m.castShadow, receiveShadow: m.receiveShadow, renderOrder: m.renderOrder });
+      cell.add(mesh);
+    }
+    // Animated parts (the worm) with the nodes above them, so their clip's keys (parent space) still fit.
+    const copies = new Map();
+    const copyOf = (o) => {
+      if (o === part.from) return cell; // (the model the parts were split from: a mirrored copy shares its model's)
+      if (!copies.has(o)) {
+        const c = o.clone(false);
+        copies.set(o, c);
+        copyOf(o.parent).add(c);
+      }
+      return copies.get(o);
+    };
+    part.animated.forEach(copyOf);
+    const names = new Set(part.animated.map((o) => o.name));
+    cell.animations = names.size
+      ? root.animations
+          .map((clip) => new THREE.AnimationClip(clip.name, clip.duration, clip.tracks.filter((t) => names.has(THREE.PropertyBinding.parseTrackName(t.name).nodeName))))
+          .filter((clip) => clip.tracks.length)
+      : [];
+    return { q: [q.x, q.z], root: cell, clipped: part.clipped, props: part.props, ground: part.ground };
+  });
+}
+
+/**
+ * Split a Wasteland piece model's parts by cell (in the model's own space: userData.cells). Each connected part goes
+ * whole to the cell under its middle; flat ground (and what lies wholly under it), and anything wider than most of a
+ * cell, is cut along the cells' edges (a cut through anything but the ground marks the cell `clipped`: it doesn't stand on its own). Animated
+ * parts (the worm) go to the cell they stand in. Returns per cell { centre, meshes, animated, clipped, props (the
+ * triangles on it besides the ground; the worm counts WORM_DETAIL), ground (the ground's material), from }.
+ */
+function splitPieceCells(root) {
+  const { cells, cell } = root.userData;
+  const hexes = cells.map(([cx, cz]) => ({ cx, cz, a: cell / 2 }));
+  const out = cells.map((centre) => ({ centre, meshes: [], animated: [], clipped: false, props: 0, ground: root.userData.groundMaterial, from: root }));
+  const nearest = (x, z) => {
+    let best = 0;
+    for (let i = 1; i < cells.length; i++) if (Math.hypot(cells[i][0] - x, cells[i][1] - z) < Math.hypot(cells[best][0] - x, cells[best][1] - z)) best = i;
+    return best;
+  };
+  root.updateMatrixWorld(true);
+  const toRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const animated = animatedNames(root);
+  const moving = (o) => {
+    for (let p = o; p && p !== root; p = p.parent) if (animated.has(p.name)) return p;
+    return null;
+  };
+  const v = new THREE.Vector3();
+  const meshes = [];
+  root.traverse((o) => {
+    if (o === root) return;
+    const top = moving(o);
+    if (top === o) {
+      v.setFromMatrixPosition(toRoot.clone().multiply(o.matrixWorld));
+      const c = out[nearest(v.x, v.z)];
+      c.animated.push(o);
+      c.props += WORM_DETAIL; // the worm (and its pit)
+    } else if (!top && o.isMesh && !o.isSkinnedMesh) meshes.push(o);
+  });
+  for (const o of meshes) {
+    const rel = toRoot.clone().multiply(o.matrixWorld);
+    const g = o.geometry;
+    const pos = g.attributes.position;
+    const count = pos.count;
+    const P = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(rel);
+      P[i * 3] = v.x;
+      P[i * 3 + 1] = v.y;
+      P[i * 3 + 2] = v.z;
+    }
+    const N = g.attributes.normal ? new Float32Array(count * 3) : null;
+    if (N) {
+      const nm = new THREE.Matrix3().getNormalMatrix(rel);
+      for (let i = 0; i < count; i++) {
+        v.fromBufferAttribute(g.attributes.normal, i).applyMatrix3(nm).normalize();
+        N[i * 3] = v.x;
+        N[i * 3 + 1] = v.y;
+        N[i * 3 + 2] = v.z;
+      }
+    }
+    const index = g.index?.array;
+    const tris = (index ? index.length : count) / 3;
+    const vert = (t, j) => (index ? index[t * 3 + j] : t * 3 + j);
+    // Connected parts (vertices welded by position: flat-shaded parts repeat their corners).
+    const weld = new Map();
+    const parent = new Int32Array(count);
+    for (let i = 0; i < count; i++) {
+      const key = `${Math.round(P[i * 3] * 1e3)},${Math.round(P[i * 3 + 1] * 1e3)},${Math.round(P[i * 3 + 2] * 1e3)}`;
+      parent[i] = weld.has(key) ? weld.get(key) : (weld.set(key, i), i);
+    }
+    const find = (i) => {
+      while (parent[i] !== i) i = parent[i] = parent[parent[i]];
+      return i;
+    };
+    for (let t = 0; t < tris; t++) {
+      const r0 = find(vert(t, 0));
+      for (let j = 1; j < 3; j++) {
+        const r = find(vert(t, j));
+        if (r !== r0) parent[r] = r0;
+      }
+    }
+    const box = new Map(); // part -> [x0, x1, y0, y1, z0, z1]
+    for (let i = 0; i < count; i++) {
+      const r = find(i);
+      const b = box.get(r) ?? box.set(r, [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity]).get(r);
+      b[0] = Math.min(b[0], P[i * 3]);
+      b[1] = Math.max(b[1], P[i * 3]);
+      b[2] = Math.min(b[2], P[i * 3 + 1]);
+      b[3] = Math.max(b[3], P[i * 3 + 1]);
+      b[4] = Math.min(b[4], P[i * 3 + 2]);
+      b[5] = Math.max(b[5], P[i * 3 + 2]);
+    }
+    const home = new Map(); // part -> its cell, or -1: cut along the cells' edges (-2: and it isn't ground)
+    for (const [r, b] of box) {
+      // Flat on the ground, or wholly under it (hidden by the ground: a model may leave such a part off to the side
+      // of its pit, which a cell on its own would show through open desert): cut along the cells like the ground.
+      const flat = (b[3] - b[2] < cell * 0.02 && Math.abs(b[2]) < cell * 0.02) || b[3] < 0;
+      const wide = Math.max(b[1] - b[0], b[5] - b[4]) > cell * 0.75;
+      home.set(r, flat ? -1 : wide ? -2 : nearest((b[0] + b[1]) / 2, (b[4] + b[5]) / 2));
+    }
+    // Per cell and material: the triangles kept whole (old vertex -> new) and those cut (new vertices).
+    const names = Object.keys(g.attributes).filter((n) => !/^skin/.test(n));
+    const sizes = names.map((n) => g.attributes[n].itemSize);
+    const PI = names.indexOf('position'); // (attributes come in any order)
+    const read = (i) =>
+      names.map((n, ai) => {
+        if (n === 'position') return [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]];
+        if (n === 'normal' && N) return [N[i * 3], N[i * 3 + 1], N[i * 3 + 2]];
+        const at = g.attributes[n];
+        return [at.getX(i), at.getY(i), at.getZ(i), at.getW(i)].slice(0, sizes[ai]);
+      });
+    const materials = [o.material].flat();
+    const groupOf = (t) => {
+      if (!Array.isArray(o.material) || !g.groups.length) return 0;
+      const at = t * 3;
+      return g.groups.find((grp) => at >= grp.start && at < grp.start + grp.count)?.materialIndex ?? 0;
+    };
+    const builders = new Map(); // `${cell}|${material}` -> builder
+    const builder = (c, mi) => {
+      const k = `${c}|${mi}`;
+      if (!builders.has(k)) builders.set(k, { c, mi, map: new Map(), data: names.map(() => []), index: [] });
+      return builders.get(k);
+    };
+    const push = (b, vx) => {
+      vx.forEach((a, ai) => b.data[ai].push(...a));
+      return b.data[PI].length / 3 - 1;
+    };
+    const keep = (b, i) => (b.map.has(i) ? b.map.get(i) : (b.map.set(i, push(b, read(i))), b.map.get(i)));
+    const excess = (h, x, z) => {
+      const dx = x - h.cx;
+      const dz = z - h.cz;
+      let m = -Infinity;
+      for (const [nx, nz] of HEX_SIDES) m = Math.max(m, dx * nx + dz * nz - h.a);
+      return m;
+    };
+    for (let t = 0; t < tris; t++) {
+      const i0 = vert(t, 0);
+      const i1 = vert(t, 1);
+      const i2 = vert(t, 2);
+      const mi = groupOf(t);
+      const c = home.get(find(i0));
+      if (c >= 0) {
+        const b = builder(c, mi);
+        b.index.push(keep(b, i0), keep(b, i1), keep(b, i2));
+        out[c].props++;
+        continue;
+      }
+      for (let ci = 0; ci < hexes.length; ci++) {
+        const h = hexes[ci];
+        // All three corners beyond one side: nothing of it in this cell.
+        const beyond = (nx, nz) => [i0, i1, i2].every((i) => (P[i * 3] - h.cx) * nx + (P[i * 3 + 2] - h.cz) * nz - h.a > 1e-6);
+        if (HEX_SIDES.some(([nx, nz]) => beyond(nx, nz))) continue;
+        const b = builder(ci, mi);
+        if ([i0, i1, i2].every((i) => excess(h, P[i * 3], P[i * 3 + 2]) <= 1e-6)) {
+          b.index.push(keep(b, i0), keep(b, i1), keep(b, i2));
+          continue;
+        }
+        // Cut to the hexagon (every attribute interpolated), then fanned back into triangles.
+        let poly = [i0, i1, i2].map(read);
+        for (const [nx, nz] of HEX_SIDES) {
+          const d = (p) => (p[PI][0] - h.cx) * nx + (p[PI][2] - h.cz) * nz - h.a;
+          const next = [];
+          for (let k = 0; k < poly.length; k++) {
+            const p = poly[k];
+            const q = poly[(k + 1) % poly.length];
+            const dp = d(p);
+            const dq = d(q);
+            if (dp <= 0) next.push(p);
+            if ((dp <= 0) !== (dq <= 0)) {
+              const f = dp / (dp - dq);
+              next.push(p.map((pa, ai) => pa.map((x, ci2) => x + (q[ai][ci2] - x) * f)));
+            }
+          }
+          poly = next;
+          if (poly.length < 3) break;
+        }
+        if (poly.length < 3) continue;
+        if (c === -2) {
+          out[ci].clipped = true;
+          out[ci].props++;
+        }
+        const ids = poly.map((p) => push(b, p));
+        for (let k = 1; k + 1 < ids.length; k++) b.index.push(ids[0], ids[k], ids[k + 1]);
+      }
+    }
+    for (const b of builders.values()) {
+      if (!b.index.length) continue;
+      const geo = new THREE.BufferGeometry();
+      names.forEach((n, ai) => geo.setAttribute(n, new THREE.BufferAttribute(new Float32Array(b.data[ai]), sizes[ai])));
+      const verts = b.data[PI].length / 3;
+      geo.setIndex(new THREE.BufferAttribute(verts > 65535 ? new Uint32Array(b.index) : new Uint16Array(b.index), 1));
+      geo.computeBoundingSphere();
+      geo.computeBoundingBox();
+      out[b.c].meshes.push({ geometry: geo, material: materials[b.mi], name: o.name, castShadow: o.castShadow, receiveShadow: o.receiveShadow, renderOrder: o.renderOrder });
+    }
+  }
+  return out;
+}
+
+/** The 6 sides of a pointy-top cell: their outward normals (x, z); each is half a cell from the centre. */
+const HEX_SIDES = [0, 1, 2, 3, 4, 5].map((k) => [Math.cos((k * Math.PI) / 3), Math.sin((k * Math.PI) / 3)]);
+
+/** A second copy of a fitted piece model (shared geometry and materials, its own nodes) to fit mirrored. */
+function cloneModelForMirror(root) {
+  const copy = skeletonClone(root);
+  copy.userData = { ...root.userData };
+  return copy;
 }
 
 /** One bundle of models, prepared and finished, ready to clone (Map key -> root). */

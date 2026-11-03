@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { createGround, createLights } from './scene.js';
-import { hexToWorld, key } from './grid.js';
+import { hexToWorld, key, cellsCentre, cellSeed } from './grid.js';
 import { FogOfWar } from './fogOfWar.js';
 
 const BG = 0x000000;
@@ -58,12 +58,11 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     // Wasteland pieces: one whole-piece model over the cells (as on the board), each cell an empty holder.
     const covered = new Set();
     for (const piece of rival.pieces ?? []) {
-      const group = factory.createPiece(piece.shape, piece.rot);
+      const [sx, sz] = piece.cells[0];
+      const group = factory.createPiece(piece.shape, piece.rot, sx * 31 + sz); // the same model every visit
       if (!group) continue; // no model for this shape (yet): its cells get the single tiles below
-      const world = piece.cells.map(([x, z]) => hexToWorld(x, z));
-      const xs = world.map((w) => w.x);
-      const zs = world.map((w) => w.z);
-      group.position.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...zs) + Math.max(...zs)) / 2);
+      const mid = cellsCentre(piece.cells);
+      group.position.set(mid.x, 0, mid.z);
       root.add(group);
       for (const [x, z] of piece.cells) covered.add(key(x, z));
     }
@@ -73,7 +72,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     let maxZ = -Infinity;
     for (const cell of rival.grid.cells.values()) {
       const bare = covered.has(key(cell.x, cell.z));
-      const mesh = factory.create(cell.terrain, { bare });
+      const mesh = factory.create(cell.terrain, { bare, seed: cellSeed(cell.x, cell.z) });
       const w = hexToWorld(cell.x, cell.z);
       mesh.position.set(w.x, 0, w.z);
       root.add(mesh);

@@ -27,6 +27,25 @@ export function hexToWorld(x, z) {
   return { x: x + z / 2, z: z * ROW };
 }
 
+/** A number of its own for every cell (the same each time): which look a lone Wasteland cell gets. */
+export function cellSeed(x, z) {
+  let h = Math.imul(x, 0x9e3779b1) ^ Math.imul(z, 0x85ebca77);
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  return (h ^ (h >>> 12)) >>> 0;
+}
+
+/** World position (x, z) of the middle of a group of cells (a Wasteland piece's model is centred there). */
+export function cellsCentre(cells) {
+  let x = 0;
+  let z = 0;
+  for (const [cx, cz] of cells) {
+    const w = hexToWorld(cx, cz);
+    x += w.x / cells.length;
+    z += w.z / cells.length;
+  }
+  return { x, z };
+}
+
 /** The cell containing world point (wx, wz). */
 export function worldToHex(wx, wz) {
   const z = wz / ROW;

@@ -9,7 +9,7 @@
  */
 import * as THREE from 'three';
 import { clone as cloneModel } from 'three/addons/utils/SkeletonUtils.js';
-import { loadBlockouts, loadBundle, SHIPS, SHIP_SCALE } from '/src/models.js';
+import { loadBlockouts, loadWastePieces, SHIPS, SHIP_SCALE } from '/src/models.js';
 
 const WIDTH = 740; // 1.48 : 1, the picture slot; sharp on the largest cards at 2× pixel density
 const HEIGHT = 500;
@@ -25,7 +25,7 @@ const MIN_FRAME_BUILDING = 0.2; // buildings fill the picture, however small
  * Land tiles keep their ground (it is their picture: the oasis pool, the tar pit, the crater...). Every other card
  * shows the building alone, without its ground tile (see hideGround).
  */
-const KEEP_GROUND = new Set(['oasis', 'tarpit', 'cliffs', 'ruins', 'crater', 'waste-mono']);
+const KEEP_GROUND = new Set(['oasis', 'tarpit', 'cliffs', 'ruins', 'crater', 'waste-mono', 'bandit_raider']);
 const GROUND_PART = /(_Sand|Ground|_SandTrim|_Pad\d+|_AshScorch)$/; // the ground plate's materials (see seamlessGround.js)
 /**
  * Per-card camera overrides: elevation (degrees), closeUp (share of the building kept), focus (aim height, 0-1),
@@ -33,11 +33,13 @@ const GROUND_PART = /(_Sand|Ground|_SandTrim|_Pad\d+|_AshScorch)$/; // the groun
  * underground: false (cut away what lies below the ground line: in the game the tile's ground hides it).
  */
 const VIEWS = {
-  // Wasteland: the sand seen from straight above, close up (its original card picture).
-  wasteland: { elevation: 90, closeUp: 0.55, margin: 0 },
+  // Wasteland: its worm pit seen from straight above, with some sand around it.
+  wasteland: { elevation: 90, closeUp: 0.85, margin: 0 },
   // Tar Pit and Oasis: like the Wasteland, the whole tile seen from straight above.
   tarpit: { elevation: 90, tile: true, margin: 0 },
   oasis: { elevation: 90, tile: true, margin: 0 },
+  // The Raider Hideout: small tents around a dirt track, so the whole tile with its ground, from high up.
+  bandit_raider: { elevation: 55, tile: true, margin: 0 },
   // The crater's glowing pool sits below its rim: look down into it a little more.
   crater: { elevation: 28 },
   // A wide layout (dome, rail cart, launch tower): a little closer, so it fills the slot like the other buildings.
@@ -234,7 +236,8 @@ const grid = document.getElementById('grid');
 const button = document.getElementById('download');
 const results = {};
 
-const [buildings, pieces] = await Promise.all([loadBlockouts(), loadBundle('waste')]);
+const [buildings, byShape] = await Promise.all([loadBlockouts(), loadWastePieces()]);
+const pieces = new Map([...byShape].map(([shape, list]) => [`waste-${shape}`, list[0]]));
 status.textContent = 'Rendering…';
 for (const [key, modelKey] of Object.entries(SNAPSHOT_MODELS)) {
   const source = buildings.get(modelKey) ?? pieces.get(modelKey);

@@ -248,10 +248,13 @@ function patch(material, { mode, mask = 1, grid = [1, 1], hex = false }) {
 /**
  * Patch a model's sand and ground materials. Call before the cell fit, with the root as storeFootprint left it.
  * footprint: the root-space Box3 of the model's cells; grid: [w, h] cells it spans (pieces up to 4 × 4).
- * Returns the number of materials patched.
+ * hexCells: a hexagonal Wasteland piece of several cells ({ centres: root-space [x, z] of each cell, cell: the
+ * distance between neighbouring centres }): its sand's walls along the piece's outline go, and painted grounds keep
+ * their paint to the edge (no fade). Returns the number of materials patched.
  */
-export function makeSeamless(root, footprint, grid = [1, 1]) {
+export function makeSeamless(root, footprint, grid = [1, 1], hexCells = null) {
   root.updateMatrixWorld(true);
+  if (hexCells) return seamlessHexPiece(root, hexCells);
   const [w, h] = grid;
   // One-cell tiles are pointy-top hexagons (12 wide, 13.86 deep); the old square tiles are as deep as wide.
   const hex = w * h === 1 && footprint.max.z - footprint.min.z > (footprint.max.x - footprint.min.x) * 1.08;
@@ -292,6 +295,77 @@ export function makeSeamless(root, footprint, grid = [1, 1]) {
     done.add(o.material);
   }
   return done.size;
+}
+
+function seamlessHexPiece(root, hexCells) {
+  const done = new Set();
+  root.traverse((o) => {
+    if (!o.isMesh || Array.isArray(o.material) || !o.material.map || done.has(o.material)) return;
+    const name = o.material.name ?? '';
+    if (SAND_NAME.test(name)) useDesertSand(o.material);
+    else if (DECAL_NAME.test(name) || GROUND_NAME.test(name)) {
+      paintSand(o.material.map);
+      patch(o.material, { mode: 'decal' });
+    } else return;
+    dropOutlineWalls(o, hexCells);
+    done.add(o.material);
+  });
+  return done.size;
+}
+
+/** The 6 directions from a pointy-top cell's centre to its neighbours' (unit vectors, x and z). */
+const HEX_NORMALS = [0, 1, 2, 3, 4, 5].map((k) => [Math.cos((k * Math.PI) / 3), Math.sin((k * Math.PI) / 3)]);
+
+/**
+ * dropBorderWalls for a hexagonal piece: the slab's side walls standing on the piece's outline (every corner on an
+ * edge between one of its cells and a cell outside it, not all at one height).
+ */
+function dropOutlineWalls(o, { centres, cell }) {
+  const g = o.geometry;
+  const pos = g.attributes.position;
+  const e = o.matrixWorld.elements;
+  const near = (x, z) => centres.some(([cx, cz]) => Math.hypot(cx - x, cz - z) < cell * 0.5);
+  // Per vertex: on the outline? (within eps of an edge of its nearest cell with no cell of the piece beyond it)
+  const eps = 0.01;
+  const onEdge = new Uint8Array(pos.count);
+  const height = new Float32Array(pos.count);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const wx = e[0] * x + e[4] * y + e[8] * z + e[12];
+    const wz = e[2] * x + e[6] * y + e[10] * z + e[14];
+    height[i] = e[1] * x + e[5] * y + e[9] * z + e[13];
+    let best = centres[0];
+    let bestD = Infinity;
+    for (const c of centres) {
+      const d = Math.hypot(c[0] - wx, c[1] - wz);
+      if (d < bestD) (bestD = d), (best = c);
+    }
+    const dx = (wx - best[0]) / cell;
+    const dz = (wz - best[1]) / cell;
+    for (const [nx, nz] of HEX_NORMALS) {
+      if (Math.abs(0.5 - (dx * nx + dz * nz)) > eps) continue;
+      if (!near(best[0] + nx * cell, best[1] + nz * cell)) onEdge[i] = 1;
+    }
+  }
+  const src = g.index?.array;
+  const n = src ? src.length : pos.count;
+  const kept = pos.count > 65535 ? new Uint32Array(n) : new Uint16Array(n);
+  let k = 0;
+  for (let i = 0; i + 2 < n; i += 3) {
+    const a = src ? src[i] : i;
+    const b = src ? src[i + 1] : i + 1;
+    const c = src ? src[i + 2] : i + 2;
+    const wall = onEdge[a] && onEdge[b] && onEdge[c] && Math.max(height[a], height[b], height[c]) - Math.min(height[a], height[b], height[c]) > 1e-3;
+    if (wall) continue;
+    kept[k++] = a;
+    kept[k++] = b;
+    kept[k++] = c;
+  }
+  if (k === n) return;
+  g.setIndex(new THREE.BufferAttribute(kept.slice(0, k), 1));
+  g.clearGroups();
 }
 
 /** Each vertex's position in cells of the footprint's grid (x, z pairs), straight from the world matrix. */

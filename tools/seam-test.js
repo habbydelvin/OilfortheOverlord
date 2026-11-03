@@ -6,7 +6,7 @@
  */
 import * as THREE from 'three';
 import { clone as cloneModel } from 'three/addons/utils/SkeletonUtils.js';
-import { loadBlockouts, loadBundle } from '/src/models.js';
+import { loadBlockouts, loadWastePieces } from '/src/models.js';
 import { useDesertSand } from '/src/seamlessGround.js';
 import { GROUND_Y, GROUND_DEPTH } from '/src/scene.js';
 
@@ -50,7 +50,7 @@ const status = document.getElementById('status');
 const dump = document.getElementById('dump');
 
 const all = await loadBlockouts();
-for (const [k, v] of await loadBundle('waste')) all.set(k, v);
+for (const [shape, list] of await loadWastePieces()) all.set(`waste-${shape}`, list[0]);
 
 const DEFAULT_KEYS = [
   'capital', 'settlement', 'farm', 'pump', 'station', 'refinery',
