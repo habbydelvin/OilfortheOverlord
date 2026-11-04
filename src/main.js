@@ -12,7 +12,7 @@ import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistanc
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
 import { preloadCardArt } from './tiles.js';
 import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, BLACK_MARKET, BLACK_MARKET_RESOURCE, MILITARY, shopReady, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
-import { hasBlockout, loadProgress, breathe, decodeImage } from './models.js';
+import { hasBlockout, loadProgress, breathe, decodeImage, PAD_MISSILE } from './models.js';
 import { Frontier } from './frontier.js';
 import { Placement, GHOST_LAYER, PREVIEW_PARAMS, PREVIEW_DEFAULTS, loadPreviewConfig, savePreviewConfig, clearPreviewConfig } from './placement.js';
 import { Hand, pieceCost } from './hand.js';
@@ -31,7 +31,7 @@ import { computeEconomy, computeEconomyIf, foodCapOf, FIRST_QUOTA, nextQuota, SE
 import { FACTORY_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, blastExtra, isMilitaryLab, labOilCost } from './arsenal.js';
 import { pieceOf, pieceOffsets } from './pieces.js';
 import { findCiws } from './interceptMesh.js';
-import { queueDrawn, addMissile, missileCount, missileKinds, trimMissiles, resetMissiles, openCityStrike, drawStrikeHand, returnStrikeHand, bindCityStrikeUi, queueStrike, unqueueStrike, queuedStrikes, takeQueue, clearQueue } from './cityStrike.js';
+import { queueDrawn, addMissile, missileCount, ammoCount, missileKinds, trimMissiles, resetMissiles, openCityStrike, drawStrikeHand, returnStrikeHand, bindCityStrikeUi, queueStrike, unqueueStrike, queuedStrikes, takeQueue, clearQueue } from './cityStrike.js';
 import { CAPITAL_HP, resolve as resolveWar, applyToRival, footprint, spreadFrom } from './war.js';
 import { chooseStrikes, noteAttacks, idleOf } from './rivalAI.js';
 import { INTERCEPT, INTERCEPT_DEFAULTS, INTERCEPT_PARAMS, saveIntercept, clearIntercept, DECOY, BOOST, isBoosted } from './arsenal.js';
@@ -78,6 +78,12 @@ onMusicVolume((volume) => {
 });
 const perf = new Perf(renderer); // '-' toggles the overlay
 const rig = new CameraRig(camera, renderer.domElement);
+/** The camera before any shake: on-screen labels over the board project with it, so they hold still while the world shakes. */
+const steadyCam = camera.clone();
+function syncSteadyCam() {
+  steadyCam.copy(camera);
+  steadyCam.updateMatrixWorld(true);
+}
 const grid = new Grid();
 const factory = new TileFactory();
 /** 'board' | 'globe' | 'rival'. Off the board, placement and the hand stay shut. */
@@ -121,13 +127,13 @@ placement.mysteries = mysteries; // "?" cells can't be built on, only next to (f
 const dialogue = new Dialogue(document.getElementById('dialogue'));
 const scaleCfg = loadScaleConfig(); // Game Debug → Scaling (events and camps)
 const iconCfg = loadIconConfig(); // Game Debug → Map icons
-const zoomIcons = new ZoomIcons(document.getElementById('mapIcons'), camera, rig, iconCfg);
+const zoomIcons = new ZoomIcons(document.getElementById('mapIcons'), steadyCam, rig, iconCfg);
 const traffic = new Traffic(scene); // ships flying between the tiles
 const neonTiles = new NeonTiles(scene); // boosted buildings' tiles glow
 const boostHints = new BoostHints(scene); // outlines where the hovered / placed card would be boosted
 setupLegend(document.getElementById('btnLegend'), document.getElementById('legend')); // icon legend window
 const payoutCfg = loadPayoutConfig();
-const payout = new Payout(camera, document.getElementById('floaters'), payoutCfg);
+const payout = new Payout(steadyCam, document.getElementById('floaters'), payoutCfg);
 // On the War Map the tile labels (+oil, +food, ...) all rise above Hive City instead of their board tiles.
 payout.anchor = () => (view === 'globe' ? globe?.screenOf('player') : null);
 const audioCfg = { music: getMusicVolume(), sfx: getSfxVolume() };
@@ -323,7 +329,7 @@ function freshTargetState() {
 const tutorial = new Tutorial({
   root: document.getElementById('coach'),
   scene,
-  camera,
+  camera: steadyCam,
   hand,
   factory,
   api: {
@@ -612,6 +618,7 @@ function addTile(x, z, terrain, delay = 0, instant = false, { bare = false, rot 
     mesh,
     onRuins,
     missileProgress: terrain === 'milfactory' ? 0 : undefined,
+    missileReady: terrain === 'milfactory' ? false : undefined,
     buildProgress: isMilitaryLab(terrain) ? 0 : undefined,
     built: isMilitaryLab(terrain) ? false : undefined,
     buildHalted: isMilitaryLab(terrain) ? false : undefined,
@@ -629,6 +636,7 @@ function adoptBlockouts() {
     const anim = anims.find((a) => a.mesh === previous);
     if (anim) anim.mesh = next;
     cell.mesh = next;
+    if (cell.terrain === 'milfactory') setPadMissile(cell, cell.missileReady);
   }
   shadeIdle(); // a stand-in swapped for its model takes over the grey
   if (hand.piece) placement.setPiece(hand.piece);
@@ -1409,7 +1417,7 @@ function updateRuinButtons() {
       ruinBtns.set(k, btn);
     }
     const w = hexToWorld(c.x, c.z);
-    ruinV.set(w.x, 0.55, w.z).project(camera);
+    ruinV.set(w.x, 0.55, w.z).project(steadyCam);
     const px = (ruinV.x * 0.5 + 0.5) * window.innerWidth;
     const py = (-ruinV.y * 0.5 + 0.5) * window.innerHeight;
     const tf = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px) translate(-50%, -100%)`;
@@ -1500,6 +1508,8 @@ async function chargeOneFactory(cell) {
     if (run !== runId) return { count: 0 };
     return finishFactoryMissile(cell, idle);
   }
+  // A new missile starts: the finished one on the pad sinks back into the ground.
+  if (cell.missileReady) setPadMissile(cell, false, { animate: view === 'board' });
   // Its oil is paid out of the gauge: a red "-N oil" over the factory, and barrels fly from the gauge into it.
   // The pip fills as they land.
   spawnFactoryFloater(cell, `<div class="row neg" style="--c:#ff5a44"><b>-${FACTORY_OIL}</b>${ICONS.oil}</div>`);
@@ -1587,7 +1597,7 @@ async function finishFactoryMissile(cell, idle) {
 
 /**
  * A staffed Decoy Builder does a season of work (its oil comes out of the season's yield, economy.js); every
- * DECOY.seasons it banks a Decoy if there's room in the silo (else it waits, full). animate: rise from the tile.
+ * DECOY.seasons it banks a Decoy. Decoys do not take a missile slot. animate: rise from the tile.
  */
 async function chargeDecoyWorks(cell, animate = true) {
   const run = runId;
@@ -1595,7 +1605,6 @@ async function chargeDecoyWorks(cell, animate = true) {
   if (idle.has(`${cell.x},${cell.z}`)) return { decoy: true, count: 0, idle: true };
   cell.decoyProgress = Math.min(DECOY.seasons, (cell.decoyProgress ?? 0) + 1);
   if (cell.decoyProgress < DECOY.seasons) return { decoy: true, count: 0 };
-  if (missileCount() >= currentMissileCap(idle)) return { decoy: true, count: 0, stuck: true };
   if (animate) {
     await hopFactory(cell);
     if (run !== runId) return { decoy: true, count: 0 };
@@ -1622,21 +1631,143 @@ function dockMissile(kind) {
 }
 
 /**
- * A finished missile goes into the silo: the factory hops, "+n" with the missile icon rises over it, and the Missiles
- * row pops for each one. No flight: a missile in the air means an attack, and this one goes nowhere.
+ * A finished missile goes into the silo. On a Military Factory the missile first rises out of the ground onto its
+ * launch pad (it stays there until the factory starts its next one); then, for each missile, its icon flies from
+ * the factory up into the Missiles row, which pops as it lands. A Decoy Builder has no pad: only the icons fly.
+ * No launch: a missile in the air means an attack, and this one goes nowhere.
  */
 async function playMissileMade(cell, n, kind) {
   const run = runId;
-  if (view === 'board') {
-    const icon = document.querySelector('#panel .res.missile .ico')?.outerHTML ?? '';
-    spawnFactoryFloater(cell, `<div class="row" style="--c:#ff8a2a"><b>+${n}</b>${icon}</div>`);
-    hopFactory(cell);
+  const pad = cell.terrain === 'milfactory';
+  if (view !== 'board') {
+    if (pad) setPadMissile(cell, true);
+    for (let i = 0; i < n; i++) {
+      if (run !== runId) return;
+      dockMissile(kind);
+      await wait(0.15);
+    }
+    return;
   }
+  const icon = document.querySelector('#panel .res.missile .ico')?.outerHTML ?? '';
+  spawnFactoryFloater(cell, `<div class="row" style="--c:#ff8a2a"><b>+${n}</b>${icon}</div>`);
+  if (pad) await setPadMissile(cell, true, { animate: true });
+  else hopFactory(cell);
+  if (run !== runId) return;
+  const flights = [];
   for (let i = 0; i < n; i++) {
-    if (run !== runId) return;
-    dockMissile(kind);
-    await wait(0.15);
+    flights.push(
+      flyMissileToHud(cell, i * 0.18).then(() => {
+        if (run === runId) dockMissile(kind);
+      }),
+    );
   }
+  await Promise.all(flights);
+}
+
+const PAD_RISE = 0.6; // s, out of the ground (with a little overshoot)
+const PAD_SINK = 0.35; // s, back down
+const padAnims = []; // { node, from, to, t, dur, rise, done }
+
+/**
+ * Show or hide a Military Factory's launch-pad missile (models.js PAD_MISSILE). animate: it rises out of the
+ * ground (dust, a little shake) or sinks back. Resolves when done.
+ */
+function setPadMissile(cell, on, { animate = false } = {}) {
+  cell.missileReady = on;
+  const node = cell.mesh?.getObjectByName(PAD_MISSILE);
+  if (!node) return Promise.resolve();
+  node.userData.restY ??= node.position.y;
+  node.userData.depth ??= padMissileDepth(node);
+  const rest = node.userData.restY;
+  const down = rest - node.userData.depth;
+  for (let i = padAnims.length - 1; i >= 0; i--) {
+    if (padAnims[i].node !== node) continue;
+    padAnims[i].done();
+    padAnims.splice(i, 1);
+  }
+  if (!animate) {
+    node.visible = on;
+    node.position.y = rest;
+    return Promise.resolve();
+  }
+  if (!on && !node.visible) return Promise.resolve();
+  node.visible = true;
+  const from = on ? down : node.position.y;
+  node.position.y = from;
+  if (on) {
+    dust.burst(cell.x, cell.z, 0.9);
+    camShake.add(0.12);
+    thud();
+  }
+  return new Promise((done) => padAnims.push({ node, from, to: on ? rest : down, t: 0, dur: on ? PAD_RISE : PAD_SINK, rise: on, done }));
+}
+
+/** How far (in the node's parent units) the pad missile must sink to be fully under the pad. */
+function padMissileDepth(node) {
+  const box = new THREE.Box3();
+  node.updateMatrixWorld(true);
+  for (const c of node.children) if (c.geometry) {
+    c.geometry.computeBoundingBox();
+    box.union(c.geometry.boundingBox.clone().applyMatrix4(c.matrix));
+  }
+  return box.isEmpty() ? 5 : (box.max.y - box.min.y) * 1.05;
+}
+
+function updatePadMissiles(dt) {
+  for (let i = padAnims.length - 1; i >= 0; i--) {
+    const a = padAnims[i];
+    a.t += dt;
+    const k = Math.min(1, a.t / a.dur);
+    const e = a.rise ? padEaseOutBack(k) : k * k;
+    a.node.position.y = a.from + (a.to - a.from) * e;
+    if (k < 1) continue;
+    a.node.position.y = a.to;
+    if (!a.rise) a.node.visible = false;
+    padAnims.splice(i, 1);
+    a.done();
+  }
+}
+
+function padEaseOutBack(t) {
+  const c1 = 1.4;
+  const c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+
+/** The missile icon flies from a factory (its pad missile's tip, if any) up into the Missiles row. */
+function flyMissileToHud(cell, delay = 0) {
+  const target = document.querySelector('#panel .res.missile .ico');
+  if (!target || !camera) return wait(delay + 0.15);
+  const node = cell.mesh?.getObjectByName(PAD_MISSILE);
+  const p = new THREE.Vector3();
+  if (node?.visible) new THREE.Box3().setFromObject(node).getCenter(p);
+  else {
+    const w = hexToWorld(cell.x, cell.z);
+    p.set(w.x, 1, w.z);
+  }
+  const v = p.project(steadyCam);
+  const sx = (v.x * 0.5 + 0.5) * window.innerWidth - 13;
+  const sy = (-v.y * 0.5 + 0.5) * window.innerHeight - 13;
+  const r = target.getBoundingClientRect();
+  const tx = r.left + r.width / 2 - 13;
+  const ty = r.top + r.height / 2 - 13;
+  const mx = (sx + tx) / 2;
+  const my = Math.min(sy, ty) - 70;
+  const el = document.createElement('div');
+  el.className = 'oil-flight missile-flight';
+  el.innerHTML = target.outerHTML;
+  document.body.appendChild(el);
+  const dur = 850;
+  const anim = el.animate(
+    [
+      { transform: `translate(${sx}px,${sy}px) scale(0.6)`, opacity: 0 },
+      { transform: `translate(${sx}px,${sy - 30}px) scale(1.3)`, opacity: 1, offset: 0.15 },
+      { transform: `translate(${mx}px,${my}px) scale(1.15)`, opacity: 1, offset: 0.55 },
+      { transform: `translate(${tx}px,${ty}px) scale(0.8)`, opacity: 1 },
+    ],
+    { duration: dur, delay: delay * 1000, easing: 'ease-in-out', fill: 'both' },
+  );
+  return anim.finished.catch(() => {}).then(() => el.remove());
 }
 
 function spawnFactoryFloater(cell, html) {
@@ -1655,7 +1786,7 @@ function flyOilToFactory(cell, oil) {
   if (view !== 'board') return wait(dur / 1000);
   const src = $('quotaBarrels').getBoundingClientRect();
   const w = hexToWorld(cell.x, cell.z);
-  const v = new THREE.Vector3(w.x, 0.5, w.z).project(camera);
+  const v = new THREE.Vector3(w.x, 0.5, w.z).project(steadyCam);
   const tx = (v.x * 0.5 + 0.5) * window.innerWidth - 13;
   const ty = (-v.y * 0.5 + 0.5) * window.innerHeight - 13;
   const n = Math.max(1, Math.min(4, oil));
@@ -1702,7 +1833,7 @@ function updateFactoryFloaters(dt) {
     const scale = f.t < pt ? (0.2 + 0.8 * easeOutBack(Math.min(f.t / pt, 1))) * c.labelPop : 1;
     const rise = c.labelStartY + c.labelRise * easeOut(p);
     const pos = hexToWorld(f.x, f.z);
-    v.set(pos.x, rise, pos.z).project(camera);
+    v.set(pos.x, rise, pos.z).project(steadyCam);
     const px = (v.x * 0.5 + 0.5) * w;
     const py = (-v.y * 0.5 + 0.5) * h;
     f.el.style.transform = `translate(${px}px, ${py}px) translate(-50%, -100%) scale(${scale})`;
@@ -1814,10 +1945,10 @@ function updateFactoryBars() {
       rec.top = topPoints(c.mesh);
     }
     const w = hexToWorld(c.x, c.z);
-    factoryBarV.set(w.x, 0, w.z).project(camera);
+    factoryBarV.set(w.x, 0, w.z).project(steadyCam);
     const px = (factoryBarV.x * 0.5 + 0.5) * window.innerWidth;
     let top = factoryBarV.y;
-    for (const p of rec.top) top = Math.max(top, factoryBarV.copy(p).applyMatrix4(c.mesh.matrixWorld).project(camera).y);
+    for (const p of rec.top) top = Math.max(top, factoryBarV.copy(p).applyMatrix4(c.mesh.matrixWorld).project(steadyCam).y);
     const py = (-top * 0.5 + 0.5) * window.innerHeight;
     const tf = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px) translate(-50%, calc(-100% - 4px))`;
     if (rec.el._tf !== tf) rec.el.style.transform = rec.el._tf = tf;
@@ -2123,7 +2254,7 @@ function shadeIdle(e = economyNow()) {
 }
 
 function missileHandCount() {
-  const inHand = strikeOpen ? hand.cards.filter((p) => isPlayerMissile(p.terrain)).length : 0;
+  const inHand = strikeOpen ? hand.cards.filter((p) => p.terrain === 'missile' || p.terrain === 'missile2').length : 0;
   return missileCount() + inHand;
 }
 
@@ -2154,6 +2285,7 @@ function deliverFactory(cell, idle) {
   }
   if (delivered === 0) return { ...y, count: 0, stuck: true };
   cell.missileProgress = 0;
+  setPadMissile(cell, true);
   const rec = factoryBars.get(`${cell.x},${cell.z}`);
   if (rec) rec.preview = null;
   return { ...y, count: delivered };
@@ -2175,6 +2307,7 @@ function runFactories() {
       continue;
     }
     turn.stockpile -= FACTORY_OIL;
+    if (cell.missileReady) setPadMissile(cell, false);
     cell.missileProgress = (cell.missileProgress ?? 0) + 1;
     const rec = factoryBars.get(`${cell.x},${cell.z}`);
     if (rec) rec.preview = null;
@@ -2668,12 +2801,12 @@ function updateBuildHover(cell) {
   if (el.textContent !== text) el.textContent = text;
   el.classList.remove('hidden');
   const w = hexToWorld(c.x, c.z);
-  buildHoverV.set(w.x, 0, w.z).project(camera);
+  buildHoverV.set(w.x, 0, w.z).project(steadyCam);
   const px = (buildHoverV.x * 0.5 + 0.5) * window.innerWidth;
   let top = buildHoverV.y;
   const rec = factoryBars.get(`${c.x},${c.z}`);
   const pts = rec?.top ?? (c.mesh ? topPoints(c.mesh) : []);
-  for (const p of pts) top = Math.max(top, buildHoverV.copy(p).applyMatrix4(c.mesh.matrixWorld).project(camera).y);
+  for (const p of pts) top = Math.max(top, buildHoverV.copy(p).applyMatrix4(c.mesh.matrixWorld).project(steadyCam).y);
   const py = (-top * 0.5 + 0.5) * window.innerHeight;
   el.style.transform = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px) translate(-50%, calc(-100% - 28px))`;
 }
@@ -2890,7 +3023,7 @@ function runPayout(e, onDone) {
       } else if (tile.oil > 0) {
         // The oil flies up into the gauge; each barrel fills it as it lands.
         const w = hexToWorld(tile.x, tile.z);
-        tileV.set(w.x, 0.6, w.z).project(camera);
+        tileV.set(w.x, 0.6, w.z).project(steadyCam);
         oilFlights.launch([(tileV.x * 0.5 + 0.5) * window.innerWidth, (-tileV.y * 0.5 + 0.5) * window.innerHeight], tile.oil, shown);
         shown += tile.oil;
       } else if (tile.oil) {
@@ -3979,7 +4112,7 @@ function openStrikeScreen(opts = {}) {
     return Promise.resolve(null);
   }
   savedSeasonHand = hand.snapshot();
-  const drawn = drawStrikeHand(opts.draw ?? missileCount());
+  const drawn = drawStrikeHand(opts.draw ?? ammoCount());
   strikeOpen = true;
   hand.replaceHand(drawn);
   updateHUD();
@@ -4704,7 +4837,7 @@ function siloFrom(missile) {
 function launchFromSilo(cell) {
   // Keep the launch on screen: if the magazine is out of view, look between it and the board's middle.
   const w = hexToWorld(cell.x, cell.z);
-  siloV.set(w.x, 0, w.z).project(camera);
+  siloV.set(w.x, 0, w.z).project(steadyCam);
   if (Math.abs(siloV.x) > 0.85 || Math.abs(siloV.y) > 0.8) rig.focus(w.x / 2 + rig.target.x / 2, w.z / 2 + rig.target.z / 2);
   return siloLaunch(cell, 1, (from) => from);
 }
@@ -4835,7 +4968,7 @@ function showPlacementCost(piece, cells) {
   const world = cells.map(([x, z]) => hexToWorld(x, z));
   const cx = world.reduce((s, w) => s + w.x, 0) / cells.length;
   const cz = world.reduce((s, w) => s + w.z, 0) / cells.length;
-  costV.set(cx, 0.9, cz).project(camera);
+  costV.set(cx, 0.9, cz).project(steadyCam);
   const el = document.createElement('div');
   el.className = 'cost-pop';
   el.style.left = `${(costV.x * 0.5 + 0.5) * window.innerWidth}px`;
@@ -4935,9 +5068,9 @@ let aimAt = null; // a salvo's cell under the cursor: its reticle centres there
 const aimPiece = () => (view === 'rival' && rivalHand && isPlayerMissile(hand.piece?.terrain) ? hand.piece : null);
 
 function openRivalHand(rival) {
-  if (rivalHand || rival.alive === false || turn.over || attackLive || !missileCount()) return;
+  if (rivalHand || rival.alive === false || turn.over || attackLive || !ammoCount()) return;
   rivalHand = hand.snapshot();
-  hand.replaceHand(drawStrikeHand(missileCount()));
+  hand.replaceHand(drawStrikeHand(ammoCount()));
   document.body.classList.add('rival-hand');
 }
 
@@ -5059,7 +5192,7 @@ function rivalTarget() {
   for (const c of r.grid.cells.values()) {
     if (taken.has(plotKey(c.x, c.z))) continue;
     const w = hexToWorld(c.x, c.z);
-    targetV.set(w.x, 0.05, w.z).project(camera);
+    targetV.set(w.x, 0.05, w.z).project(steadyCam);
     const x = (targetV.x * 0.5 + 0.5) * W;
     const y = (-targetV.y * 0.5 + 0.5) * H;
     const reachable = targetV.z < 1 && x > 0 && y > 0 && x < W && y < H && overBoard(x, y);
@@ -6406,6 +6539,7 @@ function frame(now) {
     // The payout keeps paying out wherever you're looking (on the board it runs after the render, below).
     payout.update(dt);
     updateFactoryHops(dt);
+    updatePadMissiles(dt);
     updateFactoryFloaters(dt);
     oilFlights.update(dt);
   }
@@ -6431,6 +6565,7 @@ function frame(now) {
     perf.begin('render (cpu)');
     perf.gpuBegin();
     updateCurve(camera, rig.target); // rival cities follow the Graphics map shape (Flat / Planet), like the board
+    syncSteadyCam();
     camShake.update(dt, rig.distance);
     rivalView.update(dt, camera); // its fog of war (offscreen pass before the scene)
     updateAimHover();
@@ -6446,6 +6581,7 @@ function frame(now) {
   perf.end('camera');
   perf.begin('drops+shake');
   updateDropAnims(dt);
+  syncSteadyCam();
   applyShake(dt);
   camShake.update(dt, rig.distance); // missile strikes only
   perf.end('drops+shake');
@@ -6514,6 +6650,7 @@ function frame(now) {
   perf.begin('payout');
   payout.update(dt); // after render so labels use this frame's camera
   updateFactoryHops(dt);
+  updatePadMissiles(dt);
   updateFactoryFloaters(dt);
   oilFlights.update(dt);
   perf.end('payout');

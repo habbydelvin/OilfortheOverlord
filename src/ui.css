@@ -172,6 +172,10 @@ body {
   height: 100%;
   color: inherit; /* not the cards' orange oil icon */
 }
+/* A finished missile's icon flying from its factory up into the Missiles row. */
+.oil-flight.missile-flight {
+  color: #c45a3a;
+}
 
 #top .count {
   font-size: 19px;

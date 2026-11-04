@@ -9,19 +9,27 @@ let stock = [];
 
 /** Stock kinds: 'missile', 'missile2' (warhead) and 'decoy'; anything else is a plain missile. */
 const normKind = (kind) => (kind === 'missile2' || kind === 'decoy' ? kind : 'missile');
+/** Decoys ride along. Only attacking missiles take a silo slot. */
+const attacking = (kind) => kind !== 'decoy';
 
 /**
- * Put a finished missile in the silo. When `cap` is already full the last slot
- * stays occupied and the count does not go up.
+ * Put a finished missile in the silo. An attacking missile past `cap` is refused.
+ * A decoy never takes a slot, so it is stored even when the magazines are full.
  */
 export function addMissile(kind = 'missile', cap = Infinity) {
   const k = normKind(kind);
-  if (stock.length >= cap) return false;
+  if (attacking(k) && stock.filter(attacking).length >= cap) return false;
   stock.push(k);
   return true;
 }
 
+/** Attacking missiles in the silo. Decoys are not included. */
 export function missileCount() {
+  return stock.filter(attacking).length;
+}
+
+/** Everything in the silo, decoys included. */
+export function ammoCount() {
   return stock.length;
 }
 
@@ -34,10 +42,15 @@ export function resetMissiles() {
   queue = [];
 }
 
-/** Drop the newest missiles when magazine capacity falls (a Magazine idle or gone). */
+/** Drop the newest attacking missiles when magazine capacity falls. Decoys stay. */
 export function trimMissiles(cap) {
-  if (stock.length > cap) stock.length = Math.max(0, cap);
-  return stock.length;
+  let n = stock.filter(attacking).length;
+  for (let i = stock.length - 1; i >= 0 && n > cap; i--) {
+    if (!attacking(stock[i])) continue;
+    stock.splice(i, 1);
+    n--;
+  }
+  return n;
 }
 
 /** Pull up to `n` missiles out of stock as playable strike cards (same piece shape as the season hand). */
