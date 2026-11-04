@@ -151,7 +151,7 @@ export const TERRAINS = {
     stats: { manpower: -2, missileCap: 1 },
   },
   decoyworks: {
-    name: 'Decoy Works',
+    name: 'Decoy Builder',
     trigger: 'On trigger',
     top: 0x8a8a6a,
     edge: 0x5c5c44,
@@ -455,7 +455,7 @@ export const ACTIONS = {
     category: 'action',
     symbol: '◇',
     range: 0,
-    weight: 0, // produced by a Decoy Works
+    weight: 0, // produced by a Decoy Builder
     get rule() {
       return `Splits into ${DECOY.fakes} fakes near the target · Draws interceptor fire · Deals no damage`;
     },
@@ -516,7 +516,7 @@ const ZH = {
   warhead: { name: '弹头研究所', rule: '每座开工的研究所使导弹爆炸再多打相邻 1 格' },
   intercept: { name: '拦截网络', rule: () => `每季 -${INTERCEPT.upkeep} 石油 · 炮塔击落瞄准 ${INTERCEPT.range} 格内的导弹` },
   magazine: { name: '储弹仓', rule: '导弹容量 +1' },
-  decoyworks: { name: '诱饵弹工坊', rule: () => `每季 -${DECOY.oil} 石油 · ${DECOY.seasons > 1 ? `每 ${DECOY.seasons} 季` : '每季'}生产 1 枚诱饵弹 · 诱饵弹从此处发射` },
+  decoyworks: { name: '诱饵弹建造厂', rule: () => `每季 -${DECOY.oil} 石油 · ${DECOY.seasons > 1 ? `每 ${DECOY.seasons} 季` : '每季'}生产 1 枚诱饵弹 · 诱饵弹从此处发射` },
   booster: { name: '发射加速器', rule: () => `${BOOST.radius} 格内发射的导弹飞行速度提升 ${Math.round((1 / BOOST.travel - 1) * 100)}%${BOOST.weave > 0 ? ' · 蛇形机动躲避拦截' : ''}` },
   decoy: { name: '诱饵弹', rule: () => `接近目标时分裂为 ${DECOY.fakes} 枚假弹 · 吸引拦截火力 · 不造成伤害` },
   missile: { name: '导弹', rule: () => `摧毁 1 格 · 弹头研究所每座 +1 格 · 首都 −${MISSILE.damage ?? 1}` },
@@ -720,11 +720,12 @@ export const shopReady = (key, unlocked) => {
  * Card pictures: front renders of each tile model (public/cards/snapshots, made by tools/card-snapshots.html).
  * Card key -> image; the four Wasteland colours share one. Bump SNAPSHOT_VERSION after re-rendering.
  */
-const SNAPSHOT_VERSION = '20261103-recipelab';
+const SNAPSHOT_VERSION = '20261104-launchers';
 const SNAPSHOTS = {
   capital: 'capital', settlement: 'settlement', farm: 'farm', pump: 'pump', station: 'station', refinery: 'refinery',
   oasis: 'oasis', tarpit: 'tarpit', labourcamp: 'labourcamp', cliffs: 'cliffs', ruins: 'ruins', crater: 'crater',
   milfactory: 'milfactory', magazine: 'magazine', warhead: 'warhead', intercept: 'intercept', missilelab: 'missilelab',
+  decoyworks: 'decoyworks', booster: 'booster',
   raider: 'raider', bandit_raider: 'bandit_raider', bandit_siphon: 'bandit_siphon', bandit_scav: 'bandit_scav',
   wasteland1: 'wasteland', wasteland2: 'wasteland', wasteland3: 'wasteland', wasteland4: 'wasteland',
 };
@@ -862,7 +863,7 @@ export class TileFactory {
     if (terrain === 'labourcamp' && !this.models?.has('labourcamp')) return tagSoil(buildLabourCamp(this.soilGeo, this.soilMat));
     // Intercept Network: the code-built CIWS bunker until a model file exists.
     if (terrain === 'intercept' && !this.models?.has('intercept')) return tagSoil(buildInterceptBunker(this.soilGeo, this.soilMat));
-    // Decoy Works / Launch Accelerator: code-built stand-ins until model files exist.
+    // Decoy Builder / Launch Accelerator: code-built stand-ins until model files exist.
     if (terrain === 'decoyworks' && !this.models?.has(terrain)) return tagSoil(buildDecoyWorks(this.soilGeo, this.soilMat, rot));
     if (terrain === 'booster' && !this.models?.has(terrain)) return tagSoil(buildAccelerator(this.soilGeo, this.soilMat, rot));
     const source = this.models?.get(terrain);

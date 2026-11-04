@@ -1418,7 +1418,7 @@ async function finishFactoryMissile(cell, idle) {
 }
 
 /**
- * A staffed Decoy Works does a season of work (its oil comes out of the season's yield, economy.js); every
+ * A staffed Decoy Builder does a season of work (its oil comes out of the season's yield, economy.js); every
  * DECOY.seasons it banks a Decoy if there's room in the silo (else it waits, full). animate: rise from the tile.
  */
 async function chargeDecoyWorks(cell, animate = true) {
@@ -2812,8 +2812,8 @@ function settleTurn(e) {
       `<span class="good">${L(`Military Factory produced ${missilesMade} missile${missilesMade === 1 ? '' : 's'}.`, `军事工厂生产了 ${missilesMade} 枚导弹。`)}</span>`,
     );
   const decoysMade = factoryWork.filter((w) => w.count && w.decoy).reduce((s, w) => s + w.count, 0);
-  if (decoysMade) lines.push(`<span class="good">${L(`Decoy Works produced ${decoysMade} decoy${decoysMade === 1 ? '' : 's'}.`, `诱饵弹工坊生产了 ${decoysMade} 枚诱饵弹。`)}</span>`);
-  if (factoryWork.some((w) => w.decoy && w.stuck)) lines.push(`<span class="bad">${L('A Decoy Works is waiting: the silo is full.', '诱饵弹工坊在等待：导弹仓已满。')}</span>`);
+  if (decoysMade) lines.push(`<span class="good">${L(`Decoy Builder produced ${decoysMade} decoy${decoysMade === 1 ? '' : 's'}.`, `诱饵弹建造厂生产了 ${decoysMade} 枚诱饵弹。`)}</span>`);
+  if (factoryWork.some((w) => w.decoy && w.stuck)) lines.push(`<span class="bad">${L('A Decoy Builder is waiting: the silo is full.', '诱饵弹建造厂在等待：导弹仓已满。')}</span>`);
   if (factoryWork.some((w) => w.unpaid))
     lines.push(`<span class="bad">${L('A Military Factory had no oil and sat idle.', '一座军事工厂没有石油，未能开工。')}</span>`);
 
@@ -4265,7 +4265,7 @@ function launchFromSilo(cell) {
 const SALVO_CLOSE = 8; // camera distance on one magazine
 /**
  * strikes: the player's resolved strikes (war.js: each has its launcher cell, boosted flag and kind). Each launcher
- * fires its own: a Magazine through its Launch clip, a Decoy Works straight off its roof.
+ * fires its own: a Magazine through its Launch clip, a Decoy Builder straight off its roof.
  */
 async function launchSalvo(strikes) {
   if (!strikes.length) return;

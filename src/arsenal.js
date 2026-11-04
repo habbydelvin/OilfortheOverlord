@@ -43,12 +43,12 @@ export const clearIntercept = () => {
   Object.assign(INTERCEPT, INTERCEPT_DEFAULTS);
 };
 /**
- * Decoy tuning (Decoy Works and the Decoy card). A decoy flies like a missile, then near the target splits into
+ * Decoy tuning (Decoy Builder and the Decoy card). A decoy flies like a missile, then near the target splits into
  * `fakes` fake missiles that draw interceptor fire. Neither the decoy nor its fakes do any damage.
  */
 export const DECOY_DEFAULTS = {
   seasons: 1, // seasons of paid work per decoy
-  oil: 1, // oil a staffed Decoy Works spends each season
+  oil: 1, // oil a staffed Decoy Builder spends each season
   fakes: 3, // fake missiles one decoy splits into
   splitAt: 0.2, // share of the dive (path u) at which it splits: lower = higher in the sky
   hp: 3, // the decoy before the split (it looks like a missile on radar)
@@ -58,7 +58,7 @@ export const DECOY_DEFAULTS = {
 const DECOY_KEY = 'oto.decoy';
 export const DECOY = { ...DECOY_DEFAULTS };
 /**
- * Launch Accelerator tuning: a missile launched from a Magazine or Decoy Works within `radius` cells of a staffed
+ * Launch Accelerator tuning: a missile launched from a Magazine or Decoy Builder within `radius` cells of a staffed
  * Accelerator flies faster: War Map travel × travel, the final dive × flight (less time in interceptor reach).
  */
 export const BOOST_DEFAULTS = {
@@ -156,7 +156,7 @@ export function boostersNear(grid, x, z, idleKeys) {
 export const isBoosted = (grid, x, z, idleKeys) => boostersNear(grid, x, z, idleKeys).length > 0;
 
 /**
- * Where each of a city's strikes launches from, in order: decoys from Decoy Works (Magazines if it has none), real
+ * Where each of a city's strikes launches from, in order: decoys from Decoy Builder (Magazines if it has none), real
  * missiles from Magazines; launchers next to a Launch Accelerator are used first, then round robin. No launcher:
  * the Capital (or the first tile). Returns [{ x, z, boosted }], one per strike.
  */

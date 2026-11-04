@@ -45,7 +45,7 @@ const LAYOUT = [
   [3, -2, 'magazine'],
   [4, -2, 'magazine'],
   [2, -3, 'milfactory'],
-  // Decoy Works (decoys launch from it) and a Launch Accelerator speeding up everything launched within its radius.
+  // Decoy Builder (decoys launch from it) and a Launch Accelerator speeding up everything launched within its radius.
   [3, -3, 'booster'],
   [4, -3, 'decoyworks'],
 ];
@@ -118,7 +118,7 @@ function armRivalDefence(list) {
 }
 let rivals = armRivalDefence(createRivals((Math.random() * 0x100000000) >>> 0));
 let shown = null; // rival in view
-let decoys = 0; // decoy cards in hand (one per Decoy Works each turn, plus Add decoy)
+let decoys = 0; // decoy cards in hand (one per Decoy Builder each turn, plus Add decoy)
 let silo = 0; // missiles in hand (= armed silo slots: missileCapacity, refilled every turn)
 let queue = []; // { to, at, kind }
 
@@ -595,7 +595,7 @@ function launchSalvo(recs) {
   camera.getWorldDirection(dir);
   dir.y = 0;
   dir.normalize();
-  // Each strike goes up from its own launcher (war.js: Magazine, or Decoy Works for decoys) at its launch time.
+  // Each strike goes up from its own launcher (war.js: Magazine, or Decoy Builder for decoys) at its launch time.
   for (const rec of recs) {
     const at = rec.launcher ?? { x: 0, z: 0 };
     const w = hexToWorld(at.x, at.z);

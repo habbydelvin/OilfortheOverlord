@@ -2,12 +2,12 @@ import * as THREE from 'three';
 import { useDesertSand } from './seamlessGround.js';
 
 /**
- * Procedural Decoy Works and Launch Accelerator until real models exist, in the military set's look (Military
+ * Procedural Decoy Builder and Launch Accelerator until real models exist, in the military set's look (Military
  * Factory, Recipe Lab, Warhead Institute): dark riveted steel with brass and rust-red bands, warm lit portholes,
  * black lattice towers, cream missiles, concrete pads with hazard stripes, crates and oil drums.
  * Each sits on the regular soil block (top at y = 0); `rot` turns the building (sixths of a turn, like the models).
  *
- *  - Decoy Works: a vaulted assembly hall, a launch pad of chequered test-pattern decoys beside a lattice gantry,
+ *  - Decoy Builder: a vaulted assembly hall, a launch pad of chequered test-pattern decoys beside a lattice gantry,
  *    one more decoy on a trolley, paint drums.
  *  - Launch Accelerator: a mass-driver rail on A-frame legs, ringed with copper coils that glow and pulse blue,
  *    fed by a capacitor bank and a domed generator.
@@ -83,6 +83,7 @@ function pad(g) {
   GROUND ??= useDesertSand(new THREE.MeshStandardMaterial());
   const top = add(g, new THREE.CylinderGeometry(0.577, 0.577, 0.01, 6), GROUND, 0, 0.05, 0);
   top.castShadow = false;
+  top.userData.ground = true; // (tools/card-snapshots.js hides it: the card shows the building alone)
 }
 
 /** Black lattice tower: 4 posts with X bracing, `h` tall, `w` wide, standing at (x, z). Returns its top height. */
@@ -204,11 +205,11 @@ function stack(g, x, z, h, r) {
   add(g, new THREE.CylinderGeometry(r * 1.2, r * 1.05, 0.02, 10), M.iron, x, 0.055 + h, z);
 }
 
-// ---------- Decoy Works ----------
+// ---------- Decoy Builder ----------
 
 export function buildDecoyWorks(soilGeo, soilMat, rot = 0) {
   const root = new THREE.Group();
-  root.add(shadow(new THREE.Mesh(soilGeo, soilMat)));
+  root.add(shadow(new THREE.Mesh(soilGeo, soilMat))).children.at(-1).userData.ground = true;
   const g = new THREE.Group();
   g.rotation.y = (-rot * Math.PI) / 3;
   root.add(g);
@@ -294,7 +295,7 @@ export function buildDecoyWorks(soilGeo, soilMat, rot = 0) {
 
 export function buildAccelerator(soilGeo, soilMat, rot = 0) {
   const root = new THREE.Group();
-  root.add(shadow(new THREE.Mesh(soilGeo, soilMat)));
+  root.add(shadow(new THREE.Mesh(soilGeo, soilMat))).children.at(-1).userData.ground = true;
   const g = new THREE.Group();
   // Laid out climbing toward +z, then turned side-on so the rail reads from the board camera.
   g.rotation.y = (-rot * Math.PI) / 3 + Math.PI / 3; // the rail runs corner to corner

@@ -87,7 +87,7 @@ export function resolve(strikes, cities, rng = Math.random) {
     if (!queues.has(s.from)) queues.set(s.from, []);
     queues.get(s.from).push(s);
   }
-  // Where each strike launches from (Magazines, Decoy Works; next to a Launch Accelerator first).
+  // Where each strike launches from (Magazines, Decoy Builder; next to a Launch Accelerator first).
   const launchAt = new Map();
   for (const [from, q] of queues) {
     const city = byId.get(from);
@@ -119,7 +119,7 @@ export function resolve(strikes, cities, rng = Math.random) {
     const boosted = !!(launcher?.boosted || s.boosted);
     const travel = TRAVEL * (boosted ? BOOST.travel : 1);
     const dive = flight * (boosted ? BOOST.flight : 1);
-    // Each launcher (Magazine, Decoy Works) fires its own strikes one per volley, so decoys from a Decoy Works go
+    // Each launcher (Magazine, Decoy Builder) fires its own strikes one per volley, so decoys from a Decoy Builder go
     // up alongside the magazines' first volley instead of taking their slots. city.magazines (the combat test's
     // table) keeps the old shared count.
     const byCount = (byId.get(s.from)?.magazines != null || !launcher) && s.kind !== 'decoy';

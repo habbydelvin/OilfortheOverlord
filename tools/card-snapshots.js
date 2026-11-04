@@ -10,6 +10,8 @@
 import * as THREE from 'three';
 import { clone as cloneModel } from 'three/addons/utils/SkeletonUtils.js';
 import { loadBlockouts, loadWastePieces, SHIPS, SHIP_SCALE } from '/src/models.js';
+import { buildDecoyWorks, buildAccelerator } from '/src/launcherMeshes.js';
+import { hexPrism } from '/src/hexGeometry.js';
 
 const WIDTH = 740; // 1.48 : 1, the picture slot; sharp on the largest cards at 2× pixel density
 const HEIGHT = 500;
@@ -47,6 +49,9 @@ const VIEWS = {
   // A low silo: looked down on a little to show its closed hatch, and closer (its thin fence hardly shows on a card);
   // its shaft below the ground is cut away.
   magazine: { elevation: 30, closeUp: 0.72, underground: false },
+  // Code-built (src/launcherMeshes.js): a little raised so the pad, gantry and rail read.
+  decoyworks: { elevation: 18, closeUp: 0.9, underground: false },
+  booster: { elevation: 18, closeUp: 0.9, underground: false },
 };
 
 const GROUND_CLIP = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // keeps y >= 0
@@ -78,6 +83,8 @@ const SNAPSHOT_MODELS = {
   bandit_siphon: 'bandit_siphon',
   bandit_scav: 'bandit_scav',
   wasteland: 'waste-mono',
+  decoyworks: 'decoyworks',
+  booster: 'booster',
 };
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
@@ -192,7 +199,7 @@ function hideGround(root) {
   const b = new THREE.Box3();
   root.traverse((o) => {
     if (!o.isMesh || o.isSkinnedMesh) return;
-    const ground = [o.material].flat().every((m) => GROUND_PART.test(m?.name ?? ''));
+    const ground = o.userData.ground || [o.material].flat().every((m) => GROUND_PART.test(m?.name ?? ''));
     b.setFromObject(o);
     const flat = b.max.y - b.min.y < 0.03 && b.max.y < 0.05;
     if (ground || flat) o.visible = false;
@@ -241,6 +248,11 @@ const results = {};
 
 const [buildings, byShape] = await Promise.all([loadBlockouts(), loadWastePieces()]);
 const pieces = new Map([...byShape].map(([shape, list]) => [`waste-${shape}`, list[0]]));
+// Buildings without a model file yet: the game's code-built ones.
+const soilGeo = hexPrism(0.5).translate(0, -0.62, 0);
+const soilMat = new THREE.MeshStandardMaterial({ color: 0x4a3b2c, roughness: 1 });
+if (!buildings.has('decoyworks')) buildings.set('decoyworks', buildDecoyWorks(soilGeo, soilMat));
+if (!buildings.has('booster')) buildings.set('booster', buildAccelerator(soilGeo, soilMat));
 status.textContent = 'Rendering…';
 for (const [key, modelKey] of Object.entries(SNAPSHOT_MODELS)) {
   const source = buildings.get(modelKey) ?? pieces.get(modelKey);

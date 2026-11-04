@@ -289,7 +289,7 @@ export function computeEconomy(grid, state = {}) {
   // Intercept Networks are kept manned out of the season's oil (they never run out of rounds in a fight).
   const interceptOil = (counts.intercept ?? 0) * (INTERCEPT.upkeep ?? 0);
   for (const per of perCell) if (per.terrain === 'intercept') per.oil -= INTERCEPT.upkeep ?? 0;
-  // Staffed Decoy Works spend their oil out of the season's yield too.
+  // Staffed Decoy Builder spend their oil out of the season's yield too.
   let decoyOil = 0;
   for (const per of perCell) {
     if (per.terrain !== 'decoyworks' || per.idle) continue;

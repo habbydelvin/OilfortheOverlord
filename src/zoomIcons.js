@@ -74,7 +74,7 @@ const CRATE =
 const MISSILE =
   '<svg class="ico map-missile" viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(45 12 12)"><path d="M12 1.6c2 1.6 3.1 4 3.1 6.6v7.6h-6.2V8.2c0-2.6 1.1-5 3.1-6.6z" fill="#c5cdd3" stroke="#1c1c1c" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.1 12.4l-3.2 3.6v2.4l3.2-1.5zM14.9 12.4l3.2 3.6v2.4l-3.2-1.5z" fill="#d0782a" stroke="#1c1c1c" stroke-width="1.1" stroke-linejoin="round"/><path d="M10.2 16.8h3.6l-.5 2.1h-2.6z" fill="#9aa3ab" stroke="#1c1c1c" stroke-width="1.1" stroke-linejoin="round"/><path d="M10.9 19.8h2.2L12 22.4z" fill="#ff8a2a" stroke="#1c1c1c" stroke-width="1" stroke-linejoin="round"/></g></svg>';
 
-/** Decoy Works: a hollow diamond splitting into three (one decoy, many blips). */
+/** Decoy Builder: a hollow diamond splitting into three (one decoy, many blips). */
 const DECOY =
   '<svg class="ico map-decoy" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l5 6.4-5 6.4-5-6.4z" fill="#d8dcc4" stroke="#1c1c1c" stroke-width="1.3" stroke-linejoin="round"/><path d="M5 18.4l2-2.4 2 2.4-2 2.4zM10 19l2-2.4 2 2.4-2 2.4zM15 18.4l2-2.4 2 2.4-2 2.4z" fill="#b8bea0" stroke="#1c1c1c" stroke-width="1" stroke-linejoin="round"/></svg>';
 

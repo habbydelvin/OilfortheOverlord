@@ -175,7 +175,7 @@ function militaryValue(rival, grid, terrain, x, z, e) {
       return (p.missile * 0.6) / (1 + works) ** 2 + (boostersNear(grid, x, z).length ? 1 : 0);
     }
     case 'booster': {
-      // Worth the launchers it would speed up (Magazines and Decoy Works within its radius).
+      // Worth the launchers it would speed up (Magazines and Decoy Builder within its radius).
       let launchers = 0;
       for (const [cx, cz] of hexesAround(x, z, BOOST.radius)) {
         const n = grid.get(cx, cz);
@@ -346,7 +346,7 @@ export function runFactories(rival, e = computeEconomy(rival.grid, { foodStore: 
     rival.oil -= FACTORY_OIL;
     cell.missileProgress = (cell.missileProgress ?? 0) + 1;
   }
-  // Decoy Works (their oil already came out of the season's yield): a decoy every DECOY.seasons, room permitting.
+  // Decoy Builder (their oil already came out of the season's yield): a decoy every DECOY.seasons, room permitting.
   for (const cell of grid.cells.values()) {
     if (cell.terrain !== 'decoyworks' || idle.has(`${cell.x},${cell.z}`)) continue;
     cell.decoyProgress = Math.min(DECOY.seasons, (cell.decoyProgress ?? 0) + 1);
