@@ -2,10 +2,10 @@ import { DIRS } from './grid.js';
 import { TERRAINS } from './tiles.js';
 import { SCALE, scaled } from './scalingConfig.js';
 import { L } from './i18n.js';
-import { FACTORY_OIL, INTERCEPT } from './arsenal.js';
+import { FACTORY_OIL, INTERCEPT, DECOY } from './arsenal.js';
 
 /** Workers each building needs to run. */
-export const WORKERS = { farm: 1, station: 1, refinery: 1, missilelab: 2, warhead: 2, magazine: 2 };
+export const WORKERS = { farm: 1, station: 1, refinery: 1, missilelab: 2, warhead: 2, magazine: 2, decoyworks: 2, booster: 2 };
 
 /**
  * Calculates one season of the economy from the current grid.
@@ -289,7 +289,14 @@ export function computeEconomy(grid, state = {}) {
   // Intercept Networks are kept manned out of the season's oil (they never run out of rounds in a fight).
   const interceptOil = (counts.intercept ?? 0) * (INTERCEPT.upkeep ?? 0);
   for (const per of perCell) if (per.terrain === 'intercept') per.oil -= INTERCEPT.upkeep ?? 0;
-  const oil = oilMade - oilStolen - interceptOil;
+  // Staffed Decoy Works spend their oil out of the season's yield too.
+  let decoyOil = 0;
+  for (const per of perCell) {
+    if (per.terrain !== 'decoyworks' || per.idle) continue;
+    per.oil -= DECOY.oil;
+    decoyOil += DECOY.oil;
+  }
+  const oil = oilMade - oilStolen - interceptOil - decoyOil;
 
   // Per-tile: farms grow at the staffing rate; final oil is shared out over stations by their crude
   // (largest remainder, so the per-tile numbers add up exactly to the total).

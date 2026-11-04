@@ -29,6 +29,8 @@ function sections() {
         [badge(ICONS.food), L('Hydro-farm', '水培农场'), L('Grows 2 food each season. Needs 1 worker.', '每季产出 2 食物。需要 1 人力。')],
         [badge(ICONS.oil), L('Oil Station', '采油站'), L('Pumps 2 crude oil each season. Needs 1 worker.', '每季开采 2 原油。需要 1 人力。')],
         [badge(MAP_ICONS.missile), L('Military Factory', '军事工厂'), L('Spends 3 oil each season. After a year of work, produces 1 Missile.', '每季消耗 3 石油。工作一年后生产 1 枚导弹。')],
+        [badge(MAP_ICONS.decoy), L('Decoy Works', '诱饵弹工坊'), L('Needs 2 workers, spends 1 oil each season. Produces Decoys: aimed like missiles, they split into fakes near the target to draw interceptor fire. They deal no damage.', '需要 2 人力，每季消耗 1 石油。生产诱饵弹：像导弹一样瞄准，接近目标时分裂为多枚假弹以吸引拦截火力，不造成伤害。')],
+        [badge(MAP_ICONS.booster), L('Launch Accelerator', '发射加速器'), L('Needs 2 workers. Missiles and decoys launched from Magazines or Decoy Works within 2 tiles fly faster and arrive first.', '需要 2 人力。从 2 格内的储弹仓或诱饵弹工坊发射的导弹和诱饵弹飞得更快、先到达。')],
         [badge(MAP_ICONS.crate), L('Missile Magazine', '储弹仓'), L('Needs 2 workers. Adds +1 missile capacity. The Capital holds 2 before you build one.', '需要 2 人力。导弹容量 +1。建成前由首都先存 2 枚。')],
         [badge(ICONS.manpower), L('Settlement · Labour Camp', '定居点 · 劳工营'), L('Settlements house workers (+2 manpower, eat 2 food). A Labour Camp adds +2 manpower next to a Settlement.', '定居点提供人力（+2 人力，消耗 2 食物）。劳工营与定居点相邻时 +2 人力。')],
         [badge(MAP_ICONS.ruins), L('Pre-war Ruins', '战前遗迹'), L('Build next to it to clear it. Clearing refills your hand to 5 cards.', '在相邻处建造即可清理。清理后手牌补满 5 张。')],
@@ -57,6 +59,7 @@ function sections() {
         [neon(NEON.farm), L('Boosted Hydro-farm', '受增益的水培农场'), L('Next to a Water Pump, Oasis or the Capital. Glows brighter with each one.', '与水泵站、绿洲或首都相邻。每多一个，光芒越亮。')],
         [neon(NEON.station), L('Boosted Oil Station', '受增益的采油站'), L('Next to a Tar Pit, the Capital or a staffed Refinery. Glows brighter with each one.', '与焦油坑、首都或有人力的炼油厂相邻。每多一个，光芒越亮。')],
         [neon(NEON.settlement), L('Boosted Settlement', '受增益的定居点'), L('Next to a Labour Camp.', '与劳工营相邻。')],
+        [neon(NEON.magazine), L('Accelerated launcher', '加速发射点'), L('A Magazine or Decoy Works within reach of a staffed Launch Accelerator.', '位于有人力的发射加速器范围内的储弹仓或诱饵弹工坊。')],
       ],
     ],
     [

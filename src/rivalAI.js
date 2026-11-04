@@ -3,7 +3,7 @@ import { DIRS, key, hexDistance } from './grid.js';
 import { TERRAINS, MILITARY } from './tiles.js';
 import { SHAPES, ROTATIONS, rotateCells } from './pieces.js';
 import { computeEconomy } from './economy.js';
-import { FACTORY_OIL, INTERCEPT_OIL, INTERCEPT, factoryYield, interceptorsBeside, interceptorsNear, missileCapacity, blastExtra } from './arsenal.js';
+import { FACTORY_OIL, INTERCEPT_OIL, INTERCEPT, DECOY, BOOST, factoryYield, interceptorsBeside, interceptorsNear, missileCapacity, blastExtra, boostersNear } from './arsenal.js';
 import { hexesAround } from './grid.js';
 
 /**
@@ -22,7 +22,7 @@ const WASTELAND = ['wasteland1', 'wasteland2', 'wasteland3', 'wasteland4'];
 const isWaste = (t) => t.startsWith('wasteland');
 
 /** Shop cards that start locked for the player too; a rival unlocks one each year, in its own order. */
-const LOCKED = ['pump', 'oasis', 'tarpit', 'labourcamp', 'refinery', 'milfactory', 'missilelab', 'warhead', 'intercept', 'magazine'];
+const LOCKED = ['pump', 'oasis', 'tarpit', 'labourcamp', 'refinery', 'milfactory', 'missilelab', 'warhead', 'intercept', 'magazine', 'decoyworks', 'booster'];
 
 /**
  * draw: extra draw weight per card (× the card's normal weight).
@@ -33,25 +33,25 @@ const LOCKED = ['pump', 'oasis', 'tarpit', 'labourcamp', 'refinery', 'milfactory
  */
 export const PERSONAS = {
   hawk: {
-    draw: { settlement: 2.5, refinery: 2.5, station: 1.3, milfactory: 4, missilelab: 4, warhead: 4, magazine: 5 },
+    draw: { settlement: 2.5, refinery: 2.5, station: 1.3, milfactory: 4, missilelab: 4, warhead: 4, magazine: 5, decoyworks: 3, booster: 3 },
     value: { oil: 1.2, food: 0.45, manpower: 0.9 },
     missile: 5,
     defense: 1.2,
-    unlocks: ['milfactory', 'refinery', 'magazine', 'missilelab', 'warhead', 'labourcamp', 'intercept', 'tarpit', 'pump', 'oasis'],
+    unlocks: ['milfactory', 'refinery', 'magazine', 'missilelab', 'decoyworks', 'warhead', 'booster', 'labourcamp', 'intercept', 'tarpit', 'pump', 'oasis'],
   },
   merchant: {
     draw: { station: 2.2, pump: 2, refinery: 1.8, tarpit: 2, intercept: 1.5 },
     value: { oil: 1.4, food: 0.4, manpower: 0.7 },
     missile: 2.5,
     defense: 1.5,
-    unlocks: ['pump', 'tarpit', 'refinery', 'intercept', 'milfactory', 'oasis', 'magazine', 'labourcamp', 'missilelab', 'warhead'],
+    unlocks: ['pump', 'tarpit', 'refinery', 'intercept', 'milfactory', 'oasis', 'magazine', 'labourcamp', 'missilelab', 'warhead', 'decoyworks', 'booster'],
   },
   paranoid: {
     draw: { farm: 2.2, settlement: 2, pump: 2, oasis: 2, intercept: 4, milfactory: 1.5 },
     value: { oil: 0.9, food: 0.8, manpower: 0.9 },
     missile: 3,
     defense: 3.5,
-    unlocks: ['intercept', 'pump', 'oasis', 'milfactory', 'labourcamp', 'magazine', 'refinery', 'missilelab', 'tarpit', 'warhead'],
+    unlocks: ['intercept', 'pump', 'oasis', 'milfactory', 'labourcamp', 'magazine', 'decoyworks', 'refinery', 'missilelab', 'tarpit', 'warhead', 'booster'],
   },
 };
 
@@ -164,8 +164,24 @@ function militaryValue(rival, grid, terrain, x, z, e) {
     }
     case 'magazine': {
       const cap = missileCapacity(grid);
-      // Room for what the factories will make.
-      return factories >= cap - 1 || rival.missiles.length >= cap - 1 ? p.missile * 0.8 : -5;
+      // Room for what the factories will make (a launcher next to an Accelerator is worth a bit more).
+      const room = factories >= cap - 1 || rival.missiles.length >= cap - 1 ? p.missile * 0.8 : -5;
+      return room + (room > 0 && boostersNear(grid, x, z).length ? 1 : 0);
+    }
+    case 'decoyworks': {
+      // Decoys only help real missiles get through: a factory first, and room in the silo.
+      const works = [...grid.cells.values()].filter((c) => c.terrain === 'decoyworks').length;
+      if (!factories || rival.missiles.length >= missileCapacity(grid) || e.oil < DECOY.oil + 1) return -5;
+      return (p.missile * 0.6) / (1 + works) ** 2 + (boostersNear(grid, x, z).length ? 1 : 0);
+    }
+    case 'booster': {
+      // Worth the launchers it would speed up (Magazines and Decoy Works within its radius).
+      let launchers = 0;
+      for (const [cx, cz] of hexesAround(x, z, BOOST.radius)) {
+        const n = grid.get(cx, cz);
+        if (n?.terrain === 'magazine' || n?.terrain === 'decoyworks') launchers++;
+      }
+      return launchers ? p.missile * 0.4 * launchers : -5;
     }
     case 'intercept': {
       // What it would cover (INTERCEPT_RANGE) that no network covers yet.
@@ -330,6 +346,20 @@ export function runFactories(rival, e = computeEconomy(rival.grid, { foodStore: 
     rival.oil -= FACTORY_OIL;
     cell.missileProgress = (cell.missileProgress ?? 0) + 1;
   }
+  // Decoy Works (their oil already came out of the season's yield): a decoy every DECOY.seasons, room permitting.
+  for (const cell of grid.cells.values()) {
+    if (cell.terrain !== 'decoyworks' || idle.has(`${cell.x},${cell.z}`)) continue;
+    cell.decoyProgress = Math.min(DECOY.seasons, (cell.decoyProgress ?? 0) + 1);
+    if (cell.decoyProgress < DECOY.seasons || rival.missiles.length >= cap) continue;
+    rival.missiles.push('decoy');
+    cell.decoyProgress = 0;
+  }
+}
+
+/** A rival's idle buildings right now (cell keys), for war.js's launchers. */
+export function idleOf(rival) {
+  const e = computeEconomy(rival.grid, { foodStore: rival.foodStore });
+  return new Set(e.perCell.filter((p) => p.idle).map((p) => `${p.x},${p.z}`));
 }
 
 /**
@@ -378,8 +408,8 @@ export function fadeTension(rival) {
 }
 
 /** Odds a strike on (x, z) gets through: each live network next to it that the defender can pay for gets a shot. */
-function throughOdds(city, x, z) {
-  return throughEstimate(city.grid, x, z);
+function throughOdds(city, x, z, decoys = 0) {
+  return throughEstimate(city.grid, x, z, 'missile', decoys);
 }
 
 /**
@@ -408,14 +438,18 @@ export function chooseStrikes(rival, cities, { round, chance, playerArmed = true
   }
   if (best < FIRE_AT) return [];
 
+  // Decoys fly with the real missiles (never alone): they go first, aimed where the first real one is.
+  const decoys = rival.missiles.filter((k) => k === 'decoy');
+  rival.missiles = rival.missiles.filter((k) => k !== 'decoy');
   const count = Math.max(0, rival.missiles.length - w.reserve);
   const out = [];
   const aimed = new Set();
   const cap = [...target.grid.cells.values()].find((c) => c.terrain === 'capital');
+  const nDecoys = count ? decoys.length : 0;
   for (let i = 0; i < count; i++) {
     const kind = rival.missiles.shift();
     let at = null;
-    if (cap && throughOdds(target, cap.x, cap.z, chance) >= w.capitalOdds) at = [cap.x, cap.z];
+    if (cap && throughOdds(target, cap.x, cap.z, nDecoys) >= w.capitalOdds) at = [cap.x, cap.z];
     else {
       // Its oil first (it pays for the interceptors), then anything it built; the least defended first.
       let bestCell = null;
@@ -423,7 +457,7 @@ export function chooseStrikes(rival, cities, { round, chance, playerArmed = true
       for (const c of target.grid.cells.values()) {
         const t = TERRAINS[c.terrain];
         if (!t || t.category !== 'building' || c.terrain === 'capital' || aimed.has(key(c.x, c.z))) continue;
-        const v = (c.terrain === 'refinery' || c.terrain === 'station' ? 2 : c.terrain === 'intercept' ? 1.6 : 1) * throughOdds(target, c.x, c.z, chance) + rng() * 0.2;
+        const v = (c.terrain === 'refinery' || c.terrain === 'station' ? 2 : c.terrain === 'intercept' ? 1.6 : 1) * throughOdds(target, c.x, c.z, nDecoys) + rng() * 0.2;
         if (v > bestV) {
           bestV = v;
           bestCell = c;
@@ -439,6 +473,10 @@ export function chooseStrikes(rival, cities, { round, chance, playerArmed = true
     aimed.add(key(...at));
     out.push({ from: rival.id, to: target.id, at, kind, size: blastExtra(rival.grid) });
   }
+  if (out.length) {
+    const lead = out[0].at;
+    out.unshift(...decoys.map(() => ({ from: rival.id, to: target.id, at: [...lead], kind: 'decoy', size: 0 })));
+  } else rival.missiles.push(...decoys);
   // Once it opens fire on a city, it stays wary of it.
   rival.tension[target.id] = Math.max(rival.tension[target.id] ?? 0, FIRE_AT);
   return out;

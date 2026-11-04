@@ -10,7 +10,8 @@
  *  - Settlement (orange): Labour Camp
  */
 import * as THREE from 'three';
-import { DIRS } from './grid.js';
+import { DIRS, hexesAround } from './grid.js';
+import { BOOST } from './arsenal.js';
 import { hexCorners } from './hexGeometry.js';
 
 export const NEON = {
@@ -19,6 +20,7 @@ export const NEON = {
   settlement: 0xff8a2a,
   milfactory: 0xff5a3a,
   missilelab: 0xffb020,
+  magazine: 0xffc84a, // launchers within a Launch Accelerator's reach
 };
 const BOOSTERS = {
   farm: ['pump', 'oasis', 'capital'],
@@ -26,6 +28,13 @@ const BOOSTERS = {
   settlement: ['labourcamp'],
   milfactory: ['missilelab', 'warhead'],
 };
+/** Ranged boosters: [booster terrain, radius()] that light up these launcher terrains within the radius. */
+const RANGED = {
+  magazine: ['booster', () => BOOST.radius],
+  decoyworks: ['booster', () => BOOST.radius],
+};
+/** Neon colour of a building (launchers share the Magazine's). */
+export const neonColour = (terrain) => NEON[terrain] ?? (RANGED[terrain] ? NEON.magazine : undefined);
 /**
  * Glow by number of boosting neighbours (index 1-4): overall opacity; the ground halo's reach into the tile (share
  * of the tile), strength and faint fill; the curtain's height (world units) and how high the flames climb in it.
@@ -44,6 +53,15 @@ const FADE = 3; // how quickly the glow follows a change (per second)
 
 /** Boosting neighbours of a building cell (0 for buildings without a neon colour). */
 export function neonLevel(grid, cell) {
+  const ranged = RANGED[cell.terrain];
+  if (ranged) {
+    let n = 0;
+    for (const [x, z] of hexesAround(cell.x, cell.z, ranged[1]())) {
+      const b = grid.get(x, z);
+      if (b?.terrain === ranged[0] && !b.mesh?.userData.idle) n++;
+    }
+    return Math.min(n, LEVELS.length - 1);
+  }
   const kinds = BOOSTERS[cell.terrain];
   if (!kinds) return 0;
   let n = 0;
@@ -288,7 +306,7 @@ export class NeonTiles {
   refresh(grid) {
     const live = new Set();
     for (const cell of grid.cells.values()) {
-      const colour = NEON[cell.terrain];
+      const colour = neonColour(cell.terrain);
       if (!colour || !cell.mesh) continue;
       const level = cell.mesh.userData.idle ? 0 : neonLevel(grid, cell);
       let tile = this.#tiles.get(cell.mesh);

@@ -1537,8 +1537,13 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
 
   /** Plane point + height along a strike's arc at u (0 launch, 1 impact). */
   function arcPoint(it, u, out) {
-    const h = it.H * Math.sin(Math.PI * Math.min(1, u)) + 0.15;
-    return bend.project(it.from.x + it.d.x * u, it.from.y + it.d.y * u, h, out);
+    const k = Math.sin(Math.PI * Math.min(1, u));
+    const h = it.H * k + 0.15;
+    const side = (it.bow ?? 0) * k;
+    const start = 1 - Math.min(1, u); // the launch offset fades out by the target
+    const jx = (it.jit?.x ?? 0) * start;
+    const jy = (it.jit?.y ?? 0) * start;
+    return bend.project(it.from.x + it.d.x * u + (it.perp?.x ?? 0) * side + jx, it.from.y + it.d.y * u + (it.perp?.y ?? 0) * side + jy, h, out);
   }
 
   function makeTrail(color) {
@@ -1588,22 +1593,50 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       const color = a.color.clone().lerp(new THREE.Color(0xffffff), 0.35);
       const head = globeMissile();
       warRoot.add(head);
+      if (s.boosted) head.userData.glow.material.color.set(0x9ad8ff);
       items.push({
         s,
         from: a.p.clone(),
         to: b,
         d,
-        H: Math.min(RADIUS * 0.45, 0.8 + 0.28 * dist),
-        // Slow enough to follow (or zoom in on) across the planet.
-        start: 0.35 * i,
-        // war.js fixes when each lands (the city views replay the same clock).
-        dur: s.land != null ? Math.max(1, s.land - 0.35 * i) : 4 + 0.12 * dist,
+        // Each flight its own arc: a little higher or lower, bowed off to one side (zero at both ends), leaving from
+        // a slightly different spot, so a volley fans out instead of tracing one line.
+        H: Math.min(RADIUS * 0.45, 0.8 + 0.28 * dist) * (0.8 + Math.random() * 0.4),
+        perp: new THREE.Vector2(-d.y, d.x).divideScalar(dist || 1),
+        bow: (Math.random() * 2 - 1) * 0.2 * dist,
+        jit: new THREE.Vector2((Math.random() - 0.5) * 0.12, (Math.random() - 0.5) * 0.12),
+        // war.js fixes when each leaves and lands (the city views replay the same clock).
+        start: s.launch ?? 0.35 * i,
+        dur: s.land != null ? Math.max(1, s.land - (s.launch ?? 0.35 * i)) : 4 + 0.12 * dist,
         head,
         trail: makeTrail(color),
-        shots: s.shots.map((shot, k) => ({ ...shot, at: s.killAt != null && s.land != null ? Math.min(0.995, 1 - (s.land - s.killAt) / Math.max(1, s.land - 0.35 * i)) : 0.7 + 0.08 * k, line: null, done: false })),
+        shots: s.shots.map((shot, k) => ({ ...shot, at: s.killAt != null && s.land != null ? Math.min(0.995, 1 - (s.land - s.killAt) / Math.max(1, s.land - (s.launch ?? 0.35 * i))) : 0.7 + 0.08 * k, line: null, done: false })),
         stopAt: s.shots.findIndex((x) => x.success),
         ended: false,
       });
+      // (A decoy flies the War Map as one missile: it splits only when watched in a city view.)
+      if (false && s.decoy && s.fakes?.length && s.land != null) { // decoys only split in a city view
+        const it = items[items.length - 1];
+        const at = (t) => (t - it.start) / it.dur;
+        it.uSplit = Math.min(0.99, Math.max(0, at(s.splitAt)));
+        it.forks = s.fakes
+          .filter((f) => !f.void)
+          .map((f) => {
+            const fh = globeMissile();
+            fh.userData.glow.material.color.set(0xd8e0ff);
+            fh.visible = false;
+            warRoot.add(fh);
+            return {
+              arc: { from: it.from, d: it.d.clone().addScaledVector(it.perp, (Math.random() * 2 - 1) * 0.18), H: it.H, perp: it.perp, bow: it.bow + (Math.random() * 2 - 1) * 0.08 * dist, jit: it.jit },
+              head: fh,
+              trail: makeTrail(0xc8d0e8),
+              killU: f.killed && f.killAt != null ? Math.min(1, at(f.killAt)) : null,
+              landU: Math.min(1, at(f.t0 + f.flight)),
+              done: false,
+            };
+          });
+        for (const f of it.forks) f.trail.visible = false;
+      }
     });
     setHovered(null);
     velocity.set(0, 0);
@@ -1622,6 +1655,43 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
 
   function skipAttack() {
     if (war) war.speed = 8;
+  }
+
+  const FP = new THREE.Vector3();
+  /** A decoy past its split: the parent's head is gone, its fakes peel off toward the city and burst or fizzle. */
+  function updateForks(it, uu, fn) {
+    if (!it.split) {
+      it.split = true;
+      burst(0xd8e0ff, 0.18, 0.45).position.copy(it.head.position);
+    }
+    it.head.visible = false;
+    setTrail(it.trail, fn, Math.max(0, it.uSplit - 0.35), it.uSplit);
+    const span = Math.max(1e-3, 1 - it.uSplit);
+    for (const f of it.forks) {
+      if (f.done) continue;
+      const at = (v, out) => {
+        const w = Math.min(1, Math.max(0, (v - it.uSplit) / span));
+        arcPoint(it, v, FP);
+        return arcPoint(f.arc, v, out).lerp(FP, 1 - Math.sqrt(w));
+      };
+      const end = f.killU ?? f.landU;
+      const v = Math.min(uu, end);
+      const prev = f.head.position.clone();
+      at(v, f.head.position);
+      TAN.subVectors(f.head.position, prev);
+      if (f.head.visible && TAN.lengthSq() > 1e-12) f.head.quaternion.setFromUnitVectors(UPV, TAN.normalize());
+      f.head.visible = true;
+      f.trail.visible = true;
+      f.head.scale.setScalar(0.24 * THREE.MathUtils.lerp(1, 0.3, v * v));
+      setTrail(f.trail, at, Math.max(it.uSplit, v - 0.3), v);
+      if (uu >= end) {
+        f.done = true;
+        f.head.visible = false;
+        f.trail.userData = { life: 0.6, age: 0, size: 1 };
+        if (f.killU != null) burst(0x9affe0, 0.22, 0.6).position.copy(f.head.position);
+        else burst(0xb0b0a0, 0.1, 0.5).position.copy(bend.project(it.to.p.x, it.to.p.y, 0.15, new THREE.Vector3()));
+      }
+    }
   }
 
   function updateWar(dt) {
@@ -1679,6 +1749,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       it.head.scale.setScalar(0.34 * THREE.MathUtils.lerp(1, 0.3, uu * uu));
       it.head.userData.glow.scale.setScalar(0.45 + Math.random() * 0.2);
       setTrail(it.trail, fn, Math.max(0, uu - 0.35), uu);
+      if (it.forks?.length && uu >= it.uSplit) updateForks(it, uu, fn);
       // Interceptors climb from the target city toward the missile.
       for (const [k, shot] of it.shots.entries()) {
         if (it.stopAt >= 0 && k > it.stopAt) break;
@@ -1711,7 +1782,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       if (it.ended) continue;
       if (u >= 1) {
         it.ended = true;
-        it.endU = 1;
+        it.endU = it.forks?.length ? it.uSplit : 1;
         it.head.visible = false;
         const s = it.s;
         if (s.hit) {
@@ -1737,6 +1808,11 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
         it.head.userData.glow.material.dispose();
         it.trail.geometry.dispose();
         for (const sh of it.shots) if (sh.line) warRoot.remove(sh.line);
+        for (const f of it.forks ?? []) {
+          warRoot.remove(f.head, f.trail);
+          f.head.userData.glow.material.dispose();
+          f.trail.geometry.dispose();
+        }
       }
       war = null;
       warShown.clear();

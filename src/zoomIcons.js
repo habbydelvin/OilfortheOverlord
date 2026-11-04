@@ -74,12 +74,20 @@ const CRATE =
 const MISSILE =
   '<svg class="ico map-missile" viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(45 12 12)"><path d="M12 1.6c2 1.6 3.1 4 3.1 6.6v7.6h-6.2V8.2c0-2.6 1.1-5 3.1-6.6z" fill="#c5cdd3" stroke="#1c1c1c" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.1 12.4l-3.2 3.6v2.4l3.2-1.5zM14.9 12.4l3.2 3.6v2.4l-3.2-1.5z" fill="#d0782a" stroke="#1c1c1c" stroke-width="1.1" stroke-linejoin="round"/><path d="M10.2 16.8h3.6l-.5 2.1h-2.6z" fill="#9aa3ab" stroke="#1c1c1c" stroke-width="1.1" stroke-linejoin="round"/><path d="M10.9 19.8h2.2L12 22.4z" fill="#ff8a2a" stroke="#1c1c1c" stroke-width="1" stroke-linejoin="round"/></g></svg>';
 
+/** Decoy Works: a hollow diamond splitting into three (one decoy, many blips). */
+const DECOY =
+  '<svg class="ico map-decoy" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l5 6.4-5 6.4-5-6.4z" fill="#d8dcc4" stroke="#1c1c1c" stroke-width="1.3" stroke-linejoin="round"/><path d="M5 18.4l2-2.4 2 2.4-2 2.4zM10 19l2-2.4 2 2.4-2 2.4zM15 18.4l2-2.4 2 2.4-2 2.4z" fill="#b8bea0" stroke="#1c1c1c" stroke-width="1" stroke-linejoin="round"/></svg>';
+
+/** Launch Accelerator: a chevron over speed lines. */
+const BOOSTER =
+  '<svg class="ico map-booster" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 13l7-8 7 8h-4l-3-3.4L9 13z" fill="#ffc84a" stroke="#1c1c1c" stroke-width="1.3" stroke-linejoin="round"/><path d="M5 19.5l7-8 7 8h-4l-3-3.4L9 19.5z" fill="#9ad8ff" stroke="#1c1c1c" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+
 /** Bandit and rebel camps: a red devil's head (horns, ears, eyes, grin), dark outline like the others. */
 const DEVIL =
   '<svg class="ico map-devil" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.6 9.4C4 7.6 3.4 5 4 2.6c1.3 1.8 3 3 5 3.6M18.4 9.4c1.6-1.8 2.2-4.4 1.6-6.8-1.3 1.8-3 3-5 3.6" fill="#f2c94c" stroke="#1c1c1c" stroke-width="1.3" stroke-linejoin="round"/><path d="M12 5.4c-4.2 0-7.2 3-7.2 7.2 0 4.6 3.3 8.8 7.2 8.8s7.2-4.2 7.2-8.8c0-4.2-3-7.2-7.2-7.2z" fill="#d23a2a" stroke="#1c1c1c" stroke-width="1.4"/><path d="M7.6 11.4l3 1.4-.2 1.2-2.4-.6zM16.4 11.4l-3 1.4.2 1.2 2.4-.6z" fill="#ffe27a" stroke="#1c1c1c" stroke-width="0.9" stroke-linejoin="round"/><path d="M8.6 16.2c1 1.6 2.2 2.2 3.4 2.2s2.4-.6 3.4-2.2" fill="none" stroke="#1c1c1c" stroke-width="1.4" stroke-linecap="round"/><path d="M10.2 17.4l.5 1M13.8 17.4l-.5 1" stroke="#fff" stroke-width="0.9" stroke-linecap="round"/></svg>';
 
 /** The map icons' drawings, for the icon legend (legend.js). */
-export const MAP_ICONS = { crown: CROWN, ruins: RUINS, water: WATER, palm: PALM, tar: TAR, refinery: REFINERY, missile: MISSILE, crate: CRATE, devil: DEVIL };
+export const MAP_ICONS = { crown: CROWN, ruins: RUINS, water: WATER, palm: PALM, tar: TAR, refinery: REFINERY, missile: MISSILE, crate: CRATE, devil: DEVIL, decoy: DECOY, booster: BOOSTER };
 
 /** Booster tiles: their icon and the resource they add to their neighbours (shown as a live "+n" tag). */
 const BOOSTERS = {
@@ -101,6 +109,10 @@ function iconFor(terrain) {
       return MISSILE;
     case 'magazine':
       return CRATE;
+    case 'decoyworks':
+      return DECOY;
+    case 'booster':
+      return BOOSTER;
     case 'settlement':
     case 'labourcamp':
     case 'missilelab':

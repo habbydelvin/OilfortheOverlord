@@ -67,6 +67,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
         <label class="dbg-row dbg-give">
           <span class="dbg-name">Give missile</span>
           <button type="button" data-act="giveMissile">Add to attack hand</button>
+          <button type="button" data-act="giveDecoy">Add decoy</button>
         </label>
         ${rows}
       </div>
@@ -120,6 +121,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
       status(onGiveTile?.(k) ?? '');
     }
     else if (act === 'giveMissile') status(onGiveMissile?.() ?? '');
+    else if (act === 'giveDecoy') status(onGiveMissile?.('decoy') ?? '');
     else if (act === 'resetTutorial') status(onResetTutorial?.() ?? '');
     else if (act === 'missiles') status(onMissiles?.() ?? '');
     else if (act === 'shake') status(onShake?.() ?? '');

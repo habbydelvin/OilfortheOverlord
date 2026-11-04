@@ -6,7 +6,8 @@
  * pointer) glows too and follows the pointer.
  */
 import { NEON, LIFT, GLOW_OPACITY, createGlow } from './neonGlow.js';
-import { DIRS, hexToWorld } from './grid.js';
+import { DIRS, hexToWorld, hexesAround } from './grid.js';
+import { BOOST } from './arsenal.js';
 
 /** Card -> the tiles that make a free neighbouring cell a boosted spot for it, and the glow colour. */
 const HINTS = {
@@ -21,6 +22,10 @@ const HINTS = {
   milfactory: { near: ['missilelab', 'warhead'], colour: NEON.milfactory },
   missilelab: { near: ['milfactory'], colour: NEON.missilelab },
   warhead: { near: ['milfactory'], colour: NEON.missilelab },
+  // Launch Accelerator: launchers within its radius (not just next door).
+  magazine: { near: ['booster'], colour: NEON.magazine, radius: () => BOOST.radius },
+  decoyworks: { near: ['booster'], colour: NEON.magazine, radius: () => BOOST.radius },
+  booster: { near: ['magazine', 'decoyworks'], colour: NEON.magazine, radius: () => BOOST.radius },
 };
 /** Booster card -> the colour of the buildings it boosts, for its area around the pointer while placing it. */
 /** Action card -> glow every tile of this terrain (where the card is played). */
@@ -122,9 +127,7 @@ export class BoostHints {
     } else if (hint) {
       for (const cell of grid.cells.values()) {
         if (!hint.near.includes(cell.terrain) || cell.mesh?.userData.idle) continue; // an idle booster boosts nothing
-        for (const [dx, dz] of DIRS) {
-          const x = cell.x + dx;
-          const z = cell.z + dz;
+        for (const [x, z] of hexesAround(cell.x, cell.z, hint.radius?.() ?? 1)) {
           if (!grid.has(x, z) && grid.allowed(x, z)) spots.add(`${x},${z}|${hint.colour}`);
         }
       }

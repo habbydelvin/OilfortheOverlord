@@ -19,7 +19,7 @@ const BG = 0x000000;
  * stackAims: tiles already aimed can be aimed again (combat test): the reticle shows over them too, and setAimed
  * marks how many strikes land on a tile (×2, ×3).
  */
-export function createRivalView({ renderer, factory, rig, fogSettings, fogQuality, stackAims = false }) {
+export function createRivalView({ renderer, factory, rig, fogSettings, fogQuality, stackAims = false, keepMaxZoom = false }) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(BG);
   scene.fog = new THREE.Fog(BG, 22, 60);
@@ -321,13 +321,14 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     const fit = THREE.MathUtils.clamp(frame.half * 2.6, 8, 32);
     rig.bounds = frame.reach + 1;
     rig.minDistance = 6;
-    rig.maxDistance = Math.max(fit + 4, frame.half * 4);
+    // keepMaxZoom: zoom out as far as in your own city before the planet takes over (combat test).
+    rig.maxDistance = keepMaxZoom ? Math.max(saved.maxDistance, fit + 4) : Math.max(fit + 4, frame.half * 4);
     rig.goal.set(frame.cx, 0, frame.cz);
     rig.target.copy(rig.goal);
     rig.goalDistance = fit;
     rig.distance = fit;
     scene.fog.near = fit * 0.85;
-    scene.fog.far = fit + 36;
+    scene.fog.far = Math.max(fit, keepMaxZoom ? rig.maxDistance : 0) + 36;
     fadeGround(fit);
     active = true;
     return frame;

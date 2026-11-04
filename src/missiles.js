@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { BILLOW_SHADE } from './fogOfWar.js';
-import { SIM_DT as SIM_STEP } from './interceptSim.js';
+import { SIM_DT as SIM_STEP, weaveAt } from './interceptSim.js';
 
 /**
  * The Overlord's missile strike (a missed tribute). Missiles streak in from his side of the
@@ -23,7 +23,7 @@ export const MISSILE = {
   spread: 4, // launch points scatter sideways by up to this much (they still share one direction)
   arc: 0.35, // how much the path bows upward before the dive (0 = straight line)
   flightTime: 1.3, // seconds from the screen edge to impact
-  accel: 1.4, // >1: speeds up all the way down
+  accel: 0.85, // >1: speeds up all the way down
   stagger: 0.5, // seconds between launches
   missileScale: 0.45,
   exhaustSize: 1, // engine glow + flame (× missile size)
@@ -495,6 +495,15 @@ class CloudPuffs {
 // ---------- the mushroom cloud ----------
 const SHOCK_TIME = 0.75; // seconds for the dust shockwave to reach its full radius
 /** One detonation. Its anchored puffs are placed from its age each frame. */
+/**
+ * Share of the simulated scatter the drawn tracers keep (1 = true spread). Misses are drawn closer to the barrel line
+ * so a wide spread setting doesn't look like rounds leaving beside the gun; hits keep their true path.
+ */
+const TRACER_SPREAD = 0.4;
+
+/** A decoy's (or its fakes') ground blast, as a share of a real missile's. */
+const DECOY_BLAST = 0.4;
+
 class Blast {
   constructor(x, z, cfg) {
     this.x = x;
@@ -894,7 +903,7 @@ export class MissileStrike {
     const yaw = Math.atan2(local.x - turret.position.x, local.z - turret.position.z);
     let d = yaw - turret.rotation.y;
     d = Math.atan2(Math.sin(d), Math.cos(d));
-    const k = 1 - Math.exp(-rate * dt);
+    const k = rate === Infinity ? 1 : 1 - Math.exp(-rate * dt);
     turret.rotation.y += d * k;
     if (pivot) {
       const flat = Math.hypot(local.x - turret.position.x, local.z - turret.position.z);
@@ -1137,6 +1146,8 @@ export class MissileStrike {
     const glow = new THREE.Sprite(
       new THREE.SpriteMaterial({ map: this.glow, color: this.cfg.exhaustColor, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false }),
     );
+    // A Launch Accelerator's missiles burn blue-white; decoys and fakes look like any other missile.
+    if (m.target.boosted && !m.target.harmless) glow.material.color.set('#9ad8ff');
     glow.position.y = -0.45;
     glow.renderOrder = 10;
     glow.scale.setScalar(0.45 * this.cfg.exhaustSize);
@@ -1183,11 +1194,24 @@ export class MissileStrike {
         this.destroy(m.target);
         continue;
       }
+      // A decoy reached its split: it pops and its fakes carry on (in the same job).
+      if (now != null && m.target.splitAt != null && now >= m.target.splitAt) {
+        this.#split(m, i);
+        continue;
+      }
       // A ground launch can fly slower (target.flight / target.accel) so the camera can follow it.
       const u = Math.min(1, Math.pow(m.age / (m.target.flight ?? c.flightTime), m.target.accel ?? c.accel));
       const prev = this.#tmp.copy(m.mesh.position);
       bezier(m.mesh.position, m.p0, m.p1, m.p2, u);
       bezierTangent(this.#dir, m.p0, m.p1, m.p2, Math.min(u, 0.999));
+      if (m.target.weave) {
+        // Evasive weaving, exactly as simulated: nose along the actual motion.
+        const o = weaveAt(m.target.weave, m.age, u, [0, 0, 0]);
+        m.mesh.position.x += o[0];
+        m.mesh.position.z += o[2];
+        const mv = this.#tail.subVectors(m.mesh.position, prev);
+        if (mv.lengthSq() > 1e-8) this.#dir.copy(mv).normalize();
+      }
       m.mesh.quaternion.setFromUnitVectors(UP, this.#dir);
       m.glow.scale.setScalar((0.4 + Math.random() * 0.15) * c.exhaustSize);
       m.job.hooks.onMove?.(m.mesh.position, m.target, u);
@@ -1229,8 +1253,9 @@ export class MissileStrike {
         this.group.remove(m.mesh);
         m.glow.material.dispose();
         this.#missiles.splice(i, 1);
-        if (!m.target.away) this.#detonate(m);
-        else if (--m.job.left === 0) this.#finish(m.job);
+        if (m.target.away) {
+          if (--m.job.left === 0) this.#finish(m.job);
+        } else this.#detonate(m, m.target.harmless ? DECOY_BLAST : 1);
       }
     }
 
@@ -1248,10 +1273,26 @@ export class MissileStrike {
     this.flames.update(dt);
   }
 
-  #detonate(m) {
+  /** A decoy splits: a small pop where it was, then each of its fakes (target.fakes, already decided) flies on. */
+  #split(m, i) {
+    const pos = m.mesh.position.clone();
+    this.airBurst(pos, false);
+    this.group.remove(m.mesh);
+    m.glow.material.dispose();
+    this.#missiles.splice(i, 1);
+    const fakes = (m.target.fakes ?? []).filter((f) => !f.void);
+    m.job.hooks.onSplit?.(m.target, fakes);
+    m.job.left += fakes.length - 1;
+    for (const f of fakes) this.#missiles.push({ target: { clock: m.target.clock, ...f }, i: m.i, job: m.job, age: 0, mesh: null, trailAcc: 0 });
+    if (!fakes.length && m.job.left === 0) this.#finish(m.job);
+  }
+
+  /** scale < 1: a decoy or fake hitting the ground: a smaller blast, no crater, no damage (no onCover hook). */
+  #detonate(m, scale = 1) {
     const c = this.cfg;
     const { x, z } = m.target;
-    const blast = new Blast(x, z, c);
+    const harmless = scale !== 1;
+    const blast = new Blast(x, z, harmless ? { ...c, cloudScale: c.cloudScale * scale } : c);
     this.#blasts.push(blast);
     const S = blast.S;
     const dens = c.cloudDensity;
@@ -1261,7 +1302,7 @@ export class MissileStrike {
     // Flash.
     this.flames.spawn({ pos: new THREE.Vector3(x, 0.6, z), size0: 0.6 * S, size1: c.flashSize * S, life: 0.45, color0: '#ffffff', color1: c.fireColor, colorTime: 0.5, fadeIn: 0.01, fadePow: 2 });
     this.light.position.set(x, 1.4, z);
-    this.#lightLevel = 1;
+    this.#lightLevel = harmless ? Math.max(this.#lightLevel, 0.5) : 1;
 
     // Shockwave: a ring of dust and smoke racing out along the ground, covering the same radius and
     // timing as a blast front. A low front of sandy dust kicked up from the ground, and a trailing,
@@ -1303,7 +1344,7 @@ export class MissileStrike {
 
     // Cover: dense, low puffs right over the tile (its sides too), so the crater swap is hidden.
     // At least the tile's own size, whatever the cloud scale.
-    const C = Math.max(1, S);
+    const C = harmless ? S : Math.max(1, S);
     const toCam = new THREE.Vector3(this.camera.position.x - x, 0, this.camera.position.z - z).normalize();
     for (let i = 0; i < Math.max(6, Math.round(12 * dens)); i++) {
       const lean = rand(0.05, 0.4); // lean toward the camera, so the tile's near side is covered too
@@ -1396,7 +1437,7 @@ export class MissileStrike {
     this.#timers.push({
       t: c.coverDelay,
       fn: () => {
-        m.job.hooks.onCover?.(m.target, m.i);
+        if (!harmless) m.job.hooks.onCover?.(m.target, m.i);
         if (--m.job.left === 0) this.#finish(m.job);
       },
     });
@@ -1438,18 +1479,8 @@ export class MissileStrike {
       if (rp.next < 0) rp.next = sim.rounds.length;
     }
     rp.lastT = t;
-    for (; rp.next < sim.rounds.length && sim.rounds[rp.next].t <= t; rp.next++) {
-      const r = sim.rounds[rp.next];
-      const late = t - r.t;
-      if (late >= r.life) continue;
-      const pos = new THREE.Vector3(...r.pos);
-      const vel = new THREE.Vector3(...r.vel);
-      if (late < 0.03 && Math.random() < 0.6)
-        this.flames.spawn({ pos: pos.clone(), size0: rand(0.12, 0.2), size1: 0.03, life: 0.05, color0: '#fff4c0', color1: '#ff8a20', opacity: 1, fadeIn: 0.005 });
-      pos.addScaledVector(vel, late);
-      this.#rounds.push({ pos, vel, age: late, life: r.life, sim: true, hit: r.hit });
-    }
-    // Turrets: aim as the sim had them; streams start and stop with it.
+    // Turrets first: aim exactly as the sim had them (snapped: the sim already limits the turn speed, so easing it
+    // again only makes the barrels trail the stream); streams start and stop with it.
     const pt = new THREE.Vector3();
     sim.turrets.forEach((tr, i) => {
       const s = Math.max(0, Math.min(sim.steps - 1, Math.floor((t - sim.t0) / SIM_STEP)));
@@ -1460,7 +1491,8 @@ export class MissileStrike {
       if (gun) {
         const cp = Math.cos(pitch);
         pt.set(tr.pos[0] + Math.sin(yaw) * cp * 5, tr.pos[1] + Math.sin(pitch) * 5, tr.pos[2] + Math.cos(yaw) * cp * 5);
-        this.#slew({ gun }, pt, dt, 40);
+        this.#slew({ gun }, pt, dt, Infinity);
+        gun.turret?.updateWorldMatrix(true, true);
       }
       if (firing && !rp.firing[i]) {
         gun?.begin?.();
@@ -1473,6 +1505,37 @@ export class MissileStrike {
       if (!firing && rp.firing[i]) gun?.end?.();
       rp.firing[i] = firing;
     });
+    // Rounds: each leaves the gun's real barrel tip (alternating barrels) and flies to where the sim's round went in
+    // the same time, pulled toward the barrel line by TRACER_SPREAD so the stream reads as coming out of the gun.
+    // Hits and kills are the sim's own; only the drawn tracer moves.
+    const tip = new THREE.Vector3();
+    for (; rp.next < sim.rounds.length && sim.rounds[rp.next].t <= t; rp.next++) {
+      const r = sim.rounds[rp.next];
+      const late = t - r.t;
+      if (late >= r.life) continue;
+      const tr = sim.turrets[r.turret];
+      const gun = rp.gunFor(r.turret);
+      const muzzles = gun?.muzzles ?? [];
+      const sp = TRACER_SPREAD;
+      // Where the sim's round ends up, and where a round straight down the barrel line would.
+      const end = new THREE.Vector3(...r.pos).addScaledVector(new THREE.Vector3(...r.vel), r.life);
+      if (tr && sp < 1) {
+        const s = Math.max(0, Math.min(sim.steps - 1, Math.floor((r.t - sim.t0) / SIM_STEP)));
+        const yaw = tr.aim[s * 2];
+        const pitch = tr.aim[s * 2 + 1];
+        const cp = Math.cos(pitch);
+        const speed = Math.hypot(...r.vel);
+        const straight = new THREE.Vector3(...r.pos).add(new THREE.Vector3(Math.sin(yaw) * cp, Math.sin(pitch), Math.cos(yaw) * cp).multiplyScalar(speed * r.life));
+        // A round that hit must still meet its missile: keep its true path.
+        if (!r.hit) end.lerp(straight, 1 - sp);
+      }
+      const pos = muzzles.length ? muzzles[(rp.barrel = (rp.barrel ?? 0) + 1) % muzzles.length].getWorldPosition(tip).clone() : new THREE.Vector3(...r.pos);
+      const vel = end.clone().sub(pos).divideScalar(Math.max(r.life, 1e-3));
+      if (late < 0.03 && Math.random() < 0.6)
+        this.flames.spawn({ pos: pos.clone(), size0: rand(0.12, 0.2), size1: 0.03, life: 0.05, color0: '#fff4c0', color1: '#ff8a20', opacity: 1, fadeIn: 0.005 });
+      pos.addScaledVector(vel, late);
+      this.#rounds.push({ pos, vel, age: late, life: r.life, sim: true, hit: r.hit });
+    }
   }
 
   /** Remove everything at once (island reset). Pending fire() promises resolve. */

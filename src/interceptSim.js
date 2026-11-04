@@ -1,5 +1,5 @@
 import { hexToWorld, hexDistance } from './grid.js';
-import { INTERCEPT } from './arsenal.js';
+import { INTERCEPT, DECOY, BOOST } from './arsenal.js';
 
 /**
  * Intercept Networks, simulated for real: no dice. Each incoming missile has hidden HP; each network is a turret
@@ -51,8 +51,64 @@ export function bez(path, u, out = [0, 0, 0]) {
   return out;
 }
 
+/**
+ * Evasive weaving (Launch Accelerator): a side-to-side swing across the flight path, zero at launch and at impact
+ * (it still lands on its aim), so the turrets' lead (aimed off its velocity) points where it was going.
+ * makeWeave: the swing for a path; weaveAt adds its offset at `age` seconds, path share `u`, into `out`.
+ */
+export function makeWeave(path, rng, amp = BOOST.weave, freq = BOOST.weaveFreq) {
+  if (!(amp > 0)) return null;
+  const dx = path.p2[0] - path.p0[0];
+  const dz = path.p2[2] - path.p0[2];
+  const len = Math.hypot(dx, dz) || 1;
+  return { amp, freq, phase: rng() * Math.PI * 2, side: [-dz / len, 0, dx / len] };
+}
+export function weaveAt(w, age, u, out) {
+  if (!w) return out;
+  const s = w.amp * Math.sin(Math.PI * Math.min(1, Math.max(0, u))) * Math.sin(2 * Math.PI * w.freq * age + w.phase);
+  out[0] += w.side[0] * s;
+  out[2] += w.side[2] * s;
+  return out;
+}
+
 /** Missile HP by kind. */
-export const missileHp = (kind) => (kind === 'missile2' ? INTERCEPT.hpWarhead : INTERCEPT.hpMissile);
+export const missileHp = (kind) => (kind === 'missile2' ? INTERCEPT.hpWarhead : kind === 'decoy' ? DECOY.hp : INTERCEPT.hpMissile);
+
+/** Phase time at which a decoy (t0, flight, accel) splits. */
+export const splitTime = (m) => m.t0 + m.flight * Math.pow(DECOY.splitAt, 1 / (m.accel || 1));
+
+/**
+ * A decoy's fakes: each leaves the decoy's position at the split, carrying on along its heading, and dives onto a
+ * cell within DECOY.spread of the aim. Returns [{ path, t0, flight, accel, at, cells, hp, fake: true }].
+ */
+export function decoyFakes(m, rng, cfg = DECOY) {
+  const ts = splitTime(m);
+  const u0 = cfg.splitAt;
+  const p0 = bez(m.path, u0);
+  // The decoy's velocity at the split (world units per second).
+  const du = 1e-3;
+  const p1a = bez(m.path, Math.min(1, u0 + du));
+  // u = (age / flight)^accel, so du/dt = accel / flight · u^((accel - 1) / accel).
+  const dudt = (m.accel / m.flight) * Math.pow(u0, (m.accel - 1) / m.accel);
+  const v = [0, 1, 2].map((i) => ((p1a[i] - p0[i]) / du) * dudt);
+  const left = Math.max(0.3, m.t0 + m.flight - ts);
+  const out = [];
+  for (let j = 0; j < cfg.fakes; j++) {
+    const a = rng() * Math.PI * 2;
+    const r = (0.6 + rng() * 0.4) * cfg.spread;
+    // A cell around the aim (axial offset by angle and radius, rounded).
+    const fx = Math.round(Math.cos(a) * r - (Math.sin(a) * r) / Math.sqrt(3));
+    const fz = Math.round((2 * Math.sin(a) * r) / Math.sqrt(3));
+    const at = [m.at[0] + fx, m.at[1] + fz];
+    const w = hexToWorld(at[0], at[1]);
+    const flight = left * (0.85 + rng() * 0.35);
+    const p2 = [w.x, 0, w.z];
+    const c1 = [0, 1, 2].map((i) => p0[i] + (v[i] * flight) / 2);
+    c1[1] = Math.max(0.6, c1[1]);
+    out.push({ path: { p0: [...p0], p1: c1, p2 }, t0: ts, flight, accel: 1, at, cells: [at], hp: cfg.fakeHp, fake: true });
+  }
+  return out;
+}
 
 /**
  * Simulate one city's defence.
@@ -62,7 +118,10 @@ export const missileHp = (kind) => (kind === 'missile2' ? INTERCEPT.hpWarhead : 
  *   step), fire: Uint8Array }], rounds: [{ t, turret, pos, vel, life, hit }], t0, steps }.
  */
 export function simulateDefence(missiles, turrets, rng, p = INTERCEPT) {
-  const ms = missiles.map((m) => ({ ...m, hp: m.hp, dead: false, landed: false, pos: [0, 0, 0], prev: null, vel: [0, 0, 0], out: { killed: false, tKill: null, pos: null, by: null } }));
+  const ms = missiles.map((m) => ({ ...m, hp: m.hp, dead: false, landed: false, pos: [0, 0, 0], prev: null, vel: [0, 0, 0], out: { killed: false, tKill: null, pos: null, by: null, split: false, void: false } }));
+  // Decoys (endAt: they split then) and their fakes (parent: only fly if the decoy lived to split).
+  const byId = new Map(ms.map((m) => [m.id, m]));
+  for (const m of ms) if (m.parent != null) m.parentM = byId.get(m.parent) ?? null;
   const ts = turrets.map((c) => {
     const w = hexToWorld(c.x, c.z);
     return { x: c.x, z: c.z, pos: [w.x, 0.35, w.z], yaw: 0, pitch: 0.3, target: null, acc: 0, alive: true };
@@ -89,14 +148,27 @@ export function simulateDefence(missiles, turrets, rng, p = INTERCEPT) {
       if (m.dead || m.landed) continue;
       const age = t - m.t0;
       if (age < 0) continue;
+      if (m.parentM && !m.parentM.out.split) {
+        // Its decoy was shot down before splitting: this fake never existed.
+        m.landed = true;
+        m.out.void = true;
+        continue;
+      }
+      if (m.endAt != null && t >= m.endAt) {
+        // A decoy splits into its fakes.
+        m.landed = true;
+        m.out.split = true;
+        continue;
+      }
       const u = Math.min(1, Math.pow(age / m.flight, m.accel));
       bez(m.path, u, m.pos);
+      weaveAt(m.weave, age, u, m.pos);
       if (m.prev) for (let i = 0; i < 3; i++) m.vel[i] = (m.pos[i] - m.prev[i]) / SIM_DT;
       m.prev = [...m.pos];
       if (u >= 1) {
         m.landed = true;
-        // Landing on a network takes it out for the rest of the phase.
-        for (const tr of ts) if (m.cells.some(([x, z]) => x === tr.x && z === tr.z)) tr.alive = false;
+        // Landing on a network takes it out for the rest of the phase (fakes and decoys are harmless).
+        if (!m.harmless) for (const tr of ts) if (m.cells.some(([x, z]) => x === tr.x && z === tr.z)) tr.alive = false;
       }
     }
     // Turrets: keep the target while it's alive and in reach, else pick the one landing soonest.
@@ -212,11 +284,13 @@ export function turretAt(sim, ti, t) {
 
 /**
  * Rough odds a missile aimed at (x, z) gets through `grid`'s networks (for the rival AI's planning): each covering
- * network brings a share of a kill; more networks, worse odds.
+ * network brings a share of a kill; more networks, worse odds. decoys: decoys flying in alongside; each one (and its
+ * fakes) soaks up part of the networks' fire.
  */
-export function throughEstimate(grid, x, z, kind = 'missile') {
+export function throughEstimate(grid, x, z, kind = 'missile', decoys = 0) {
   let nets = 0;
   for (const c of grid.cells.values()) if (c.terrain === 'intercept' && hexDistance(c.x, c.z, x, z) <= INTERCEPT.range) nets++;
   const perNet = Math.min(0.85, (INTERCEPT.rate * INTERCEPT.hitChanceEst * INTERCEPT.damage * 0.9) / missileHp(kind));
-  return (1 - perNet) ** nets;
+  const soak = 1 + decoys * 0.15 * (1 + DECOY.fakes);
+  return (1 - perNet) ** (nets / soak);
 }

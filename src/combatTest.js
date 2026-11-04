@@ -2,8 +2,8 @@ import { updateCurve } from './curvature.js'; // first: bends every material mad
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { CameraRig } from './controls.js';
-import { Grid, hexToWorld, worldToHex, hexesAround, key } from './grid.js';
-import { INTERCEPT, INTERCEPT_DEFAULTS, saveIntercept, clearIntercept, missileCapacity } from './arsenal.js';
+import { Grid, hexToWorld, worldToHex, hexesAround, hexDistance, key } from './grid.js';
+import { INTERCEPT, INTERCEPT_DEFAULTS, saveIntercept, clearIntercept, missileCapacity, DECOY, BOOST, saveDecoy, saveBoost, clearDecoyBoost } from './arsenal.js';
 import { intersectGround, flattenCurve } from './curvature.js';
 import { createRivals, rivalStats } from './rivals.js';
 import { createGlobeView } from './globeView.js';
@@ -19,7 +19,7 @@ import { Dust } from './dust.js';
 import { CameraShake, loadShakeConfig } from './cameraShake.js';
 import { loadGfxConfig, applyGfx } from './graphics.js';
 import { CrtPass } from './crtPass.js';
-import { CAPITAL_HP, resolve } from './war.js';
+import { CAPITAL_HP, resolve, VOLLEY_GAP } from './war.js';
 import { boom, buzz, ciws, unlockSfx } from './sfx.js';
 import { findCiws } from './interceptMesh.js';
 
@@ -45,6 +45,9 @@ const LAYOUT = [
   [3, -2, 'magazine'],
   [4, -2, 'magazine'],
   [2, -3, 'milfactory'],
+  // Decoy Works (decoys launch from it) and a Launch Accelerator speeding up everything launched within its radius.
+  [3, -3, 'booster'],
+  [4, -3, 'decoyworks'],
 ];
 
 const FIRST = [
@@ -83,8 +86,39 @@ window.addEventListener('pointerdown', () => unlockSfx?.(), { once: true });
 
 // War state (declared early: the tuning panel reads it on load).
 let view = 'home'; // 'home' | 'globe' | 'rival'
-let rivals = createRivals((Math.random() * 0x100000000) >>> 0);
+/**
+ * Test rivals all get a real air defence: RIVAL_NETS Intercept Networks spread around their Capital (on their own
+ * tiles, keeping the Capital), so decoys have turrets to fool.
+ */
+const RIVAL_NETS = 3;
+function armRivalDefence(list) {
+  for (const r of list) {
+    const cells = [...r.grid.cells.values()];
+    const cap = cells.find((c) => c.terrain === 'capital') ?? cells[0];
+    if (!cap) continue;
+    let have = cells.filter((c) => c.terrain === 'intercept').length;
+    // Ring 1-2 cells out from the Capital, spaced: skip cells touching a network already placed.
+    const spots = cells
+      .filter((c) => c.terrain !== 'capital' && c.terrain !== 'intercept')
+      .map((c) => ({ c, d: Math.abs(hexDistance(c.x, c.z, cap.x, cap.z) - 2) }))
+      .sort((a, b) => a.d - b.d)
+      .map((o) => o.c);
+    for (const c of spots) {
+      if (have >= RIVAL_NETS) break;
+      const near = [...r.grid.cells.values()].some((n) => n.terrain === 'intercept' && hexDistance(n.x, n.z, c.x, c.z) < 2);
+      if (near) continue;
+      r.grid.set(c.x, c.z, { terrain: 'intercept' });
+      r.pieces = (r.pieces ?? []).filter((p) => !p.cells.some(([x, z]) => x === c.x && z === c.z));
+      have++;
+    }
+    r.stats = rivalStats(r.grid, r);
+    r.version = (r.version ?? 0) + 1;
+  }
+  return list;
+}
+let rivals = armRivalDefence(createRivals((Math.random() * 0x100000000) >>> 0));
 let shown = null; // rival in view
+let decoys = 0; // decoy cards in hand (one per Decoy Works each turn, plus Add decoy)
 let silo = 0; // missiles in hand (= armed silo slots: missileCapacity, refilled every turn)
 let queue = []; // { to, at, kind }
 
@@ -219,6 +253,16 @@ const SLIDERS = [
   { label: 'Damage per round', min: 1, max: 5, step: 1, get: () => INTERCEPT.damage, set: (v) => (INTERCEPT.damage = v), save: true },
   { label: 'Missile HP', min: 1, max: 20, step: 1, get: () => INTERCEPT.hpMissile, set: (v) => (INTERCEPT.hpMissile = v), save: true },
   { label: 'Warhead HP', min: 1, max: 30, step: 1, get: () => INTERCEPT.hpWarhead, set: (v) => (INTERCEPT.hpWarhead = v), save: true },
+  { label: 'Decoy: fakes per decoy', min: 0, max: 12, step: 1, get: () => DECOY.fakes, set: (v) => (DECOY.fakes = v), saveDecoy: true },
+  { label: 'Decoy: split point (lower = splits higher)', min: 0.1, max: 0.95, step: 0.05, get: () => DECOY.splitAt, set: (v) => (DECOY.splitAt = v), saveDecoy: true },
+  { label: 'Decoy: HP before split', min: 1, max: 20, step: 1, get: () => DECOY.hp, set: (v) => (DECOY.hp = v), saveDecoy: true },
+  { label: 'Decoy: HP per fake', min: 1, max: 10, step: 1, get: () => DECOY.fakeHp, set: (v) => (DECOY.fakeHp = v), saveDecoy: true },
+  { label: 'Decoy: fake spread (cells)', min: 0, max: 5, step: 0.5, get: () => DECOY.spread, set: (v) => (DECOY.spread = v), saveDecoy: true },
+  { label: 'Accelerator radius (cells)', min: 1, max: 5, step: 1, get: () => BOOST.radius, set: (v) => (BOOST.radius = v), saveBoost: true },
+  { label: 'Accelerator travel × (lower = faster)', min: 0.2, max: 1, step: 0.05, get: () => BOOST.travel, set: (v) => (BOOST.travel = v), saveBoost: true },
+  { label: 'Accelerator dive × (lower = faster)', min: 0.2, max: 1, step: 0.05, get: () => BOOST.flight, set: (v) => (BOOST.flight = v), saveBoost: true },
+  { label: 'Evasive weave (units, 0 = off)', min: 0, max: 3, step: 0.05, get: () => BOOST.weave, set: (v) => (BOOST.weave = v), saveBoost: true },
+  { label: 'Evasive weave (swings / s)', min: 0.2, max: 4, step: 0.1, get: () => BOOST.weaveFreq, set: (v) => (BOOST.weaveFreq = v), saveBoost: true },
 ];
 
 function buildTuning() {
@@ -234,6 +278,8 @@ function buildTuning() {
       sl.set(Number(input.value));
       if (sl.save) saveIntercept();
       if (sl.saveMissile) saveMissileConfig(MISSILE);
+      if (sl.saveDecoy) saveDecoy();
+      if (sl.saveBoost) saveBoost();
       show();
       drawRings();
       renderHand();
@@ -252,13 +298,14 @@ document.getElementById('showRings').addEventListener('change', (e) => {
 document.getElementById('resetTune').addEventListener('click', () => {
   clearIntercept();
   clearMissileConfig();
+  clearDecoyBoost();
   Object.assign(MISSILE, MISSILE_DEFAULTS);
   buildTuning();
   drawRings();
   paint();
 });
 // Tuning as JSON: copy it (to send, or to paste into the code defaults), or paste one back in.
-const tuneJson = () => JSON.stringify({ missile: { blast: MISSILE.blast, damage: MISSILE.damage, followFlight: MISSILE.followFlight, accel: MISSILE.accel }, intercept: { ...INTERCEPT } }, null, 2);
+const tuneJson = () => JSON.stringify({ missile: { blast: MISSILE.blast, damage: MISSILE.damage, followFlight: MISSILE.followFlight, accel: MISSILE.accel }, intercept: { ...INTERCEPT }, decoy: { ...DECOY }, boost: { ...BOOST } }, null, 2);
 document.getElementById('copyTune').addEventListener('click', async (e) => {
   const json = tuneJson();
   try {
@@ -277,6 +324,10 @@ document.getElementById('applyTune').addEventListener('click', (e) => {
     const t = JSON.parse(text);
     for (const [k, v] of Object.entries(t.missile ?? {})) if (typeof v === 'number') MISSILE[k] = v;
     for (const [k, v] of Object.entries(t.intercept ?? {})) if (k in INTERCEPT && typeof v === 'number') INTERCEPT[k] = v;
+    for (const [k, v] of Object.entries(t.decoy ?? {})) if (k in DECOY && typeof v === 'number') DECOY[k] = v;
+    for (const [k, v] of Object.entries(t.boost ?? {})) if (k in BOOST && typeof v === 'number') BOOST[k] = v;
+    saveDecoy();
+    saveBoost();
     saveMissileConfig(MISSILE);
     saveIntercept();
     buildTuning();
@@ -294,6 +345,21 @@ document.getElementById('giveMissile').addEventListener('click', (e) => {
   renderHand();
   paint();
 });
+document.getElementById('giveDecoy').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  if (busy) return;
+  decoys++;
+  renderHand();
+  paint();
+  say('Decoy added to your hand: drag it onto a rival tile (it goes up with your missiles).');
+});
+// Decoys at Hive City: each rival sends this many more at you next End turn (the Decoys column).
+document.getElementById('incomingDecoys').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  for (const r of rivals) if (r.alive !== false) decoysIn.set(r.id, (decoysIn.get(r.id) ?? 1) + 1);
+  renderIncoming();
+  say('Each rival sends one more decoy at Hive City next End turn. Stay in Hive City to watch them split.');
+});
 document.getElementById('resetCity').addEventListener('click', () => {
   if (busy) return;
   oil = 9;
@@ -306,12 +372,13 @@ document.getElementById('resetCity').addEventListener('click', () => {
   logEl.innerHTML = '';
   goHome(true);
   clouds.reset?.();
-  rivals = createRivals((Math.random() * 0x100000000) >>> 0);
+  rivals = armRivalDefence(createRivals((Math.random() * 0x100000000) >>> 0));
   queue = [];
   armRivals();
   incoming.clear();
-  renderIncoming();
+  magazines.clear();
   buildCity();
+  renderIncoming(); // after the city: its magazine count comes from the new board
   rearm();
   paint();
 });
@@ -320,7 +387,7 @@ buildTuning();
 function paint() {
   const nets = [...grid.cells.values()].filter((c) => c.terrain === 'intercept').length;
   statusEl.textContent = alive
-    ? `Oil ${oil} · Interceptors ${nets} · Capital ${hp}/${CAPITAL_HP} · Missiles in hand ${silo} · Aimed ${queue.length}${shown ? ` · In ${shown.def.name} (${shown.capitalHp}/${CAPITAL_HP})` : ''}`
+    ? `Oil ${oil} · Interceptors ${nets} · Capital ${hp}/${CAPITAL_HP} · Missiles in hand ${silo} · Decoys ${decoys} · Aimed ${queue.length}${shown ? ` · In ${shown.def.name} (${shown.capitalHp}/${CAPITAL_HP})` : ''}`
     : 'The capital is gone.';
 }
 
@@ -385,6 +452,7 @@ function applyHit(rec) {
 }
 
 function describe(rec, aimName) {
+  if (rec.decoy) return `Decoy: drew ${rec.drew ?? 0} kill${rec.drew === 1 ? '' : 's'}${rec.killed ? ' (shot down before splitting)' : ''}.`;
   const kind = rec.kind === 'missile2' ? 'Warhead' : 'Missile';
   if (rec.fizzled) return `${kind} never arrived.`;
   const shots = rec.shots.map((s) => (s.success ? 'an interceptor shot it down' : 'an interceptor fired and missed'));
@@ -395,6 +463,33 @@ function describe(rec, aimName) {
   return `${kind} toward the ${aimName}. ${shots.length ? shots.join('. ') + '.' : 'No interceptor in range.'}${wreck}${tail}`;
 }
 
+/** A resolved strike as a MissileStrike target: its simulated flight, plus a decoy's split and fakes. */
+function simTarget(rec) {
+  const w = hexToWorld(rec.at[0], rec.at[1]);
+  return {
+    x: w.x,
+    z: w.z,
+    cell: { x: rec.at[0], z: rec.at[1] },
+    rec,
+    path: rec.path,
+    t0: rec.t0,
+    flight: rec.flight,
+    accel: rec.accel,
+    killAt: rec.killed ? rec.killAt : null,
+    clock: warClock,
+    boosted: !!rec.boosted,
+    weave: rec.weave ?? null,
+    harmless: !!rec.harmless,
+    splitAt: rec.decoy ? rec.splitAt : null,
+    fakes: rec.decoy
+      ? rec.fakes.map((f) => {
+          const fw = hexToWorld(f.at[0], f.at[1]);
+          return { x: fw.x, z: fw.z, cell: { x: f.at[0], z: f.at[1] }, rec, path: f.path, t0: f.t0, flight: f.flight, accel: f.accel, killAt: f.killed ? f.killAt : null, void: !!f.void, harmless: true, fake: true };
+        })
+      : null,
+  };
+}
+
 /** Fly the resolved strikes: the game's missiles, interceptors climbing from their networks to meet them. */
 async function play(resolved) {
   const recs = resolved.filter((r) => !r.fizzled);
@@ -402,23 +497,7 @@ async function play(resolved) {
   // The camera is never touched: the missiles fly into whatever you're looking at.
   if (recs.some((r) => r.shots.length)) buzz();
 
-  const targets = recs.map((rec) => {
-    const w = hexToWorld(rec.at[0], rec.at[1]);
-    return {
-      x: w.x,
-      z: w.z,
-      cell: { x: rec.at[0], z: rec.at[1] },
-      rec,
-      aimName: nameAt(rec.at[0], rec.at[1]),
-      // The simulated flight (war.js): its path, its time on the War Map clock, and when the rounds bring it down.
-      path: rec.path,
-      t0: rec.t0,
-      flight: rec.flight,
-      accel: rec.accel,
-      killAt: rec.killed ? rec.killAt : null,
-      clock: warClock,
-    };
-  });
+  const targets = recs.map((rec) => ({ ...simTarget(rec), aimName: nameAt(rec.at[0], rec.at[1]) }));
   const flying = new Map();
   const pending = new Set(targets);
 
@@ -429,16 +508,17 @@ async function play(resolved) {
       camShake.add(missileCfg.shake * 0.35);
       flying.delete(t);
       pending.delete(t);
-      say(describe(t.rec, t.aimName));
+      if (!t.rec.decoy) say(describe(t.rec, t.aimName));
       paint();
     },
     onImpact: (t) => {
       flying.delete(t);
       pending.delete(t);
       boom();
-      for (const [x, z] of t.rec.cells) dust.burst(x, z, t.rec.kind === 'missile2' ? 1.4 : 1.8);
+      if (t.harmless) dust.burst(t.cell.x, t.cell.z, 0.7);
+      else for (const [x, z] of t.rec.cells) dust.burst(x, z, t.rec.kind === 'missile2' ? 1.4 : 1.8);
       fog.disturb(t.cell.x, t.cell.z);
-      camShake.add(missileCfg.shake);
+      camShake.add(missileCfg.shake * (t.harmless ? 0.3 : 1));
     },
     onCover: (t) => {
       // The crater swap happens under the cloud, as on the board.
@@ -480,7 +560,7 @@ const globe = createGlobeView({
   onApproach: (s) => approach(s),
   approachLead: () => missileCfg.followFlight,
 });
-const rivalView = createRivalView({ renderer, factory, rig, fogSettings: () => fogCfg, fogQuality: () => gfxCfg.fogQuality, stackAims: true });
+const rivalView = createRivalView({ renderer, factory, rig, fogSettings: () => fogCfg, fogQuality: () => gfxCfg.fogQuality, stackAims: true, keepMaxZoom: true });
 // Our missiles coming down on a rival city, played in its own scene when you're looking at it.
 const rivalMissiles = new MissileStrike(rivalView.scene, camera, missileCfg);
 
@@ -498,13 +578,11 @@ function craterRival(r, rec) {
 }
 
 function playRival(r, rec) {
-  const w = hexToWorld(rec.at[0], rec.at[1]);
-  const t = { x: w.x, z: w.z, rec, path: rec.path, t0: rec.t0, flight: rec.flight, accel: rec.accel, killAt: rec.killed ? rec.killAt : null, clock: warClock };
-  return rivalMissiles.fire([t], {
+  return rivalMissiles.fire([simTarget(rec)], {
     onIntercept: () => boom(),
-    onImpact: () => {
+    onImpact: (t) => {
       boom();
-      if (view === 'rival') camShake.add(missileCfg.shake);
+      if (view === 'rival') camShake.add(missileCfg.shake * (t?.harmless ? 0.3 : 1));
     },
     onCover: () => craterRival(r, rec),
   });
@@ -512,22 +590,22 @@ function playRival(r, rec) {
 
 const played = new Set(); // strikes already playing in a city view (started at approach)
 /** Hive City's Missile Magazines fire the salvo up and away as the countdown starts (camera untouched). */
-function launchSalvo(count) {
-  const silos = [...grid.cells.values()].filter((c) => c.terrain === 'magazine');
-  if (!count || !silos.length) return;
+function launchSalvo(recs) {
   const dir = new THREE.Vector3();
   camera.getWorldDirection(dir);
   dir.y = 0;
   dir.normalize();
-  for (let k = 0; k < count; k++) {
-    const c = silos[k % silos.length];
-    const w = hexToWorld(c.x, c.z);
+  // Each strike goes up from its own launcher (war.js: Magazine, or Decoy Works for decoys) at its launch time.
+  for (const rec of recs) {
+    const at = rec.launcher ?? { x: 0, z: 0 };
+    const w = hexToWorld(at.x, at.z);
     const side = (Math.random() - 0.5) * 4;
     const from = { x: w.x, y: 0.6, z: w.z };
     setTimeout(() => {
-      missiles.fire([{ x: w.x, z: w.z, from, away: true, lean: { x: dir.x * 5 - dir.z * side, z: dir.z * 5 + dir.x * side }, flight: 1.6, accel: 1.9 }]);
+      missiles.fire([{ x: w.x, z: w.z, from, away: true, lean: { x: dir.x * 5 - dir.z * side, z: dir.z * 5 + dir.x * side }, flight: rec.boosted ? 1.6 * BOOST.flight : 1.6, accel: 1.9, boosted: !!rec.boosted, harmless: !!rec.decoy }]);
+      dust.burst(at.x, at.z, 0.8);
       boom();
-    }, k * 350);
+    }, (rec.launch ?? 0) * 1000);
   }
 }
 
@@ -547,6 +625,11 @@ function approach(rec) {
 
 function arrive(rec) {
   if (rec.fizzled || played.has(rec)) return;
+  if (rec.decoy) {
+    if (rec.to === 'player' && view !== 'home') say(`Hive City (off screen): ${describe(rec)}`);
+    else if (rec.from === 'player') say(`Your ${describe(rec)}`);
+    return;
+  }
   if (rec.to === 'player') {
     if (view === 'home') landing.push(play([rec]));
     else {
@@ -650,20 +733,16 @@ function homeBearing(r) {
 }
 
 /** `at`: a salvo's cell under the cursor, where its reticle centres. */
-function drawAims(hover = null, at = null) {
+/** fan: the hover is a salvo: one flight path per missile in it, not one for the lot. */
+function drawAims(hover = null, at = null, fan = false) {
   if (!shown) return;
   const mine = queue.filter((q) => q.to === shown.id);
   const aimed = mine.map((q) => q.cells ?? footprint(q.kind, q.at, q.size ?? blastN(), shown.grid));
   rivalView.setMarkers(aimed, hover, at);
-  rivalView.setArcs(hover ? [hover] : [], homeBearing(shown), aimed.flat(), at);
-  // What's queued keeps its reticle and path until End turn fires it: one per card played (a salvo's tiles together).
-  const cards = new Map();
-  for (const q of mine) {
-    const k = q.card;
-    if (!cards.has(k)) cards.set(k, { key: k, cells: [], at: q.centre ?? q.at });
-    cards.get(k).cells.push(...(q.cells ?? footprint(q.kind, q.at, q.size ?? blastN(), shown.grid)));
-  }
-  rivalView.setAimed([...cards.values()], homeBearing(shown));
+  rivalView.setArcs(hover ? (fan ? hover.map((cell) => [cell]) : [hover]) : [], homeBearing(shown), aimed.flat(), fan ? null : at);
+  // What's queued keeps its reticle and path until End turn fires it: one per missile (a salvo shows every flight).
+  const groups = mine.map((q, i) => ({ key: `${q.card}|${i}`, cells: q.cells ?? footprint(q.kind, q.at, q.size ?? blastN(), shown.grid), at: q.at }));
+  rivalView.setAimed(groups, homeBearing(shown));
 }
 
 rig.onZoomPastMax = () => {
@@ -682,14 +761,16 @@ const handEl = document.getElementById('missileHand');
 
 /** Every silo armed: the hand holds as many missiles as the city can store (base slots + each Magazine). */
 function rearm() {
-  silo = Math.max(0, missileCapacity(grid) - queue.length);
+  silo = Math.max(0, missileCapacity(grid) - queue.filter((q) => q.kind !== 'decoy').length);
+  decoys = Math.max(decoys, [...grid.cells.values()].filter((c) => c.terrain === 'decoyworks').length);
   renderHand();
 }
 
 function handKinds() {
   const kinds = [];
-  if (silo > 2) kinds.push('salvo');
+  if (silo + decoys > 2) kinds.push('salvo');
   for (let i = 0; i < silo; i++) kinds.push('missile');
+  for (let i = 0; i < decoys; i++) kinds.push('decoy');
   return kinds;
 }
 
@@ -738,8 +819,10 @@ function moveDrag(e) {
   let hover = null;
   if (c && shown?.grid.has(c[0], c[1])) {
     hover =
-      drag.kind === 'salvo'
-        ? spreadFrom(shown.grid, c, silo)
+      drag.kind === 'decoy'
+        ? [[c[0], c[1]]]
+        : drag.kind === 'salvo'
+        ? spreadFrom(shown.grid, c, silo + decoys)
         : footprint(
             'missile',
             c,
@@ -748,7 +831,7 @@ function moveDrag(e) {
             new Set(queue.filter((q) => q.to === shown.id).flatMap((q) => footprint(q.kind, q.at, q.size ?? blastN(), shown.grid)).map(([x, z]) => key(x, z))),
           );
   }
-  drawAims(hover, c);
+  drawAims(hover, c, drag.kind === 'salvo');
 }
 window.addEventListener('pointermove', moveDrag);
 window.addEventListener('pointerup', (e) => {
@@ -759,7 +842,10 @@ window.addEventListener('pointerup', (e) => {
   card.classList.remove('lifted');
   const onCanvas = document.elementFromPoint(e.clientX, e.clientY) === renderer.domElement;
   const c = onCanvas ? rivalCellAt(e.clientX, e.clientY) : null;
-  if (c && shown?.grid.has(c[0], c[1]) && silo > 0) {
+  if (kind === 'decoy' && c && shown?.grid.has(c[0], c[1]) && decoys > 0) {
+    queue.push({ to: shown.id, at: [c[0], c[1]], kind: 'decoy', size: 0, card: `card${++cardsPlayed}`, cells: [[c[0], c[1]]] });
+    decoys--;
+  } else if (kind !== 'decoy' && c && shown?.grid.has(c[0], c[1]) && silo > 0) {
     // Aimed only: everything queued fires together at End turn. A tile already aimed can take more (they stack).
     const card = `card${++cardsPlayed}`;
     const taken = new Set(
@@ -772,9 +858,12 @@ window.addEventListener('pointerup', (e) => {
       silo--;
     };
     if (kind === 'salvo') {
-      for (const at of spreadFrom(shown.grid, c, silo)) {
-        if (silo <= 0) break;
-        lock(at, [c[0], c[1]]);
+      // Every missile and decoy in hand fans out from the tile (decoys first, so they lead the volley).
+      for (const at of spreadFrom(shown.grid, c, silo + decoys)) {
+        if (decoys > 0) {
+          queue.push({ to: shown.id, at, kind: 'decoy', size: 0, card, centre: [c[0], c[1]], cells: [at] });
+          decoys--;
+        } else if (silo > 0) lock(at, [c[0], c[1]]);
       }
     } else lock([c[0], c[1]]);
   }
@@ -792,8 +881,9 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (!c) return;
   const i = queue.findIndex((q) => q.to === shown.id && q.at[0] === c[0] && q.at[1] === c[1]);
   if (i < 0) return;
-  queue.splice(i, 1);
-  silo++;
+  const [taken] = queue.splice(i, 1);
+  if (taken.kind === 'decoy') decoys++;
+  else silo++;
   renderHand();
   drawAims();
   paint();
@@ -819,30 +909,52 @@ async function nextTurn() {
 
 // ---------- test setup: how many missiles each rival fires at you, and placing Intercept Networks ----------
 const incoming = new Map(); // rival id -> missiles at Hive City each End turn
+const decoysIn = new Map(); // rival id -> decoys flying in ahead of them
+const boostedIn = new Map(); // rival id -> its strikes count as launched next to a Launch Accelerator
 let placingNets = false;
+
+const magazines = new Map(); // city id -> Missile Magazines (launchers per volley), set in the table
+const gridMagazines = (g) => [...g.cells.values()].filter((c) => c.terrain === 'magazine').length;
 
 function renderIncoming() {
   const el = document.getElementById('incoming');
   const total = () => rivals.reduce((n, r) => n + (r.alive === false ? 0 : incoming.get(r.id) ?? 0), 0);
-  el.innerHTML = `<table class="inc-table"><thead><tr><th>Rival</th><th>Missiles at you</th></tr></thead><tbody></tbody>
-    <tfoot><tr><td>Total</td><td id="incTotal"></td></tr></tfoot></table>`;
+  el.innerHTML = `<table class="inc-table"><thead><tr><th>City</th><th>Missiles at you</th><th>Magazines</th><th>Decoys</th><th>Boosted</th></tr></thead><tbody></tbody>
+    <tfoot><tr><td>Total</td><td id="incTotal"></td><td></td><td></td><td></td></tr></tfoot></table>`;
   const body = el.querySelector('tbody');
+  const num = (value, max, disabled, onChange) => {
+    const input = Object.assign(document.createElement('input'), { type: 'number', min: 0, max, step: 1, value, disabled });
+    input.addEventListener('input', () => onChange(Math.max(0, Math.min(max, Math.floor(Number(input.value) || 0)))));
+    const td = document.createElement('td');
+    td.append(input);
+    return td;
+  };
+  const check = (value, disabled, onChange) => {
+    const input = Object.assign(document.createElement('input'), { type: 'checkbox', checked: value, disabled });
+    input.addEventListener('change', () => onChange(input.checked));
+    const td = document.createElement('td');
+    td.append(input);
+    return td;
+  };
+  const row = (id, label, color, dead, missilesTd) => {
+    if (!magazines.has(id)) magazines.set(id, id === 'player' ? gridMagazines(grid) : gridMagazines(rivals.find((r) => r.id === id).grid));
+    const tr = document.createElement('tr');
+    if (dead) tr.className = 'dead';
+    const name = Object.assign(document.createElement('td'), { textContent: label + (dead ? ' (destroyed)' : '') });
+    name.style.color = color;
+    tr.append(name, missilesTd, num(magazines.get(id), 12, dead, (v) => magazines.set(id, v)));
+    if (id === 'player') tr.append(document.createElement('td'), document.createElement('td'));
+    else tr.append(num(decoysIn.get(id) ?? 1, 12, dead, (v) => decoysIn.set(id, v)), check(!!boostedIn.get(id), dead, (v) => boostedIn.set(id, v)));
+    body.append(tr);
+  };
+  row('player', 'Hive City (you)', '#f0c060', false, Object.assign(document.createElement('td'), { textContent: '—' }));
   for (const r of rivals) {
     if (!incoming.has(r.id)) incoming.set(r.id, RIVAL_MISSILES);
-    const tr = document.createElement('tr');
-    if (r.alive === false) tr.className = 'dead';
-    const input = Object.assign(document.createElement('input'), { type: 'number', min: 0, max: 30, step: 1, value: incoming.get(r.id) });
-    input.disabled = r.alive === false;
-    input.addEventListener('input', () => {
-      incoming.set(r.id, Math.max(0, Math.min(30, Math.floor(Number(input.value) || 0))));
+    const dead = r.alive === false;
+    row(r.id, r.def.name, r.def.color, dead, num(incoming.get(r.id), 30, dead, (v) => {
+      incoming.set(r.id, v);
       el.querySelector('#incTotal').textContent = total();
-    });
-    const name = Object.assign(document.createElement('td'), { textContent: r.def.name + (r.alive === false ? ' (destroyed)' : '') });
-    name.style.color = r.def.color;
-    const cell = document.createElement('td');
-    cell.append(input);
-    tr.append(name, cell);
-    body.append(tr);
+    }));
   }
   el.querySelector('#incTotal').textContent = total();
 }
@@ -884,8 +996,8 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 
 async function runTurn() {
   const cities = [
-    { id: 'player', grid, oil: Infinity, hp, alive: true, buildings: playerBuildings() }, // the test city never runs dry
-    ...rivals.filter((r) => r.alive !== false).map((r) => ({ id: r.id, grid: r.grid, oil: r.oil ?? 0, hp: r.capitalHp, alive: true, buildings: r.stats.buildings })),
+    { id: 'player', grid, oil: Infinity, hp, alive: true, buildings: playerBuildings(), magazines: magazines.get('player') }, // the test city never runs dry
+    ...rivals.filter((r) => r.alive !== false).map((r) => ({ id: r.id, grid: r.grid, oil: r.oil ?? 0, hp: r.capitalHp, alive: true, buildings: r.stats.buildings, magazines: magazines.get(r.id) })),
   ];
   const strikes = [
     ...queue.map((q) => ({ from: 'player', ...q })),
@@ -897,10 +1009,16 @@ async function runTurn() {
   const pool = land.length ? land : [...grid.cells.values()];
   for (const r of rivals) {
     if (r.alive === false) continue;
+    const boosted = !!boostedIn.get(r.id);
+    const mine = [];
     for (let n = 0; n < (incoming.get(r.id) ?? 0); n++) {
       const c = pool[Math.floor(Math.random() * pool.length)];
-      if (c) strikes.push({ from: r.id, to: 'player', at: [c.x, c.z], kind: 'missile' });
+      if (c) mine.push({ from: r.id, to: 'player', at: [c.x, c.z], kind: 'missile', boosted });
     }
+    // Decoys go first, aimed where its first missile is.
+    const lead = mine[0]?.at ?? (pool[0] ? [pool[0].x, pool[0].z] : null);
+    if (lead) for (let n = 0; n < (decoysIn.get(r.id) ?? 1); n++) strikes.push({ from: r.id, to: 'player', at: [...lead], kind: 'decoy', boosted });
+    strikes.push(...mine);
   }
   queue = [];
   if (!strikes.length) {
@@ -913,7 +1031,7 @@ async function runTurn() {
     drawAims();
     landing = [];
     played.clear();
-    if (view === 'home') launchSalvo(strikes.filter((s) => s.from === 'player').length);
+    if (view === 'home') launchSalvo(res.filter((s) => s.from === 'player'));
     await globe.playAttack(res, rivals);
     await Promise.all(landing);
     for (const r of rivals) {
@@ -921,6 +1039,10 @@ async function runTurn() {
       noteAttacks(r, res);
       r.stats = rivalStats(r.grid, r);
     }
+    const atMe = res.filter((x) => x.to === 'player' && !x.decoy);
+    const decoyRecs = res.filter((x) => x.to === 'player' && x.decoy);
+    if (atMe.length || decoyRecs.length)
+      say(`Incoming: ${atMe.filter((x) => x.hit).length}/${atMe.length} missiles got through${decoyRecs.length ? ` · ${decoyRecs.length} decoys drew ${decoyRecs.reduce((n, x) => n + (x.drew ?? 0), 0)} kills` : ''}`);
     for (const rec of res.filter((x) => x.from === 'player')) {
       const name = rivals.find((r) => r.id === rec.to)?.def.name;
       say(`You → ${name}: ${rec.hit ? `hit${rec.lost.length ? ` (${rec.lost.map((c) => c.name).join(', ')})` : ''}${rec.capital != null ? `, Capital ${rec.capital}/${CAPITAL_HP}` : ''}${rec.eliminated ? ' · DESTROYED' : ''}` : 'intercepted'}`);
@@ -941,8 +1063,8 @@ nextBtn.addEventListener('click', (e) => {
 
 // Models: the core set first, then the extras swap in for their stand-ins.
 factory.ready.then(() => {
-  renderIncoming();
   buildCity();
+  renderIncoming();
   rearm();
   paint();
   nextBtn.disabled = false;

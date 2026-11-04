@@ -1,7 +1,8 @@
 import { DIRS, key, hexesAround, hexToWorld } from './grid.js';
-import { simulateDefence, missilePath, missileHp, mulberry } from './interceptSim.js';
+import { simulateDefence, missilePath, missileHp, mulberry, splitTime, decoyFakes, makeWeave } from './interceptSim.js';
 import { TERRAINS, isBuilding } from './tiles.js';
 import { MISSILE } from './missiles.js';
+import { assignLaunchers, BOOST } from './arsenal.js';
 
 /**
  * The attack phase: every city's queued strikes resolved together, after the season is scored. No rendering here:
@@ -17,14 +18,19 @@ import { MISSILE } from './missiles.js';
  */
 
 export const CAPITAL_HP = 5;
-/** War Map clock: the first missile lands this many seconds in, then one every LAUNCH_GAP. */
-export const LAND_BASE = 6;
-export const LAUNCH_GAP = 0.35;
+/**
+ * War Map clock. A city fires in volleys: one missile per Missile Magazine at once (at least one launcher), the
+ * next volley VOLLEY_GAP later as the magazines reload. Each missile lands about TRAVEL seconds after it leaves.
+ */
+export const TRAVEL = 6;
+export const VOLLEY_GAP = 1.2;
+const LAUNCH_JITTER = 0.12; // a volley leaves within this (not in lockstep)
+const TRAVEL_JITTER = 0.6; // flight times differ a little, so a volley doesn't land as one
 /** Rivals hold their fire at the player before this year (the tutorial and first year stay calm). */
 export const GRACE_ROUNDS = 1;
 
 export function footprint(kind, [x, z], size, grid, taken) {
-  const extra = size ?? (kind === 'missile2' ? 1 : 0);
+  const extra = kind === 'decoy' ? 0 : (size ?? (kind === 'missile2' ? 1 : 0)); // a decoy marks just its aim
   const n = 1 + Math.max(0, extra);
   const around = hexesAround(x, z, 5);
   if (!grid || n <= 1) return around.slice(0, n);
@@ -42,19 +48,26 @@ export function footprint(kind, [x, z], size, grid, taken) {
   return [origin, ...rest].slice(0, n);
 }
 
-/** BFS from `origin` over tiles that exist on `grid`, up to `n` cells (a salvo fan). */
+/**
+ * BFS from `origin` over tiles that exist on `grid`, `n` cells (a salvo fan). It only spreads through the city's own
+ * tiles, so it always ends; with more missiles than tiles, the rest stack on the same tiles again (nearest first).
+ */
 export function spreadFrom(grid, origin, n) {
   const out = [];
   const seen = new Set();
   const q = [origin];
-  while (q.length && out.length < n) {
+  while (q.length && out.length < n && seen.size < 4000) {
     const [x, z] = q.shift();
     const k = key(x, z);
     if (seen.has(k)) continue;
     seen.add(k);
-    if (grid.has(x, z)) out.push([x, z]);
-    for (const [dx, dz] of DIRS) q.push([x + dx, z + dz]);
+    const onGrid = grid.has(x, z);
+    if (onGrid) out.push([x, z]);
+    // Spread only from city tiles (and from the aimed cell itself, in case it's off the city).
+    if (onGrid || out.length === 0) for (const [dx, dz] of DIRS) q.push([x + dx, z + dz]);
   }
+  const unique = out.length;
+  for (let i = 0; unique && out.length < n; i++) out.push([...out[i % unique]]);
   return out;
 }
 
@@ -74,6 +87,12 @@ export function resolve(strikes, cities, rng = Math.random) {
     if (!queues.has(s.from)) queues.set(s.from, []);
     queues.get(s.from).push(s);
   }
+  // Where each strike launches from (Magazines, Decoy Works; next to a Launch Accelerator first).
+  const launchAt = new Map();
+  for (const [from, q] of queues) {
+    const city = byId.get(from);
+    assignLaunchers(city?.grid, q, city?.idle).forEach((l, i) => launchAt.set(q[i], l));
+  }
   const order = [];
   for (let more = true; more; ) {
     more = false;
@@ -87,13 +106,43 @@ export function resolve(strikes, cities, rng = Math.random) {
   // Every missile's real flight: launch, path, landing time on the War Map clock (globeView plays the same times).
   const flight = MISSILE.followFlight ?? 2.2;
   const accel = MISSILE.accel ?? 1.4;
+  const launchers = new Map(); // attacker id -> magazines (launch slots per volley)
+  const fired = new Map(); // launcher (or attacker, counted mode) -> missiles launched so far
+  // city.magazines overrides the count on its grid (the combat test's table).
+  for (const c of cities) launchers.set(c.id, Math.max(1, c.magazines ?? [...c.grid.cells.values()].filter((t) => t.terrain === 'magazine').length));
   const out = order.map((s, i) => {
     const st = state.get(s.to);
     const def = byId.get(s.to);
     const cells = s.cells ?? footprint(s.kind, s.at, s.size, def?.grid);
     const w = hexToWorld(s.at[0], s.at[1]);
-    const land = LAND_BASE + LAUNCH_GAP * i;
-    return { ...s, cells, shots: [], hit: false, lost: [], capital: null, eliminated: false, land, t0: land - flight, flight, accel, path: missilePath(w.x, w.z, MISSILE, rng), hp: missileHp(s.kind), id: i, _st: st };
+    const launcher = launchAt.get(s) ?? null;
+    const boosted = !!(launcher?.boosted || s.boosted);
+    const travel = TRAVEL * (boosted ? BOOST.travel : 1);
+    const dive = flight * (boosted ? BOOST.flight : 1);
+    // Each launcher (Magazine, Decoy Works) fires its own strikes one per volley, so decoys from a Decoy Works go
+    // up alongside the magazines' first volley instead of taking their slots. city.magazines (the combat test's
+    // table) keeps the old shared count.
+    const byCount = (byId.get(s.from)?.magazines != null || !launcher) && s.kind !== 'decoy';
+    const lk = launcher ? `${s.from}|${launcher.x},${launcher.z}` : null;
+    const rk = `${s.from}|real`;
+    const slot = byCount ? Math.floor((fired.get(rk) ?? 0) / (launchers.get(s.from) ?? 1)) : (fired.get(lk) ?? 0);
+    if (byCount) fired.set(rk, (fired.get(rk) ?? 0) + 1);
+    else if (lk) fired.set(lk, (fired.get(lk) ?? 0) + 1);
+    const launch = slot * VOLLEY_GAP + rng() * LAUNCH_JITTER;
+    const land = launch + travel + rng() * TRAVEL_JITTER;
+    const decoy = s.kind === 'decoy';
+    const rec = { ...s, cells, shots: [], hit: false, lost: [], capital: null, eliminated: false, launch, land, t0: land - dive, flight: dive, accel, path: missilePath(w.x, w.z, MISSILE, rng), hp: missileHp(s.kind), id: i, launcher, boosted, _st: st };
+    // A boosted missile weaves on its way down (its fakes, after a split, fly straight).
+    if (boosted) rec.weave = makeWeave(rec.path, rng);
+    if (decoy) {
+      // It splits short of the target: its fakes fly the rest, all harmless.
+      rec.decoy = true;
+      rec.harmless = true;
+      rec.splitAt = splitTime(rec);
+      rec.endAt = rec.splitAt;
+      rec.fakes = decoyFakes(rec, rng).map((f, j) => ({ ...f, id: `${i}.${j}`, parent: i, harmless: true, kind: 'fake', to: s.to, from: s.from }));
+    }
+    return rec;
   });
 
   // Each city's Intercept Networks fight the missiles coming at it, for real (interceptSim.js).
@@ -102,16 +151,20 @@ export function resolve(strikes, cities, rng = Math.random) {
     const incoming = out.filter((r) => r.to === c.id);
     if (!incoming.length || !c.alive) continue;
     const nets = [...c.grid.cells.values()].filter((t) => t.terrain === 'intercept').map((t) => ({ x: t.x, z: t.z }));
-    const sim = simulateDefence(incoming, nets, mulberry(Math.floor(rng() * 4294967296)));
+    const fakes = incoming.flatMap((r) => r.fakes ?? []);
+    const sim = simulateDefence([...incoming, ...fakes], nets, mulberry(Math.floor(rng() * 4294967296)));
     sims.set(c.id, sim);
-    for (const r of incoming) {
+    for (const r of [...incoming, ...fakes]) {
       const o = sim.missiles.get(r.id);
+      if (o?.void) r.void = true;
       if (!o?.killed) continue;
       r.killed = true;
       r.killAt = o.tKill;
       r.killPos = o.pos;
-      if (o.by) r.shots.push({ x: o.by.x, z: o.by.z, success: true });
+      if (o.by) r.shots?.push({ x: o.by.x, z: o.by.z, success: true });
     }
+    // Rounds each decoy drew (its own and its fakes'), for the war report.
+    for (const r of incoming) if (r.decoy) r.drew = (r.killed ? 1 : 0) + r.fakes.filter((f) => f.killed).length;
   }
 
   // Then the landings, in the order they touch down.
@@ -130,7 +183,7 @@ export function resolve(strikes, cities, rng = Math.random) {
       if (st.dead.has(key(x, z))) return 'crater';
       return grid.get(x, z)?.terrain;
     };
-    if (rec.killed) continue;
+    if (rec.killed || rec.decoy) continue;
 
     rec.hit = true;
     let capitalHit = false;

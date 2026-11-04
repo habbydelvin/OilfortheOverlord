@@ -7,12 +7,15 @@ import { pieceOf } from './pieces.js';
  */
 let stock = [];
 
+/** Stock kinds: 'missile', 'missile2' (warhead) and 'decoy'; anything else is a plain missile. */
+const normKind = (kind) => (kind === 'missile2' || kind === 'decoy' ? kind : 'missile');
+
 /**
  * Put a finished missile in the silo. When `cap` is already full the last slot
  * stays occupied and the count does not go up.
  */
 export function addMissile(kind = 'missile', cap = Infinity) {
-  const k = kind === 'missile2' ? 'missile2' : 'missile';
+  const k = normKind(kind);
   if (stock.length >= cap) return false;
   stock.push(k);
   return true;
@@ -57,7 +60,7 @@ export function spendMissile(kind = 'missile') {
 export function returnStrikeHand(pieces) {
   for (const p of pieces) {
     if (p.terrain === 'salvo') continue;
-    stock.push(p.terrain === 'missile2' ? 'missile2' : 'missile');
+    stock.push(normKind(p.terrain));
   }
 }
 
@@ -73,7 +76,7 @@ export function queueStrike(to, at, kind = 'missile') {
 
 /** Aim a missile card already drawn out of stock (played from the hand) at cell `at` of city `to`. */
 export function queueDrawn(to, at, kind = 'missile', size = 1, extra = {}) {
-  queue.push({ to, at: [...at], kind: kind === 'missile2' ? 'missile2' : 'missile', size, ...extra });
+  queue.push({ to, at: [...at], kind: normKind(kind), size: kind === 'decoy' ? 0 : size, ...extra });
 }
 
 /**

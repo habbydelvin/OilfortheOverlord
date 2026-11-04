@@ -5,9 +5,10 @@ import { SHAPES } from './shapes.js';
 import { buildRaiderCamp } from './raiderMesh.js';
 import { buildLabourCamp } from './labourCampMesh.js';
 import { buildInterceptBunker } from './interceptMesh.js';
+import { buildDecoyWorks, buildAccelerator } from './launcherMeshes.js';
 import { copySeam } from './seamlessGround.js';
 import { MISSILE } from './missiles.js';
-import { INTERCEPT } from './arsenal.js';
+import { INTERCEPT, DECOY, BOOST } from './arsenal.js';
 import { SCALE } from './scalingConfig.js';
 import { L } from './i18n.js';
 import { hexToWorld, hexRound, hexDistance, hexesAround, cellSeed, cellsCentre } from './grid.js';
@@ -148,6 +149,33 @@ export const TERRAINS = {
     weight: 0.5,
     rule: 'Missile capacity +1',
     stats: { manpower: -2, missileCap: 1 },
+  },
+  decoyworks: {
+    name: 'Decoy Works',
+    trigger: 'On trigger',
+    top: 0x8a8a6a,
+    edge: 0x5c5c44,
+    category: 'building',
+    buildable: false,
+    weight: 0.4,
+    get rule() {
+      const every = DECOY.seasons > 1 ? `Every ${DECOY.seasons} seasons` : 'Each season';
+      return `-${DECOY.oil} oil each season · ${every}, produce 1 Decoy · Decoys launch from here`;
+    },
+    stats: { manpower: -2 },
+  },
+  booster: {
+    name: 'Launch Accelerator',
+    trigger: 'Passive',
+    top: 0x5a7a9a,
+    edge: 0x3a5068,
+    category: 'building',
+    buildable: false,
+    weight: 0.4,
+    get rule() {
+      return `Missiles launched within ${BOOST.radius} tiles fly ${Math.round((1 / BOOST.travel - 1) * 100)}% faster${BOOST.weave > 0 ? ' · They weave to dodge interceptors' : ''}`;
+    },
+    stats: { manpower: -2 },
   },
 
   // ---- wasteland (4 cosmetic variants, share one draw weight: 4 × 1.34 ≈ 30% of draws) ----
@@ -419,6 +447,19 @@ export const ACTIONS = {
     weight: 0, // strike hand only, when 3+ missiles
     rule: 'Drag onto a tile: every missile in hand fans out from there',
   },
+  decoy: {
+    name: 'Decoy',
+    trigger: 'On play',
+    top: 0x8a8a6a,
+    edge: 0x5c5c44,
+    category: 'action',
+    symbol: '◇',
+    range: 0,
+    weight: 0, // produced by a Decoy Works
+    get rule() {
+      return `Splits into ${DECOY.fakes} fakes near the target · Draws interceptor fire · Deals no damage`;
+    },
+  },
   overtime: {
     name: 'Rush Order',
     trigger: 'On play',
@@ -475,6 +516,9 @@ const ZH = {
   warhead: { name: '弹头研究所', rule: '每座开工的研究所使导弹爆炸再多打相邻 1 格' },
   intercept: { name: '拦截网络', rule: () => `每季 -${INTERCEPT.upkeep} 石油 · 炮塔击落瞄准 ${INTERCEPT.range} 格内的导弹` },
   magazine: { name: '储弹仓', rule: '导弹容量 +1' },
+  decoyworks: { name: '诱饵弹工坊', rule: () => `每季 -${DECOY.oil} 石油 · ${DECOY.seasons > 1 ? `每 ${DECOY.seasons} 季` : '每季'}生产 1 枚诱饵弹 · 诱饵弹从此处发射` },
+  booster: { name: '发射加速器', rule: () => `${BOOST.radius} 格内发射的导弹飞行速度提升 ${Math.round((1 / BOOST.travel - 1) * 100)}%${BOOST.weave > 0 ? ' · 蛇形机动躲避拦截' : ''}` },
+  decoy: { name: '诱饵弹', rule: () => `接近目标时分裂为 ${DECOY.fakes} 枚假弹 · 吸引拦截火力 · 不造成伤害` },
   missile: { name: '导弹', rule: () => `摧毁 1 格 · 弹头研究所每座 +1 格 · 首都 −${MISSILE.damage ?? 1}` },
   salvo: { name: '齐射', rule: '拖到一格上：手中每枚导弹从该处铺开瞄准' },
   missile2: { name: '导弹', rule: () => `摧毁 2×2 · 首都 −${MISSILE.damage ?? 1}` },
@@ -583,10 +627,12 @@ export const AREAS = {
   warhead: 'plus',
   intercept: 'plus',
   missile2: 'block2',
+  booster: 'ring2',
 };
 
 export function areaGridHTML(area) {
   if (area === 'block2') return hexPanelHTML([[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, z]) => [x, z, 'area']));
+  if (area === 'ring2') return hexPanelHTML(hexesAround(0, 0, 2).map(([x, z]) => [x, z, x === 0 && z === 0 ? 'on' : 'area']));
   return hexPanelHTML(hexesAround(0, 0, 1).map(([x, z]) => [x, z, x === 0 && z === 0 && area !== 'square' ? 'on' : 'area']));
 }
 
@@ -640,11 +686,13 @@ export const SHOP_ITEMS = [
   ['warhead', 4],
   ['intercept', 4],
   ['magazine', 4],
+  ['decoyworks', 4],
+  ['booster', 5],
   ['overtime', 2],
 ];
 
 /** Military buildings (and the Overtime action that runs them): the Black Market's stock; rivals value them too. */
-export const MILITARY = new Set(['milfactory', 'missilelab', 'warhead', 'intercept', 'magazine']);
+export const MILITARY = new Set(['milfactory', 'missilelab', 'warhead', 'intercept', 'magazine', 'decoyworks', 'booster']);
 export const BLACK_MARKET = new Set([...MILITARY, 'overtime', 'militia']);
 /** The Black Market's other aisle: every non-military shop card except the basics (those come up in every deal). */
 export const BLACK_MARKET_RESOURCE = new Set(['pump', 'oasis', 'tarpit', 'labourcamp', 'refinery', 'spark', 'demolish', 'demolish2']);
@@ -658,6 +706,8 @@ export const SHOP_REQUIRES = {
   warhead: 'milfactory',
   magazine: 'milfactory',
   overtime: 'milfactory',
+  decoyworks: 'milfactory',
+  booster: 'magazine',
 };
 
 /** True if this shop item may appear (its prerequisite is already unlocked). */
@@ -812,6 +862,9 @@ export class TileFactory {
     if (terrain === 'labourcamp' && !this.models?.has('labourcamp')) return tagSoil(buildLabourCamp(this.soilGeo, this.soilMat));
     // Intercept Network: the code-built CIWS bunker until a model file exists.
     if (terrain === 'intercept' && !this.models?.has('intercept')) return tagSoil(buildInterceptBunker(this.soilGeo, this.soilMat));
+    // Decoy Works / Launch Accelerator: code-built stand-ins until model files exist.
+    if (terrain === 'decoyworks' && !this.models?.has(terrain)) return tagSoil(buildDecoyWorks(this.soilGeo, this.soilMat, rot));
+    if (terrain === 'booster' && !this.models?.has(terrain)) return tagSoil(buildAccelerator(this.soilGeo, this.soilMat, rot));
     const source = this.models?.get(terrain);
     if (!source) return this.#block(terrain);
     // The fitted model keeps its own offset. A holder takes the cell position

@@ -206,6 +206,7 @@ export class Placement {
       if (!this.missileable(cells).length) return { ok: false, reason: L('No building to destroy here', '这里没有可摧毁的建筑') };
       return { ok: true, reason: '' };
     }
+    if (this.piece?.terrain === 'decoy') return { ok: false, reason: L('Aim decoys at a rival city', '诱饵弹只能瞄准敌方城市') };
     if (this.piece?.terrain === 'overtime') {
       const cell = this.grid.get(...cells[0]);
       if (!cell || cell.terrain !== 'milfactory') return { ok: false, reason: L('Play this on a Military Factory', '请打在军事工厂上') };

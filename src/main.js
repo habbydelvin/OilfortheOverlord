@@ -33,8 +33,8 @@ import { pieceOf } from './pieces.js';
 import { findCiws } from './interceptMesh.js';
 import { queueDrawn, addMissile, missileCount, missileKinds, trimMissiles, resetMissiles, openCityStrike, drawStrikeHand, returnStrikeHand, bindCityStrikeUi, queueStrike, unqueueStrike, queuedStrikes, takeQueue, clearQueue } from './cityStrike.js';
 import { CAPITAL_HP, resolve as resolveWar, applyToRival, footprint, spreadFrom } from './war.js';
-import { chooseStrikes, noteAttacks } from './rivalAI.js';
-import { INTERCEPT, INTERCEPT_DEFAULTS, INTERCEPT_PARAMS, saveIntercept, clearIntercept } from './arsenal.js';
+import { chooseStrikes, noteAttacks, idleOf } from './rivalAI.js';
+import { INTERCEPT, INTERCEPT_DEFAULTS, INTERCEPT_PARAMS, saveIntercept, clearIntercept, DECOY, BOOST, isBoosted } from './arsenal.js';
 import { Payout, tileHop } from './payout.js';
 import { EVENTS, KIND_LABEL, drawEvent } from './events.js';
 import { Dialogue } from './dialogue.js';
@@ -86,12 +86,13 @@ let rivals = [];
 let rivalShown = null;
 let globe;
 // Rival cities get their own fog of war, with the board's fog settings and quality (read on the first visit).
-const rivalView = createRivalView({ renderer, factory, rig, fogSettings: () => fogCfg, fogQuality: () => gfxCfg.fogQuality });
+const rivalView = createRivalView({ renderer, factory, rig, fogSettings: () => fogCfg, fogQuality: () => gfxCfg.fogQuality, keepMaxZoom: true });
 const tiles = new THREE.Group();
 scene.add(tiles);
 const interceptCover = new THREE.Group();
 scene.add(interceptCover);
 const INTERCEPT_GLOW = 0x4cc8ff;
+const BOOST_GLOW = 0xffc84a; // Launch Accelerator's reach
 let interceptCoverKey = '';
 let interceptCoverGlows = [];
 const previewCfg = loadPreviewConfig(); // Game Debug → Placement preview
@@ -167,21 +168,21 @@ const debug = RELEASE
     updateHUD();
     return `Added ${k}`;
   },
-  onGiveMissile: () => {
+  onGiveMissile: (kind = 'missile') => {
     if (view === 'rival' && rivalShown && rivalShown.alive !== false && !attackLive) {
       if (!rivalHand) {
-        addMissile('missile');
+        addMissile(kind);
         openRivalHand(rivalShown);
       } else {
-        hand.cards.push(pieceOf('missile'));
+        hand.cards.push(pieceOf(kind));
         const ammo = hand.cards.filter((p) => isMissileAmmo(p.terrain)).length;
         if (ammo > 2 && !hand.cards.some((p) => p.terrain === 'salvo')) hand.cards.unshift(pieceOf('salvo'));
         hand.render();
       }
-    } else addMissile('missile');
+    } else addMissile(kind);
     updateHUD();
     updateAimBar();
-    return 'Added missile';
+    return `Added ${kind}`;
   },
   onPerf: () => perf.setOpen(!perf.enabled),
   onResetTutorial: () => {
@@ -849,9 +850,9 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
       pending.delete(original.get(hit));
       const { x, z } = hit.cell;
       boom();
-      dust.burst(x, z, 1.8);
+      dust.burst(x, z, hit.harmless ? 0.7 : 1.8);
       fog.disturb(x, z);
-      camShake.add(missileCfg.shake);
+      camShake.add(missileCfg.shake * (hit.harmless ? 0.3 : 1));
     },
     onCover: (hit) => {
       if (run !== runId) return;
@@ -1416,6 +1417,28 @@ async function finishFactoryMissile(cell, idle) {
   return { ...y, count: n };
 }
 
+/**
+ * A staffed Decoy Works does a season of work (its oil comes out of the season's yield, economy.js); every
+ * DECOY.seasons it banks a Decoy if there's room in the silo (else it waits, full). animate: rise from the tile.
+ */
+async function chargeDecoyWorks(cell, animate = true) {
+  const run = runId;
+  const idle = idleKeySet();
+  if (idle.has(`${cell.x},${cell.z}`)) return { decoy: true, count: 0, idle: true };
+  cell.decoyProgress = Math.min(DECOY.seasons, (cell.decoyProgress ?? 0) + 1);
+  if (cell.decoyProgress < DECOY.seasons) return { decoy: true, count: 0 };
+  if (missileCount() >= currentMissileCap(idle)) return { decoy: true, count: 0, stuck: true };
+  if (animate) {
+    await hopFactory(cell);
+    if (run !== runId) return { decoy: true, count: 0 };
+    await playMissileMade(cell, 1, 'decoy');
+    if (run !== runId) return { decoy: true, count: 0 };
+  } else if (!tryStoreMissile('decoy')) return { decoy: true, count: 0, stuck: true };
+  cell.decoyProgress = 0;
+  updateHUD();
+  return { decoy: true, count: 1 };
+}
+
 function dockMissile(kind) {
   if (!tryStoreMissile(kind)) return;
   updateHUD();
@@ -1544,25 +1567,31 @@ function updateInterceptCover(time) {
   let ox = null;
   let oz = null;
   let invalid = false;
-  if (hand.piece?.terrain === 'intercept' && h) {
+  // Intercept Network: its coverage ring. Launch Accelerator: the cells whose launchers it speeds up.
+  const RANGED = { intercept: () => INTERCEPT.range, booster: () => BOOST.radius };
+  let ranged = null;
+  if (RANGED[hand.piece?.terrain] && h) {
+    ranged = hand.piece.terrain;
     ox = h[0];
     oz = h[1];
     invalid = placement.result && !placement.result.ok;
   } else if (!hand.piece && h) {
     const cell = grid.get(h[0], h[1]);
-    if (cell?.terrain === 'intercept') {
+    if (RANGED[cell?.terrain]) {
+      ranged = cell.terrain;
       ox = cell.x;
       oz = cell.z;
     }
   }
-  const k = ox == null ? '' : `${ox},${oz},${INTERCEPT.range},${invalid ? 'bad' : 'ok'}`;
+  const radius = ranged ? RANGED[ranged]() : 0;
+  const k = ox == null ? '' : `${ranged},${ox},${oz},${radius},${invalid ? 'bad' : 'ok'}`;
   if (k !== interceptCoverKey) {
     interceptCoverKey = k;
     for (const g of interceptCoverGlows) g.dispose();
     interceptCoverGlows = [];
     if (ox != null) {
-      for (const [x, z] of hexesAround(ox, oz, INTERCEPT.range)) {
-        const glow = createGlow(invalid ? 0xff4a4a : INTERCEPT_GLOW, 'intercept cover');
+      for (const [x, z] of hexesAround(ox, oz, radius)) {
+        const glow = createGlow(invalid ? 0xff4a4a : ranged === 'booster' ? BOOST_GLOW : INTERCEPT_GLOW, 'intercept cover');
         glow.setLevel(1);
         const w = hexToWorld(x, z);
         glow.group.position.set(w.x, LIFT, w.z);
@@ -2172,7 +2201,7 @@ function placedCardExtra(per) {
 function inspectKeyOf(c, per) {
   const mods = (per?.mods ?? []).map((m) => `${m.id}:${m.oil ?? ''}:${m.n ?? ''}:${m.pct ?? ''}:${m.fed ?? ''}`).join(',');
   const grants = (per?.grants ?? []).map((g) => `${g.terrain}:${g.food ?? 0}:${g.oil ?? 0}`).join(',');
-  return `${c.x},${c.z},${c.terrain},${isZh() ? 1 : 0},${c.onRuins ? 1 : 0},${c.missileProgress ?? ''}|${mods}|${grants}|${per?.outFood}|${per?.outOil}|${per?.outManpower}|${per?.food}|${per?.oil}|${per?.idle ? 1 : 0}`;
+  return `${c.x},${c.z},${c.terrain},${isZh() ? 1 : 0},${c.onRuins ? 1 : 0},${c.missileProgress ?? ''},${c.decoyProgress ?? ''},${c.terrain === 'magazine' || c.terrain === 'decoyworks' ? Number(isBoosted(grid, c.x, c.z)) : ''}|${mods}|${grants}|${per?.outFood}|${per?.outOil}|${per?.outManpower}|${per?.food}|${per?.oil}|${per?.idle ? 1 : 0}`;
 }
 /** Shrink the rules until they sit under the picture. The name keeps its size unless it overflows the header. */
 function fitInspectCard(root) {
@@ -2256,6 +2285,14 @@ function updateInspect(cell) {
   if (c.terrain === 'magazine') {
     const cap = currentMissileCap();
     notes.push(L(`Silo ${missileHandCount()} / ${cap}`, `弹库 ${missileHandCount()} / ${cap}`));
+  }
+  if (c.terrain === 'decoyworks' && DECOY.seasons > 1) {
+    const have = c.decoyProgress ?? 0;
+    notes.push(L(`Decoy progress ${have} / ${DECOY.seasons} seasons`, `诱饵弹进度 ${have} / ${DECOY.seasons} 季`));
+  }
+  if (c.terrain === 'magazine' || c.terrain === 'decoyworks') {
+    if (isBoosted(grid, c.x, c.z, idleKeySet()))
+      notes.push(L('Next to a Launch Accelerator: its launches fly faster', '靠近发射加速器：从这里发射的导弹飞得更快'));
   }
   if (t.buildable) notes.push(L('A building can be placed on top of this tile', '可以在这个地块上放置建筑'));
   el.innerHTML = `
@@ -2443,6 +2480,7 @@ function runPayout(e, onDone) {
     .flatMap(splitTriggers);
   if (!previewing) {
     for (const c of grid.cells.values()) if (c.terrain === 'milfactory') factoryJobs.push(chargeOneFactory(c));
+    for (const c of grid.cells.values()) if (c.terrain === 'decoyworks') factoryJobs.push(chargeDecoyWorks(c));
   }
 
   // Oil fills the quota bar; food fills the store bar (up to its capacity).
@@ -2768,11 +2806,14 @@ function settleTurn(e) {
   let kind = 'good';
   if (e.foodWasted)
     lines.push(`<span class="bad">${L(`The stores are full: ${e.foodWasted} food spoiled.`, `粮仓已满：${e.foodWasted} 食物腐坏了。`)}</span>`);
-  const missilesMade = factoryWork.filter((w) => w.count).reduce((s, w) => s + w.count, 0);
+  const missilesMade = factoryWork.filter((w) => w.count && !w.decoy).reduce((s, w) => s + w.count, 0);
   if (missilesMade)
     lines.push(
       `<span class="good">${L(`Military Factory produced ${missilesMade} missile${missilesMade === 1 ? '' : 's'}.`, `军事工厂生产了 ${missilesMade} 枚导弹。`)}</span>`,
     );
+  const decoysMade = factoryWork.filter((w) => w.count && w.decoy).reduce((s, w) => s + w.count, 0);
+  if (decoysMade) lines.push(`<span class="good">${L(`Decoy Works produced ${decoysMade} decoy${decoysMade === 1 ? '' : 's'}.`, `诱饵弹工坊生产了 ${decoysMade} 枚诱饵弹。`)}</span>`);
+  if (factoryWork.some((w) => w.decoy && w.stuck)) lines.push(`<span class="bad">${L('A Decoy Works is waiting: the silo is full.', '诱饵弹工坊在等待：导弹仓已满。')}</span>`);
   if (factoryWork.some((w) => w.unpaid))
     lines.push(`<span class="bad">${L('A Military Factory had no oil and sat idle.', '一座军事工厂没有石油，未能开工。')}</span>`);
 
@@ -3418,6 +3459,10 @@ function debugSkipYear(met, surplus = 0) {
   turn.season = yearLength() - 1;
   turn.stockpile = met ? turn.quota : 0;
   const factoryWork = runFactories();
+  for (const c of [...grid.cells.values()].filter((c) => c.terrain === 'decoyworks')) {
+    // (no animation: chargeDecoyWorks resolves at once when animate is off)
+    chargeDecoyWorks(c, false).then((w) => w.count && updateHUD());
+  }
   settleTurn({ ...economyNow(), oil: 0, factoryWork });
   if (met && surplus && shopOpen) {
     turn.coins = surplus;
@@ -4218,28 +4263,56 @@ function launchFromSilo(cell) {
  * the city (each its share, one after another), before the War Map shows them fly. No magazine: nothing to show.
  */
 const SALVO_CLOSE = 8; // camera distance on one magazine
-async function launchSalvo(count) {
-  const idle = idleKeySet();
-  const silos = readySilos()
-    .sort((a, b) => idle.has(`${a.x},${a.z}`) - idle.has(`${b.x},${b.z}`)) // staffed ones first
-    .slice(0, count);
-  if (!count || !silos.length) return;
+/**
+ * strikes: the player's resolved strikes (war.js: each has its launcher cell, boosted flag and kind). Each launcher
+ * fires its own: a Magazine through its Launch clip, a Decoy Works straight off its roof.
+ */
+async function launchSalvo(strikes) {
+  if (!strikes.length) return;
   const run = runId;
   // No camera move, no UI change: the magazines fire wherever you're looking, while the countdown runs.
   camera.getWorldDirection(camDir);
   camDir.y = 0;
   camDir.normalize();
   const flights = [];
-  const fire = (from) => {
+  const fireAway = (from, s) => {
     const side = (Math.random() - 0.5) * 4;
     const lean = { x: camDir.x * 5 - camDir.z * side, z: camDir.z * 5 + camDir.x * side }; // off over the horizon
-    flights.push(missiles.fire([{ x: from.x, z: from.z, from, away: true, lean, flight: 1.6, accel: 1.9 }]));
+    const boosted = !!s?.boosted;
+    flights.push(missiles.fire([{ x: from.x, z: from.z, from, away: true, lean, flight: boosted ? 1.6 * BOOST.flight : 1.6, accel: 1.9, boosted, harmless: !!s?.decoy }]));
   };
-  await Promise.all(
-    silos.map((cell, k) =>
-      wait(k * 0.35).then(() => run === runId && siloLaunch(cell, Math.ceil((count - k) / silos.length), fire)),
-    ),
-  );
+  // Group by launcher cell (war.js assignLaunchers).
+  const groups = new Map();
+  for (const s of strikes) {
+    if (!s.launcher) continue;
+    const k = `${s.launcher.x},${s.launcher.z}`;
+    if (!groups.has(k)) groups.set(k, { x: s.launcher.x, z: s.launcher.z, list: [] });
+    groups.get(k).list.push(s);
+  }
+  const ready = new Set(readySilos().map((c) => `${c.x},${c.z}`));
+  const jobs = [];
+  for (const [k, g] of groups) {
+    const cell = grid.get(g.x, g.z);
+    if (!cell?.mesh) continue;
+    if (cell.terrain === 'magazine' && ready.has(k)) {
+      // Every magazine fires together (a hair apart), each then reloading for its next missile.
+      jobs.push(wait(Math.random() * 0.12).then(() => run === runId && siloLaunch(cell, g.list.length, (from, i) => fireAway(from, g.list[i]))));
+    } else if (cell.terrain === 'decoyworks') {
+      const w = hexToWorld(cell.x, cell.z);
+      jobs.push(
+        (async () => {
+          for (const s of g.list) {
+            await wait(0.1 + Math.random() * 0.25);
+            if (run !== runId) return;
+            dust.burst(cell.x, cell.z, 0.8);
+            boom();
+            fireAway({ x: w.x, y: 0.55, z: w.z, world: true }, s);
+          }
+        })(),
+      );
+    }
+  }
+  await Promise.all(jobs);
   await Promise.all(flights);
 }
 
@@ -4439,15 +4512,13 @@ function updateAimBar() {
   const aimed = rival ? queuedStrikes(rival.id) : [];
   const aimedCells = aimed.map((s) => s.cells ?? footprint(s.kind, s.at, s.size, rival.grid));
   rivalView.setMarkers(aimedCells, aimHover, aimAt);
-  rivalView.setArcs(aimHover ? [aimHover] : [], rival ? homeBearing(rival) : null, aimedCells.flat(), aimAt);
+  // A salvo shows one flight path per missile in it.
+  const fan = aimPiece()?.terrain === 'salvo';
+  rivalView.setArcs(aimHover ? (fan ? aimHover.map((c) => [c]) : [aimHover]) : [], rival ? homeBearing(rival) : null, aimedCells.flat(), fan ? null : aimAt);
   // What's aimed keeps its reticle and path until End Turn fires it: one per card played (a salvo's tiles together).
-  const groups = new Map();
-  aimed.forEach((q, i) => {
-    const k = q.card ?? plotKey(q.at[0], q.at[1]);
-    if (!groups.has(k)) groups.set(k, { key: k, cells: [], at: q.centre ?? q.at });
-    groups.get(k).cells.push(...aimedCells[i]);
-  });
-  rivalView.setAimed([...groups.values()], rival ? homeBearing(rival) : null);
+  // One per missile, so a salvo keeps every flight path.
+  const groups = aimed.map((q, i) => ({ key: `${q.card ?? plotKey(q.at[0], q.at[1])}|${i}`, cells: aimedCells[i], at: q.at }));
+  rivalView.setAimed(groups, rival ? homeBearing(rival) : null);
   globe?.setQueued(queuedStrikes().map((s) => ({ from: 'player', to: s.to })));
 }
 
@@ -4624,8 +4695,8 @@ function updateAimHover() {
 /** Every city at the start of the attack phase, in war.js's shape. */
 function warCities() {
   return [
-    { id: 'player', grid, oil: turn.stockpile, hp: turn.capitalHp, alive: turn.capitalHp > 0, buildings: playerBuildingCount() },
-    ...rivals.filter((r) => r.alive !== false).map((r) => ({ id: r.id, grid: r.grid, oil: r.oil ?? 0, hp: r.capitalHp ?? CAPITAL_HP, alive: true, buildings: r.stats?.buildings ?? 0 })),
+    { id: 'player', grid, oil: turn.stockpile, hp: turn.capitalHp, alive: turn.capitalHp > 0, buildings: playerBuildingCount(), idle: idleKeySet() },
+    ...rivals.filter((r) => r.alive !== false).map((r) => ({ id: r.id, grid: r.grid, oil: r.oil ?? 0, hp: r.capitalHp ?? CAPITAL_HP, alive: true, buildings: r.stats?.buildings ?? 0, idle: idleOf(r) })),
   ];
 }
 
@@ -4640,8 +4711,13 @@ function showWarReport(strikes) {
   const groups = new Map();
   for (const s of strikes) {
     const k = `${s.from}>${s.to}`;
-    if (!groups.has(k)) groups.set(k, { from: s.from, to: s.to, fired: 0, stopped: 0, hits: 0, lost: [], capital: null, eliminated: false });
+    if (!groups.has(k)) groups.set(k, { from: s.from, to: s.to, fired: 0, stopped: 0, hits: 0, lost: [], capital: null, eliminated: false, decoys: 0, drew: 0 });
     const g = groups.get(k);
+    if (s.decoy) {
+      g.decoys++;
+      g.drew += s.drew ?? 0;
+      continue;
+    }
     g.fired++;
     if (s.hit) g.hits++;
     else if (!s.fizzled) g.stopped++;
@@ -4655,7 +4731,8 @@ function showWarReport(strikes) {
     const lost = g.lost.length ? L(` · lost: ${g.lost.join(', ')}`, ` · 损失：${g.lost.join('、')}`) : '';
     const cap = g.capital !== null ? L(` · Capital ${g.capital}/${CAPITAL_HP}`, ` · 首都 ${g.capital}/${CAPITAL_HP}`) : '';
     const fell = g.eliminated ? L(` · <b>${cityName(g.to)} has fallen!</b>`, ` · <b>${cityName(g.to)}已陷落！</b>`) : '';
-    return `<div class="${cls}">${cityName(g.from)} → ${cityName(g.to)}: ${L(`${g.fired} fired, ${g.stopped} intercepted, ${g.hits} hit`, `发射 ${g.fired}，拦截 ${g.stopped}，命中 ${g.hits}`)}${cap}${lost}${fell}</div>`;
+    const dec = g.decoys ? L(` · ${g.decoys} decoy${g.decoys === 1 ? '' : 's'} drew ${g.drew} kill${g.drew === 1 ? '' : 's'}`, ` · ${g.decoys} 枚诱饵弹吸引了 ${g.drew} 次击落`) : '';
+    return `<div class="${cls}">${cityName(g.from)} → ${cityName(g.to)}: ${L(`${g.fired} fired, ${g.stopped} intercepted, ${g.hits} hit`, `发射 ${g.fired}，拦截 ${g.stopped}，命中 ${g.hits}`)}${dec}${cap}${lost}${fell}</div>`;
   });
   const el = $('warReport');
   el.innerHTML = `${rows.join('')}<button class="btn gold" id="btnWarDone">${L('Continue', '继续')}</button>`;
@@ -4695,9 +4772,9 @@ function playRivalStrike(r, rec) {
   // Their networks' fire is the simulated defence (setDefence in frame()); the missile flies the simulated path.
   return rivalMissiles.fire([{ x: w.x, z: w.z, ...simFlight(rec) }], {
     onIntercept: () => boom(),
-    onImpact: () => {
+    onImpact: (t) => {
       boom();
-      if (view === 'rival') camShake.add(missileCfg.shake);
+      if (view === 'rival') camShake.add(missileCfg.shake * (t?.harmless ? 0.3 : 1));
     },
     onCover: () => craterRival(r, rec),
   });
@@ -4706,7 +4783,26 @@ function playRivalStrike(r, rec) {
 /** The simulated flight of a strike (war.js / interceptSim.js), on the War Map clock. */
 let warSims = new Map(); // city id -> simulateDefence() result, for the phase in the air
 const warClock = () => globe?.warTime() ?? null;
-const simFlight = (rec) => ({ rec, path: rec.path, t0: rec.t0, flight: rec.flight, accel: rec.accel, killAt: rec.killed ? rec.killAt : null, clock: warClock });
+const simFlight = (rec) => ({
+  rec,
+  path: rec.path,
+  t0: rec.t0,
+  flight: rec.flight,
+  accel: rec.accel,
+  killAt: rec.killed ? rec.killAt : null,
+  clock: warClock,
+  boosted: !!rec.boosted,
+  weave: rec.weave ?? null,
+  harmless: !!rec.harmless,
+  // A decoy: it splits at splitAt and its fakes (already simulated) fly the rest.
+  splitAt: rec.decoy ? rec.splitAt : null,
+  fakes: rec.decoy
+    ? rec.fakes.map((f) => {
+        const w = hexToWorld(f.at[0], f.at[1]);
+        return { x: w.x, z: w.z, cell: { x: f.at[0], z: f.at[1] }, path: f.path, t0: f.t0, flight: f.flight, accel: f.accel, killAt: f.killed ? f.killAt : null, void: !!f.void, harmless: true, fake: true };
+      })
+    : null,
+});
 
 /** The city on screen shows its networks' simulated fire (turrets turning, the stream, the rounds). */
 function syncDefence() {
@@ -4750,7 +4846,8 @@ function joinFlights() {
 }
 
 function arrive(rec) {
-  if (rec.fizzled || played.has(rec)) return;
+  // A decoy that wasn't watched leaves nothing behind (its fakes are harmless).
+  if (rec.fizzled || played.has(rec) || rec.decoy) return;
   if (rec.to === 'player') {
     if (view === 'board') {
       landing.push(
@@ -4779,10 +4876,16 @@ function arrive(rec) {
 }
 
 /** The phase in one line (instead of the old report popup). */
-function toastWarSummary(res) {
+function toastWarSummary(all) {
+  const res = all.filter((s) => !s.decoy);
   const mine = res.filter((s) => s.from === 'player');
   const at = res.filter((s) => s.to === 'player' && !s.fizzled);
   const parts = [];
+  const myDecoys = all.filter((s) => s.decoy && s.from === 'player');
+  if (myDecoys.length) {
+    const drew = myDecoys.reduce((n, s) => n + (s.drew ?? 0), 0);
+    parts.push(L(`Decoys drew ${drew} kill${drew === 1 ? '' : 's'}`, `诱饵弹吸引了 ${drew} 次击落`));
+  }
   if (mine.length) parts.push(L(`Your missiles: ${mine.filter((s) => s.hit).length}/${mine.length} hit`, `你的导弹：命中 ${mine.filter((s) => s.hit).length}/${mine.length}`));
   if (at.length) parts.push(L(`Incoming: ${at.filter((s) => s.hit).length}/${at.length} got through`, `来袭：${at.filter((s) => s.hit).length}/${at.length} 命中`));
   const fell = res.filter((s) => s.eliminated && s.to !== 'player').map((s) => cityName(s.to));
@@ -4854,7 +4957,7 @@ async function runAttackPhase() {
   warTimer.classList.remove('hidden');
   const phase = globe.playAttack(res, rivals);
   // Everyone fires at once: on Hive City your magazines open and the salvo climbs away as the countdown starts.
-  if (view === 'board' && mine.length) launchSalvo(mine.length);
+  if (view === 'board' && mine.length) launchSalvo(res.filter((s) => s.from === 'player'));
   // The first time missiles fly each way, the Field Report briefs you with everything frozen in the air.
   const briefed = await briefAttack(mine, theirs);
   if (run !== runId) return true;
