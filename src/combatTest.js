@@ -253,6 +253,13 @@ document.getElementById('resetTune').addEventListener('click', () => {
   drawRings();
   paint();
 });
+document.getElementById('giveMissile').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  if (busy) return;
+  silo++;
+  renderHand();
+  paint();
+});
 document.getElementById('resetCity').addEventListener('click', () => {
   if (busy) return;
   oil = 9;

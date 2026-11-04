@@ -8,7 +8,7 @@ import { createScene } from './scene.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
 import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws } from './sfx.js';
 import { CameraRig } from './controls.js';
-import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed } from './grid.js';
+import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed, hexesAround } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
 import { preloadCardArt } from './tiles.js';
 import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, BLACK_MARKET, BLACK_MARKET_RESOURCE, MILITARY, shopReady, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
@@ -17,7 +17,7 @@ import { Frontier } from './frontier.js';
 import { Placement, GHOST_LAYER, PREVIEW_PARAMS, PREVIEW_DEFAULTS, loadPreviewConfig, savePreviewConfig, clearPreviewConfig } from './placement.js';
 import { Hand, pieceCost } from './hand.js';
 import { copySeam } from './seamlessGround.js';
-import { NeonTiles } from './neonGlow.js';
+import { NeonTiles, createGlow, LIFT } from './neonGlow.js';
 import { BarrelGauge, OilFlights } from './barrelGauge.js';
 import { SeasonClock } from './seasonClock.js';
 import { setupCrt } from './crt.js';
@@ -34,7 +34,7 @@ import { findCiws } from './interceptMesh.js';
 import { queueDrawn, addMissile, missileCount, missileKinds, trimMissiles, resetMissiles, openCityStrike, drawStrikeHand, returnStrikeHand, bindCityStrikeUi, queueStrike, unqueueStrike, queuedStrikes, takeQueue, clearQueue } from './cityStrike.js';
 import { CAPITAL_HP, resolve as resolveWar, applyToRival, footprint, spreadFrom } from './war.js';
 import { chooseStrikes, noteAttacks } from './rivalAI.js';
-import { INTERCEPT } from './arsenal.js';
+import { INTERCEPT, INTERCEPT_DEFAULTS, INTERCEPT_PARAMS, saveIntercept, clearIntercept } from './arsenal.js';
 import { Payout, tileHop } from './payout.js';
 import { EVENTS, KIND_LABEL, drawEvent } from './events.js';
 import { Dialogue } from './dialogue.js';
@@ -89,6 +89,11 @@ let globe;
 const rivalView = createRivalView({ renderer, factory, rig, fogSettings: () => fogCfg, fogQuality: () => gfxCfg.fogQuality });
 const tiles = new THREE.Group();
 scene.add(tiles);
+const interceptCover = new THREE.Group();
+scene.add(interceptCover);
+const INTERCEPT_GLOW = 0x4cc8ff;
+let interceptCoverKey = '';
+let interceptCoverGlows = [];
 const previewCfg = loadPreviewConfig(); // Game Debug → Placement preview
 const frontier = new Frontier(scene, previewCfg);
 const placement = new Placement(scene, grid, factory, previewCfg);
@@ -162,6 +167,22 @@ const debug = RELEASE
     updateHUD();
     return `Added ${k}`;
   },
+  onGiveMissile: () => {
+    if (view === 'rival' && rivalShown && rivalShown.alive !== false && !attackLive) {
+      if (!rivalHand) {
+        addMissile('missile');
+        openRivalHand(rivalShown);
+      } else {
+        hand.cards.push(pieceOf('missile'));
+        const ammo = hand.cards.filter((p) => isMissileAmmo(p.terrain)).length;
+        if (ammo > 2 && !hand.cards.some((p) => p.terrain === 'salvo')) hand.cards.unshift(pieceOf('salvo'));
+        hand.render();
+      }
+    } else addMissile('missile');
+    updateHUD();
+    updateAimBar();
+    return 'Added missile';
+  },
   onPerf: () => perf.setOpen(!perf.enabled),
   onResetTutorial: () => {
     localStorage.removeItem(TUTORIAL_KEY); // next reload starts with the tutorial again
@@ -204,6 +225,16 @@ const debug = RELEASE
     onChange: () => {
       hand.render();
       if (hand.piece) placement.setPiece(hand.piece);
+    },
+  },
+  intercept: {
+    params: INTERCEPT_PARAMS,
+    defaults: INTERCEPT_DEFAULTS,
+    cfg: INTERCEPT,
+    save: saveIntercept,
+    clear: clearIntercept,
+    onChange: () => {
+      interceptCoverKey = '';
     },
   },
   gfx: {
@@ -1432,6 +1463,48 @@ function updateFactoryFloaters(dt) {
     const fs = Math.min(c.fadeStart, 0.999);
     f.el.style.opacity = p > fs ? 1 - (p - fs) / (1 - fs) : 1;
   }
+}
+
+function updateInterceptCover(time) {
+  interceptCover.visible = view === 'board' && !busy();
+  if (!interceptCover.visible) {
+    if (interceptCoverKey) {
+      interceptCoverKey = '';
+      for (const g of interceptCoverGlows) g.dispose();
+      interceptCoverGlows = [];
+    }
+    return;
+  }
+  const h = rig.isDragging ? null : hoveredCell();
+  let ox = null;
+  let oz = null;
+  if (hand.piece?.terrain === 'intercept' && h) {
+    ox = h[0];
+    oz = h[1];
+  } else if (h) {
+    const cell = grid.get(h[0], h[1]);
+    if (cell?.terrain === 'intercept') {
+      ox = cell.x;
+      oz = cell.z;
+    }
+  }
+  const k = ox == null ? '' : `${ox},${oz},${INTERCEPT.range}`;
+  if (k !== interceptCoverKey) {
+    interceptCoverKey = k;
+    for (const g of interceptCoverGlows) g.dispose();
+    interceptCoverGlows = [];
+    if (ox != null) {
+      for (const [x, z] of hexesAround(ox, oz, INTERCEPT.range)) {
+        const glow = createGlow(INTERCEPT_GLOW, 'intercept cover');
+        glow.setLevel(1);
+        const w = hexToWorld(x, z);
+        glow.group.position.set(w.x, LIFT, w.z);
+        interceptCover.add(glow.group);
+        interceptCoverGlows.push(glow);
+      }
+    }
+  }
+  for (const g of interceptCoverGlows) g.paint(0.7, time);
 }
 
 function updateFactoryBars() {
@@ -5441,6 +5514,7 @@ function frame(now) {
   perf.begin('map icons');
   zoomIcons.update(grid);
   perf.end('map icons');
+  updateInterceptCover(time);
   perf.begin('expansion');
   checkExpansion();
   const cell = rig.isDragging ? null : hoveredCell();

@@ -10,16 +10,22 @@ export const OVERTIME_OIL = 2;
  * Intercept Network tuning, read live (combat-test.html's debug panel changes it; saved to localStorage).
  * range: cells covered in the attack phase · chance: one shot stops a strike · oil: cost per shot.
  */
-export const INTERCEPT_DEFAULTS = { range: 2, chance: 0.65, oil: 2 };
+export const INTERCEPT_DEFAULTS = { range: 1, chance: 0.65, oil: 2 };
 const INTERCEPT_KEY = 'oto.intercept';
 export const INTERCEPT = { ...INTERCEPT_DEFAULTS };
 try {
   const saved = JSON.parse(localStorage.getItem(INTERCEPT_KEY) ?? '{}');
   delete saved.oil; // the shot cost is a design value now (2): an old saved 3 no longer overrides it
+  delete saved.range; // coverage is 1 (adjacent); old combat-test saves of 2 no longer override it
   Object.assign(INTERCEPT, saved);
 } catch {
   /* keep defaults */
 }
+export const INTERCEPT_PARAMS = [
+  { group: 'Intercept' },
+  { key: 'range', label: 'Coverage (cells)', min: 1, max: 5, step: 1, hint: '1 = adjacent hexes only' },
+  { key: 'chance', label: 'Stop chance', min: 0.1, max: 1, step: 0.05 },
+];
 export const saveIntercept = () => localStorage.setItem(INTERCEPT_KEY, JSON.stringify(INTERCEPT));
 export const clearIntercept = () => {
   localStorage.removeItem(INTERCEPT_KEY);
@@ -64,7 +70,7 @@ export function interceptorsBeside(grid, x, z) {
 }
 
 /** How far (in cells) an Intercept Network covers in the attack phase. */
-export const INTERCEPT_RANGE = 2;
+export const INTERCEPT_RANGE = 1;
 
 /** Intercept Networks within `range` cells of (x, z), nearest first. */
 export function interceptorsNear(grid, x, z, range = INTERCEPT.range) {
