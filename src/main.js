@@ -410,6 +410,8 @@ const tutorial = new Tutorial({
     settling: () => turnRunning || warPending || attackLive || eventOpen || payout.active,
     /** The Smuggler is at the gates, and there's oil for something in the Crawler. */
     marketReady: () => bmWait() <= 0 && !turn.over && turn.stockpile >= bmCheapest(),
+    /** Show the Black Market plate (the market hint pops it in, then points at it). */
+    revealMarket: () => revealBlackMarket(),
     /**
      * The Smuggler's hold while it's on screen (not his dialogue), else null: the aisle open (null: the two crates),
      * the cards you can afford in each aisle (their indexes), and whether anything was bought this visit.
@@ -4200,11 +4202,32 @@ const bmYearStart = () => turn.season === 0;
 /** Seasons until the Black Market can be visited (its cooldown, or the wait out of a year's first season). */
 const bmWait = () => Math.max(turn.bmCooldown, bmYearStart() ? 1 : 0);
 
+function knewMarket() {
+  const r = tutorial.lessons.get('market');
+  return r.done || r.dismissed || r.shown > 0;
+}
+
+/** The plate stays hidden until the Smuggler is introduced (the market hint, or a later fallback). */
+let bmRevealed = false;
+function revealBlackMarket(animate = true) {
+  if (bmRevealed) return;
+  bmRevealed = true;
+  const btn = $('btnBlackMarket');
+  btn.classList.remove('unseen');
+  if (animate) {
+    btn.classList.remove('arriving');
+    void btn.offsetWidth;
+    btn.classList.add('arriving');
+  }
+}
+
 function updateBlackMarketButton() {
   const btn = $('btnBlackMarket');
+  if (!bmRevealed && !bmYearStart() && bmWait() <= 0 && (knewMarket() || turn.round >= 2)) revealBlackMarket(true);
+  btn.classList.toggle('unseen', !bmRevealed);
   const wait = bmWait();
   btn.classList.toggle('cooling', wait > 0);
-  btn.classList.toggle('ready', wait <= 0);
+  btn.classList.toggle('ready', wait <= 0 && bmRevealed);
   $('bmWait').classList.toggle('hidden', wait <= 0);
   $('bmWait').textContent = L(`${wait} season${wait === 1 ? '' : 's'}`, `${wait} 季`);
   btn.title = wait > 0
@@ -6245,6 +6268,9 @@ function resetIsland(opts) {
     ...freshTargetState(),
   });
   shopOpen = false;
+  bmRevealed = false;
+  $('btnBlackMarket').classList.add('unseen');
+  $('btnBlackMarket').classList.remove('arriving');
   closeBlackMarket(false);
   eventOpen = false;
   pendingScenes.length = 0;
@@ -6285,6 +6311,7 @@ function resetIsland(opts) {
     tutorial.start();
     tutorial.begin();
   } else if (opts?.intro !== false) playIntro();
+  if (ALL_TILES || (!tut && knewMarket())) revealBlackMarket(false);
 }
 
 /** Skip tutorial: the guiding stops and Spring carries on as a normal season. */

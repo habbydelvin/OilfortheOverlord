@@ -1895,14 +1895,21 @@ const HINTS = {
     },
   },
   // The Smuggler's Crawler is at the gates, oil to spend, and the home loop well in hand (not right after the first
-  // payout, not while the food is short): the hand taps the Black Market.
+  // payout, not while the food is short): the plate pops in, then the hand taps it.
   market: {
     make(t) {
       if (!onBoard(t) || t.hand.piece || !t.api.marketReady() || t.seasonsPlayed < 3) return null;
       if (seasonsOfFood(t.api.economy()) <= 2) return null;
+      t.api.revealMarket();
+      let from = null;
       return {
-        until: 4.4,
-        view: () => ({ hand: { tapOn: '#btnBlackMarket' }, ring: { selector: '#btnBlackMarket' } }),
+        until: 6.2,
+        view: () => {
+          from ??= t.clock;
+          const ring = { selector: '#btnBlackMarket' };
+          if (t.clock - from < 0.75) return { ring };
+          return { hand: { tapOn: '#btnBlackMarket' }, ring };
+        },
         over: () => !onBoard(t) || !t.api.marketReady() || Boolean(t.hand.piece),
       };
     },

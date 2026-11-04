@@ -774,6 +774,31 @@
   text-transform: uppercase;
   text-align: center;
 }
+.top-market.unseen {
+  visibility: hidden;
+  pointer-events: none;
+  opacity: 0;
+}
+.top-market.arriving {
+  animation: bm-arrive 0.72s both;
+}
+@keyframes bm-arrive {
+  0% {
+    opacity: 0;
+    transform: translateY(-92px);
+  }
+  58% {
+    opacity: 1;
+    transform: translateY(16px);
+  }
+  76% {
+    transform: translateY(-8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 .top-market:hover:not(.cooling) {
   filter: brightness(1.15);
 }
