@@ -2031,6 +2031,7 @@ function endTurn() {
   // The season is wrapping up (last barrels, factories, the trip home): a click only hurries it along,
   // it never starts a second turn on the same season.
   if (turnRunning && !payout.active) {
+    if (document.body.classList.contains('homeward')) return toast(L("Return to Hive City to gather the season's oil", '返回蜂巢城以收集本季石油'));
     oilFlights.finish();
     return;
   }
@@ -2059,16 +2060,24 @@ function endTurn() {
     warPending = false;
     if (run !== runId) return;
     if (over) return setTurnRunning(false);
-    // The guided Spring watched its missile land in a rival city: the season's first oil waits until you've come home
-    // (the hand shows the way), so it's paid out where it can be seen. Skipping the tutorial lets it go on anywhere.
-    while (tutorial.active && (view !== 'board' || switching)) {
-      await wait(0.1);
-      if (run !== runId) return;
-    }
+    if (!(await untilHome(run))) return;
     const e = economyNow();
     runPayout(e, () => finishSeasonFx(e));
   });
 }
+/**
+ * A season's oil is only gathered at Hive City, so nobody loses track of it: ended (or watched) from the War Map or a
+ * rival city, the attack plays out where you are, then the season waits until you've come home. Meanwhile the way
+ * home glows (body.homeward: "◀ War Map", "Return to Hive"). Resolves false if the run was reset in the meantime.
+ */
+async function untilHome(run) {
+  if (view === 'board' && !switching) return true;
+  document.body.classList.add('homeward');
+  while ((view !== 'board' || switching) && run === runId) await wait(0.1);
+  document.body.classList.remove('homeward');
+  return run === runId;
+}
+
 /** True from End Turn until the attack phase has finished (a second press does nothing). */
 let warPending = false;
 /** True from End Turn until the season is settled (new hand dealt, or the shop / a scene has taken over). */

@@ -14,7 +14,7 @@ import { NEON } from './neonGlow.js';
  * opens (a gold ring sweeps over it), and the hand taps a rival city to visit it. There the hand holds the missile
  * card: it drags it onto one of their buildings to aim it, then taps Next turn right there, and you watch the missile
  * come down on it when its countdown runs out. Then "◀ War Map" and "Return to Hive" bring you home, where the season's
- * first oil is paid out (main.js holds the payout until you're back). Leave the city before Next turn, and the hand
+ * first oil is paid out (a season's oil is only gathered at Hive City: main.js waits until you're back). Leave the city before Next turn, and the hand
  * taps Next turn on the board instead. From then on the game is free, and a few things get a one-time wordless hint the first time they come up (HINTS): rotating a piece,
  * "?" sites, food running out, rerolling, zooming out to the planet (for whoever skipped the guided Spring), missiles
  * waiting in the silo, aiming missile cards and the Salvo card in a rival city, the Black Market (its button, then the
@@ -53,8 +53,8 @@ const BOOST = { farm: css(NEON.farm), station: css(NEON.station) };
  *   pop      place steps: a badge that pops over the tile once placed ({ text, colour })
  */
 const STEPS = [
-  { wait: 'time', ms: 2600, dim: true, target: TRIBUTE },
-  { wait: 'time', ms: 2800, target: 'capital', focus: [0, 0] },
+  { wait: 'time', ms: 2000, dim: true, target: TRIBUTE },
+  { wait: 'time', ms: 2200, target: 'capital', focus: [0, 0] },
   { wait: 'place', terrain: 'farm', cells: 'capital', pop: { text: '×2', colour: BOOST.farm } },
   { wait: 'place', terrain: 'station', cells: 'capital', pop: { text: '×2', colour: BOOST.station } },
   { wait: 'place', terrain: 'settlement' },
@@ -700,28 +700,28 @@ export class Tutorial {
 
   /** Press on the card, carry it over to the cell, let go; then a short pause. */
   #dragPose(from, to) {
-    const t = this.loop % 3.1;
+    const t = this.loop % 2.2;
     const lerp = (k) => [from[0] + (to[0] - from[0]) * k, from[1] + (to[1] - from[1]) * k];
-    if (t < 0.3) return { x: from[0], y: from[1], scale: 1.15 - 0.15 * (t / 0.3), opacity: t / 0.3 };
-    if (t < 0.5) return { x: from[0], y: from[1], scale: 1 - 0.12 * ((t - 0.3) / 0.2), opacity: 1, card: (t - 0.3) / 0.2 };
-    if (t < 1.8) {
-      const [x, y] = lerp(ease((t - 0.5) / 1.3));
+    if (t < 0.2) return { x: from[0], y: from[1], scale: 1.15 - 0.15 * (t / 0.2), opacity: t / 0.2 };
+    if (t < 0.35) return { x: from[0], y: from[1], scale: 1 - 0.12 * ((t - 0.2) / 0.15), opacity: 1, card: (t - 0.2) / 0.15 };
+    if (t < 1.15) {
+      const [x, y] = lerp(ease((t - 0.35) / 0.8));
       return { x, y, scale: 0.88, opacity: 1, card: 1 };
     }
-    if (t < 2.0) return { x: to[0], y: to[1], scale: 0.88 + 0.12 * ((t - 1.8) / 0.2), opacity: 1, card: 1 - (t - 1.8) / 0.2, tap: 1 - (t - 1.8) / 0.2 };
-    if (t < 2.4) return { x: to[0], y: to[1], scale: 1, opacity: 1 - (t - 2.0) / 0.4 };
+    if (t < 1.3) return { x: to[0], y: to[1], scale: 0.88 + 0.12 * ((t - 1.15) / 0.15), opacity: 1, card: 1 - (t - 1.15) / 0.15, tap: 1 - (t - 1.15) / 0.15 };
+    if (t < 1.6) return { x: to[0], y: to[1], scale: 1, opacity: 1 - (t - 1.3) / 0.3 };
     return null;
   }
 
   /** Two presses on the spot, then a short pause. */
   #tapPose([x, y]) {
-    const t = this.loop % 2.2;
-    const press = (a) => clamp01(1 - Math.abs(t - a) / 0.12); // 1 at the press
-    const p = Math.max(press(0.5), press(1.0));
-    const opacity = t < 0.25 ? t / 0.25 : t < 1.4 ? 1 : t < 1.7 ? 1 - (t - 1.4) / 0.3 : 0;
+    const t = this.loop % 1.7;
+    const press = (a) => clamp01(1 - Math.abs(t - a) / 0.1); // 1 at the press
+    const p = Math.max(press(0.35), press(0.75));
+    const opacity = t < 0.2 ? t / 0.2 : t < 1.05 ? 1 : t < 1.3 ? 1 - (t - 1.05) / 0.25 : 0;
     if (!opacity) return null;
-    const ring = (a) => (t > a && t < a + 0.4 ? 1 - (t - a) / 0.4 : 0);
-    return { x, y, scale: 1 - 0.14 * p, opacity, tap: Math.max(ring(0.5), ring(1.0)) };
+    const ring = (a) => (t > a && t < a + 0.35 ? 1 - (t - a) / 0.35 : 0);
+    return { x, y, scale: 1 - 0.14 * p, opacity, tap: Math.max(ring(0.35), ring(0.75)) };
   }
 
   #updatePops(dt) {

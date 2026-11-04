@@ -859,6 +859,27 @@ body.paying #btnReroll {
 body.globe-view #btnHive {
   display: block;
 }
+/* The season waits for you at Hive City to gather its oil (main.js untilHome): the way home glows. */
+body.homeward #btnHive {
+  animation: homeward-glow 1.2s ease-in-out infinite;
+}
+@keyframes homeward-glow {
+  50% {
+    box-shadow: 0 0 0 2px #ffe2a0, 0 0 22px 6px rgba(255, 196, 92, 0.75);
+    filter: brightness(1.18);
+  }
+}
+/* The small "◀ War Map" button in a rival city: it lights up gold as well. */
+body.homeward #btnRivalBack {
+  animation: homeward-glow-small 1.2s ease-in-out infinite;
+}
+@keyframes homeward-glow-small {
+  50% {
+    background: rgba(232, 191, 104, 0.55);
+    color: #fff3d6;
+    box-shadow: 0 0 0 2px #ffe2a0, 0 0 18px 4px rgba(255, 196, 92, 0.8);
+  }
+}
 
 @keyframes slidein {
   from {
