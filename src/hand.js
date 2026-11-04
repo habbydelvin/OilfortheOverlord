@@ -126,11 +126,20 @@ export class Hand {
 
   /** Optional gate (the tutorial): guard('select' | 'rotate', piece) returns false to refuse. */
   guard = null;
+  /**
+   * Optional (the tutorial): parked(piece) true for a card that waits its turn. It sits lower and dimmed, so it never
+   * looks playable while it isn't (picking it is refused through guard as well).
+   */
+  parked = null;
+  /** True while the cards that are left over would be discarded by Next turn (the tutorial shows which ones). */
+  discarding = false;
+  /** The card the tutorial wants played now (it glows), or null. */
+  salient = null;
 
   select(i) {
     const next = i >= 0 && i < this.cards.length ? i : -1;
     if (next >= 0 && next !== this.selected && this.guard && !this.guard('select', this.cards[next])) {
-      this.onBlocked?.();
+      this.onBlocked?.(this.cards[next]);
       return;
     }
     if (next !== this.selected) tick(next >= 0);
@@ -273,7 +282,23 @@ export class Hand {
     p.rot = (p.rot + dir + ROTATIONS) % ROTATIONS;
     this.render();
     this.onChange?.(p);
+    this.onRotate?.(p);
     chirp();
+  }
+
+  /** A little hop that draws the eye to this card (the one the tutorial wants). */
+  kick(piece) {
+    for (const c of this.#els.values()) if (this.cards[c.index] === piece) this.#kick(c, 6, 1.2);
+  }
+
+  /** A short shake: this card can't be used right now. */
+  shake(piece) {
+    for (const c of this.#els.values()) {
+      if (this.cards[c.index] !== piece) continue;
+      c.el.classList.remove('nudge');
+      void c.el.offsetWidth;
+      c.el.classList.add('nudge');
+    }
   }
 
   /**
@@ -292,9 +317,13 @@ export class Hand {
       }
       const t = cardDef(p.terrain);
       const selected = i === this.selected;
-      c.el.className = ['card', t.category === 'junk' ? 'junk' : '', t.category === 'action' ? 'action' : '', selected ? 'selected' : '', selected && this.dragging ? 'dragging' : '']
+      const parked = !selected && Boolean(this.parked?.(p));
+      const discard = this.discarding && !isForced(p);
+      const salient = p === this.salient && !selected;
+      c.el.className = ['card', t.category === 'junk' ? 'junk' : '', t.category === 'action' ? 'action' : '', selected ? 'selected' : '', selected && this.dragging ? 'dragging' : '', parked ? 'parked' : '', discard ? 'discard' : '', salient ? 'salient' : '']
         .filter(Boolean)
         .join(' ');
+      c.parked = parked;
       c.el.dataset.i = i;
       c.el.style.setProperty('--top', hex(t.top));
       c.el.style.setProperty('--edge', hex(t.edge));
@@ -450,8 +479,8 @@ export class Hand {
         if (c.wait > 0) continue;
       }
       const s = this.#slot(c.index, n, W, cw, nProd);
-      const hovered = c === hover;
-      const lift = (c.selected ? 40 : 0) + (hovered ? 22 : 0);
+      const hovered = c === hover && !c.parked;
+      const lift = (c.selected ? 40 : 0) + (hovered ? 22 : 0) - (c.parked ? 46 : 0);
       let tx = Math.sin(time * 0.9 + c.phase) * 3 * idle;
       let ty = Math.cos(time * 0.7 + c.phase * 1.3) * 4 * idle;
       if (hovered) {

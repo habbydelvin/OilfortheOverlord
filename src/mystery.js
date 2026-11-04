@@ -228,9 +228,19 @@ export class Mysteries {
     if (s) s.spared = true;
   }
 
-  /** What a site turns into: a roll. */
+  /**
+   * The guided opening's first discovery: no other site within `clear` steps of the start, and one at (x, z) that
+   * always turns into `terrain` (something that does its job at once, rather than a roll).
+   */
+  plant(x, z, terrain, clear = 5) {
+    for (const [k, s] of this.sites) if (hexDistance(s.x, s.z) <= clear) this.sites.delete(k);
+    this.sites.set(key(x, z), { x, z, terrain });
+    this.#dirty = true;
+  }
+
+  /** What a site turns into: its planted outcome, or a roll. */
   #outcome(s) {
-    return { x: s.x, z: s.z, terrain: pickReveal(s.spared ? 'missile' : null) };
+    return { x: s.x, z: s.z, terrain: s.terrain ?? pickReveal(s.spared ? 'missile' : null) };
   }
 
   #add(x, z) {

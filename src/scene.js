@@ -26,16 +26,17 @@ export function createScene(container) {
   scene.add(ground);
 
   // Shift the projection centre so the look-at point sits in the middle of the
-  // open play area (left of the 300px side panel, above the card hand).
-  const PANEL_W = 300;
-  const HAND_H = 250; // visible height of the hand cards
+  // open play area (left of the side panel, above the card hand). The panel's width is the CSS --panel-w (narrower on
+  // small screens, ui.css); the hand is shorter there too.
   let boardFraming = true;
   function fitViewport() {
     const w = window.innerWidth;
     const h = window.innerHeight;
     camera.aspect = w / h;
+    const panelW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--panel-w')) || 300;
+    const handH = w <= 760 ? 170 : 250; // visible height of the hand cards
     // Rival cities hide the panel and the hand, so the look-at point sits in the true centre.
-    if (boardFraming) camera.setViewOffset(w, h, PANEL_W / 2, HAND_H / 2, w, h);
+    if (boardFraming) camera.setViewOffset(w, h, panelW / 2, handH / 2, w, h);
     else camera.clearViewOffset();
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);

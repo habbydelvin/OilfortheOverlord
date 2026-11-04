@@ -129,7 +129,7 @@
               <path d="M13 5.2c1.6-1.9 4.2-2 5.4-1.6-.5 1.9-2.8 3.3-5.4 1.6z" fill="#9be36f" />
             </svg><span data-zh="食物">Food</span>
           </div>
-          <div class="v"><span id="resFood">0</span><small id="resFoodD">(0)</small></div>
+          <div class="v"><span id="resFood">0</span><small id="resFoodD">(0)</small><em class="fc" id="resFoodF"></em></div>
           <div class="pop">
             <div class="pop-bar"><div class="pop-fill" id="popFill"></div></div>
             <div class="pop-text" id="popText">Food stores 5 / 30</div>
@@ -143,6 +143,8 @@
             </svg><span data-zh="人力">Manpower</span>
           </div>
           <div class="v"><span id="resMp">0</span><small id="resMpD">(0)</small></div>
+          <!-- Worker slots: filled = in use, hollow = free, dashed red = a building with no one to run it. -->
+          <div class="mp-rack" id="mpRack" aria-hidden="true"></div>
         </div>
         <div class="res oil" data-tip="oil">
           <div class="k">
@@ -152,7 +154,7 @@
               <path d="M12 9.6c-1.1 1.5-1.8 2.5-1.8 3.3a1.8 1.8 0 003.6 0c0-.8-.7-1.8-1.8-3.3z" fill="#1c1c1c" />
             </svg><span data-zh="石油">Oil</span>
           </div>
-          <div class="v"><span id="resOil">0</span><small id="resOilD">(0)</small></div>
+          <div class="v"><span id="resOil">0</span><small id="resOilD">(0)</small><em class="fc" id="resOilF"></em></div>
         </div>
         <div class="res missile" data-tip="missile">
           <div class="k">
@@ -174,6 +176,11 @@
         <div id="inspect" class="hidden"></div>
 
         <div class="spacer"></div>
+        <!-- The way to the War Map (the planet and the rival cities); on the War Map, Return to Hive takes its place. -->
+        <button id="btnWarMap" class="btn steel" aria-label="War Map" data-zh-aria-label="战争地图">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 9h17M3.5 15h17M12 3c-3.2 3.4-3.2 14.6 0 18M12 3c3.2 3.4 3.2 14.6 0 18" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M15.5 5.5l2.5-2.5M18 3h-3M18 3v3" stroke="#ff8a2a" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+          <span data-zh="战争地图">War Map</span>
+        </button>
         <button id="btnHive" class="btn gold">
           Return to Hive
         </button>
@@ -202,6 +209,16 @@
             <b>Drag</b> / <b>WASD</b> · pan &nbsp; <b>Wheel</b> · zoom<br />
             <b>Q / E</b> · turn camera &nbsp; <b>C</b> · recenter<br />
             <b>G</b> · war map
+          </div>
+          <!-- Show me again: each replays its short demonstration on your own city (nothing changes). -->
+          <div class="help-demos">
+            <button type="button" data-demo="place" aria-label="Show: placing a card" data-zh-aria-label="演示：放置卡牌"><svg viewBox="0 0 28 24" aria-hidden="true"><rect x="2" y="3" width="9" height="13" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 9.5h5" stroke="#ffb347" stroke-width="1.8" stroke-linecap="round"/><path d="M15.5 7.5l2 2-2 2" fill="none" stroke="#ffb347" stroke-width="1.8" stroke-linecap="round"/><path d="M22 5l4.3 2.5v5L22 15l-4.3-2.5v-5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="2 1.6"/></svg></button>
+            <button type="button" data-demo="capital" aria-label="Show: the Capital's bonus" data-zh-aria-label="演示：首都加成"><svg viewBox="0 0 28 24" aria-hidden="true"><path d="M8 4l5.2 3v6L8 16l-5.2-3V7z" fill="currentColor" opacity="0.85"/><path d="M18.4 4l5.2 3v6l-5.2 3-5.2-3V7z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M13.2 7v6" stroke="#ffb347" stroke-width="2.4"/><circle cx="17" cy="20.5" r="1.6" fill="#ffb347"/><circle cx="21" cy="20.5" r="1.6" fill="#ffb347"/></svg></button>
+            <button type="button" data-demo="workers" aria-label="Show: workers" data-zh-aria-label="演示：人力"><svg viewBox="0 0 28 24" aria-hidden="true"><g fill="currentColor"><circle cx="6" cy="8" r="2.6"/><path d="M1.6 18c0-2.6 2-4.6 4.4-4.6s4.4 2 4.4 4.6z"/><circle cx="14" cy="8" r="2.6"/><path d="M9.6 18c0-2.6 2-4.6 4.4-4.6s4.4 2 4.4 4.6z"/></g><g fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="22" cy="8" r="2.6"/><path d="M17.6 18c0-2.6 2-4.6 4.4-4.6s4.4 2 4.4 4.6z"/></g></svg></button>
+            <button type="button" data-demo="food" aria-label="Show: food" data-zh-aria-label="演示：食物"><svg viewBox="0 0 28 24" aria-hidden="true"><path d="M11 7.5c-1.4-1.1-4-1.4-5.6.3C3.5 9.8 4 13.7 6 16.6c1.2 1.7 2.6 3 3.8 2.5.5-.2.8-.3 1.2-.3s.6.1 1.2.3c1.2.5 2.6-.8 3.8-2.5 2-2.9 2.5-6.8.6-8.8-1.6-1.7-4.2-1.4-5.6-.3z" fill="#9be36f"/><circle cx="22" cy="12" r="4.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M22 12l2.6-2.6" stroke="#ffb347" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+            <button type="button" data-demo="season" aria-label="Show: ending the season" data-zh-aria-label="演示：结束季节"><svg viewBox="0 0 28 24" aria-hidden="true"><circle cx="14" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 3v18M5 12h18" stroke="currentColor" stroke-width="0.9" opacity="0.5"/><path d="M14 12l5-5" stroke="#ffb347" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+            <button type="button" data-demo="rotate" aria-label="Show: turning a piece" data-zh-aria-label="演示：旋转板块"><svg viewBox="-14 -12 28 24" aria-hidden="true"><path d="M0-9L7.8-4.5V4.5L0 9L-7.8 4.5V-4.5z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M-4.4-2.6A5 5 0 0 1 4.8-1.4" fill="none" stroke="#ffb347" stroke-width="2" stroke-linecap="round"/><path d="M5.6-4.8L5-1L1.4-2.2" fill="none" stroke="#ffb347" stroke-width="2" stroke-linecap="round"/></svg></button>
+            <button type="button" data-demo="globe" aria-label="Show: the War Map" data-zh-aria-label="演示：战争地图"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.5 9h17M3.5 15h17M12 3.5c-3 3.2-3 13.8 0 17M12 3.5c3 3.2 3 13.8 0 17" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
           </div>
           <button id="btnTutorial" type="button" data-zh="重玩教程">Replay tutorial</button>
         </div>
@@ -293,7 +310,15 @@
       <div id="dialogue" class="hidden"></div>
       <div id="toast"></div>
       <div id="hand"></div>
-      <!-- Year 0 tutorial: spotlight + advisor bubble (src/tutorial.js). -->
+      <!-- Over the board: turn the held piece (shown while one of 2+ cells is held; touch has no R key), and back to
+           Hive City when the camera has wandered off. -->
+      <button id="btnRotate" class="float-btn hidden" type="button" aria-label="Rotate piece" data-zh-aria-label="旋转板块">
+        <svg viewBox="-14 -14 28 28" aria-hidden="true"><path d="M0-11L9.5-5.5V5.5L0 11L-9.5 5.5V-5.5z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M-5.2-3A6 6 0 0 1 5.6-1.6" fill="none" stroke="#ffb347" stroke-width="2.2" stroke-linecap="round"/><path d="M6.6-5.6L5.8-1.2L1.6-2.6" fill="none" stroke="#ffb347" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="btnRecenter" class="float-btn hidden" type="button" aria-label="Back to Hive City" data-zh-aria-label="回到蜂巢城">
+        <svg viewBox="-14 -14 28 28" aria-hidden="true"><path d="M0-6L5.2-3V3L0 6L-5.2 3V-3z" fill="currentColor"/><path d="M0-12V-8.5M0 12V8.5M-12 0H-8.5M12 0H8.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle r="10" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.6"/></svg>
+      </button>
+      <!-- The wordless tutorial: rings, the ghost hand, suggestions and short demonstrations (src/tutorial.js). -->
       <div id="coach"></div>
     </div>
     <!-- Fade to black between the tutorial and Year 1. -->
