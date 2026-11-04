@@ -165,13 +165,13 @@ function militaryValue(rival, grid, terrain, x, z, e) {
     case 'magazine': {
       const cap = missileCapacity(grid);
       // Room for what the factories will make (a launcher next to an Accelerator is worth a bit more).
-      const room = factories >= cap - 1 || rival.missiles.length >= cap - 1 ? p.missile * 0.8 : -5;
+      const room = factories >= cap - 1 || attackingMissiles(rival) >= cap - 1 ? p.missile * 0.8 : -5;
       return room + (room > 0 && boostersNear(grid, x, z).length ? 1 : 0);
     }
     case 'decoyworks': {
-      // Decoys only help real missiles get through: a factory first, and room in the silo.
+      // Decoys only help real missiles get through: a factory first. They do not fill the silo.
       const works = [...grid.cells.values()].filter((c) => c.terrain === 'decoyworks').length;
-      if (!factories || rival.missiles.length >= missileCapacity(grid) || e.oil < DECOY.oil + 1) return -5;
+      if (!factories || e.oil < DECOY.oil + 1) return -5;
       return (p.missile * 0.6) / (1 + works) ** 2 + (boostersNear(grid, x, z).length ? 1 : 0);
     }
     case 'booster': {
@@ -320,6 +320,9 @@ export function playHand(rival, hand) {
   return placed;
 }
 
+/** Attacking missiles in a rival's silo. Decoys do not take a slot. */
+const attackingMissiles = (rival) => (rival.missiles ?? []).filter((k) => k !== 'decoy').length;
+
 /**
  * The player's runFactories for a rival: each Military Factory pays FACTORY_OIL a season from the stockpile;
  * after a year of work it hands its missiles (factoryYield) to the arsenal, or waits, full, if there's no room.
@@ -335,7 +338,7 @@ export function runFactories(rival, e = computeEconomy(rival.grid, { foodStore: 
     if ((cell.missileProgress ?? 0) >= need) {
       const y = factoryYield(grid, cell, idle);
       let made = 0;
-      while (made < y.count && rival.missiles.length < cap) {
+      while (made < y.count && attackingMissiles(rival) < cap) {
         rival.missiles.push(y.kind);
         made++;
       }
@@ -346,11 +349,11 @@ export function runFactories(rival, e = computeEconomy(rival.grid, { foodStore: 
     rival.oil -= FACTORY_OIL;
     cell.missileProgress = (cell.missileProgress ?? 0) + 1;
   }
-  // Decoy Builder (their oil already came out of the season's yield): a decoy every DECOY.seasons, room permitting.
+  // Decoy Builder (their oil already came out of the season's yield): a decoy every DECOY.seasons. Decoys do not take a slot.
   for (const cell of grid.cells.values()) {
     if (cell.terrain !== 'decoyworks' || idle.has(`${cell.x},${cell.z}`)) continue;
     cell.decoyProgress = Math.min(DECOY.seasons, (cell.decoyProgress ?? 0) + 1);
-    if (cell.decoyProgress < DECOY.seasons || rival.missiles.length >= cap) continue;
+    if (cell.decoyProgress < DECOY.seasons) continue;
     rival.missiles.push('decoy');
     cell.decoyProgress = 0;
   }

@@ -267,6 +267,52 @@ function regroupByMaterial(g) {
   for (const grp of groups) g.addGroup(grp.start, grp.count, grp.materialIndex);
 }
 
+/** Name of the Military Factory's launch-pad missile group (shown only once a missile is built: main.js setPadMissile). */
+export const PAD_MISSILE = 'MissileFactory_PadMissile';
+
+/**
+ * The Military Factory's missile parts (MissileDark/MissileLight) hold two missiles: the one on the rail (x < 0)
+ * and the one standing on the launch pad (x > 0). The pad one's triangles move to a group of their own
+ * (PAD_MISSILE, kept out of the merge) so the game can raise it out of the ground when a missile is made.
+ */
+function splitPadMissile(root) {
+  const group = new THREE.Group();
+  group.name = PAD_MISSILE;
+  group.userData.noMerge = true;
+  root.updateMatrixWorld(true);
+  const toRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  let parts = 0;
+  for (const name of ['MissileFactory_MissileDark', 'MissileFactory_MissileLight']) {
+    const obj = root.getObjectByName(name);
+    if (!obj?.isMesh) continue;
+    const g = obj.geometry;
+    const pos = g.attributes.position;
+    const idx = g.index ? g.index.array : Uint32Array.from({ length: pos.count }, (_, i) => i);
+    const keep = [];
+    const pad = [];
+    for (let i = 0; i < idx.length; i += 3) {
+      const cx = (pos.getX(idx[i]) + pos.getX(idx[i + 1]) + pos.getX(idx[i + 2])) / 3;
+      (cx > 0 ? pad : keep).push(idx[i], idx[i + 1], idx[i + 2]);
+    }
+    if (!pad.length) continue;
+    const padGeo = g.clone();
+    padGeo.setIndex(pad);
+    padGeo.clearGroups();
+    g.setIndex(keep);
+    g.clearGroups();
+    const mesh = new THREE.Mesh(padGeo, obj.material);
+    mesh.name = `${name}_Pad`;
+    mesh.castShadow = obj.castShadow;
+    mesh.receiveShadow = obj.receiveShadow;
+    mesh.userData.noMerge = true;
+    new THREE.Matrix4().multiplyMatrices(toRoot, obj.matrixWorld).decompose(mesh.position, mesh.quaternion, mesh.scale);
+    group.add(mesh);
+    parts++;
+  }
+  group.visible = false; // until a missile is built
+  if (parts) root.add(group);
+}
+
 export function mergeStaticMeshes(root) {
   const animated = new Set();
   for (const clip of root.animations ?? []) {
@@ -289,6 +335,7 @@ export function mergeStaticMeshes(root) {
     const groups = Array.isArray(obj.material) && g.groups.length ? g.groups : [{ start: 0, count: Infinity, materialIndex: 0 }];
     before += groups.length;
     if (obj.isSkinnedMesh || obj.isInstancedMesh || obj.morphTargetInfluences || !obj.visible || isAnimated(obj)) return;
+    if (obj.userData.noMerge || obj.parent?.userData.noMerge) return;
     if (!g.attributes.position || mats.some((m) => !m || m.transparent)) return;
     const attrs = Object.keys(g.attributes).filter((k) => KEEP_ATTRS.includes(k)).sort();
     const matrix = new THREE.Matrix4().multiplyMatrices(toRoot, obj.matrixWorld);
@@ -1113,6 +1160,7 @@ async function prepareFromFbx(keys, { track = false, parallel = false } = {}) {
       await matchSaltToSand(root, s.piece); // before the merge: it finds the ground by name
       root.userData.groundMaterial = [root.getObjectByName(`${s.piece}_Ground`)?.material].flat()[0]?.name; // (splitPieceCells)
     }
+    if (s.key === 'milfactory') splitPadMissile(root);
     // ?nomerge in the URL keeps the original meshes (for A/B checks).
     if (!new URLSearchParams(location.search).has('nomerge')) {
       try {
