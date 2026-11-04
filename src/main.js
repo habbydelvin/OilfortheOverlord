@@ -325,7 +325,7 @@ const tutorial = new Tutorial({
     /** A season is settling (from Next turn until the new hand: payout, attack phase, scenes). */
     settling: () => turnRunning || warPending || attackLive || eventOpen || payout.active,
     /** The Smuggler is at the gates, and there's oil for something in the Crawler. */
-    marketReady: () => turn.bmCooldown <= 0 && !turn.over && turn.stockpile >= bmCheapest(),
+    marketReady: () => bmWait() <= 0 && !turn.over && turn.stockpile >= bmCheapest(),
   },
 });
 // While it runs, only the card, cells and buttons the advisor asks for respond.
@@ -4546,18 +4546,19 @@ function updateWarTimer() {
     by.set(f.to, g);
   }
   const fmt = (t) => `${t.toFixed(1)}s`;
+  const tone = (to, g) => (to === 'player' ? 'bad' : g.mine ? 'good' : '');
+  const sorted = [...by].sort((a, b) => a[1].eta - b[1].eta);
+  // The headline: what lands on the city in view, or else whatever lands next (in its colour, like the list below).
+  const head = here ? (by.has(here) ? here : sorted[0][0]) : null;
   const lines = [];
-  if (here) {
-    const g = by.get(here);
-    lines.push(
-      g
-        ? `<b>${L(`${g.n} missile${g.n === 1 ? '' : 's'} arriving at ${cityName(here)} in ${fmt(g.eta)}`, `${g.n} 枚导弹将在 ${fmt(g.eta)} 后抵达${cityName(here)}`)}</b>`
-        : `<b>${L(`Nothing inbound on ${cityName(here)}`, `${cityName(here)}无来袭导弹`)}</b>`,
-    );
+  if (head) {
+    const g = by.get(head);
+    const text = L(`${g.n} missile${g.n === 1 ? '' : 's'} arriving at ${cityName(head)} in ${fmt(g.eta)}`, `${g.n} 枚导弹将在 ${fmt(g.eta)} 后抵达${cityName(head)}`);
+    lines.push(`<b class="${head === here ? '' : tone(head, g)}">${text}</b>`);
   } else lines.push(`<b>${L(`Missiles in the air: ${flights.length}`, `空中导弹：${flights.length}`)}</b>`);
-  for (const [to, g] of [...by].sort((a, b) => a[1].eta - b[1].eta)) {
-    if (to === here) continue;
-    lines.push(`<span class="${to === 'player' ? 'bad' : g.mine ? 'good' : ''}">${cityName(to)}: ${g.n} · ${fmt(g.eta)}</span>`);
+  for (const [to, g] of sorted) {
+    if (to === head) continue;
+    lines.push(`<span class="${tone(to, g)}">${cityName(to)}: ${g.n} · ${fmt(g.eta)}</span>`);
   }
   warTimer.innerHTML = lines.join('');
   warTimer.classList.remove('hidden');
