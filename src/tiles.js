@@ -104,25 +104,25 @@ export const TERRAINS = {
   },
   missilelab: {
     name: 'Missile Recipe Lab',
-    trigger: 'Passive',
+    trigger: 'Construction',
     top: 0x4a5a6e,
     edge: 0x2f3c4a,
     category: 'building',
     buildable: false,
     weight: 0.5,
-    rule: 'Adjacent Military Factories produce +1 Missile',
-    stats: { manpower: -2 },
+    rule: '1 year to finish (−1 oil each season) · Then adjacent factories produce +1 Missile',
+    stats: { oil: -1 },
   },
   warhead: {
     name: 'Warhead Institute',
-    trigger: 'Passive',
+    trigger: 'Construction',
     top: 0x8a5a28,
     edge: 0x5c3a18,
     category: 'building',
     buildable: false,
     weight: 0.5,
-    rule: 'Each staffed lab adds 1 neighbouring tile to missile blast',
-    stats: { manpower: -2 },
+    rule: '1 year to finish (−1 oil each season) · Then each institute adds 1 blast tile',
+    stats: { oil: -1 },
   },
   intercept: {
     name: 'Intercept Network',
@@ -430,6 +430,7 @@ export const ACTIONS = {
 
 const TRIGGER_ZH = {
   Passive: '被动',
+  Construction: '建设中',
   'On trigger': '触发时',
   Junk: '废料',
   'On play': '打出时',
@@ -467,8 +468,8 @@ const ZH = {
   demolish2: { name: '拆迁队', rule: '移除菱形范围内至多 4 个地块' },
   militia: { name: '派遣民兵', rule: '清除一个匪营或叛军营地' },
   milfactory: { name: '军事工厂', rule: '每季 -3 石油 · 一年后生产 1 枚导弹' },
-  missilelab: { name: '导弹配方改良所', rule: '相邻军事工厂生产导弹数量 +1' },
-  warhead: { name: '弹头研究所', rule: '每座开工的研究所使导弹爆炸再多打相邻 1 格' },
+  missilelab: { name: '导弹配方改良所', trigger: '建设中', rule: '建设 1 年（每季 -1 石油）· 完成后相邻军事工厂产量 +1' },
+  warhead: { name: '弹头研究所', trigger: '建设中', rule: '建设 1 年（每季 -1 石油）· 完成后每座导弹爆炸 +1 格' },
   intercept: { name: '拦截网络', rule: '花费 3 石油，阻止相邻建筑被攻击一次' },
   magazine: { name: '储弹仓', rule: '导弹容量 +1' },
   missile: { name: '导弹', rule: () => `摧毁 1 格 · 弹头研究所每座 +1 格 · 首都 −${MISSILE.damage ?? 1}` },
@@ -479,7 +480,9 @@ const ZH = {
 
 // name, trigger and rule become getters that answer in the current language (the English stays above).
 for (const [key, def] of Object.entries({ ...TERRAINS, ...ACTIONS })) {
-  const zh = { ...ZH[key], trigger: TRIGGER_ZH[def.trigger] };
+  const trigEn = Object.getOwnPropertyDescriptor(def, 'trigger')?.value;
+  const zh = { ...ZH[key] };
+  if (zh.trigger == null && trigEn) zh.trigger = TRIGGER_ZH[trigEn];
   for (const field of ['name', 'trigger', 'rule']) {
     const d = Object.getOwnPropertyDescriptor(def, field);
     if (!d) continue;

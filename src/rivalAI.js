@@ -2,7 +2,7 @@ import { DIRS, key, hexDistance } from './grid.js';
 import { TERRAINS, MILITARY } from './tiles.js';
 import { SHAPES, ROTATIONS, rotateCells } from './pieces.js';
 import { computeEconomy } from './economy.js';
-import { FACTORY_OIL, INTERCEPT_OIL, INTERCEPT, factoryYield, interceptorsBeside, interceptorsNear, missileCapacity, blastExtra } from './arsenal.js';
+import { FACTORY_OIL, INTERCEPT_OIL, INTERCEPT, factoryYield, interceptorsBeside, interceptorsNear, missileCapacity, blastExtra, isMilitaryLab, labOilCost } from './arsenal.js';
 import { hexesAround } from './grid.js';
 
 /**
@@ -328,6 +328,18 @@ export function runFactories(rival, e = computeEconomy(rival.grid, { foodStore: 
     if (rival.oil < FACTORY_OIL) continue;
     rival.oil -= FACTORY_OIL;
     cell.missileProgress = (cell.missileProgress ?? 0) + 1;
+  }
+  for (const cell of grid.cells.values()) {
+    if (!isMilitaryLab(cell.terrain) || cell.built) continue;
+    const cost = labOilCost(cell.terrain);
+    if (rival.oil < cost) {
+      cell.buildHalted = true;
+      continue;
+    }
+    cell.buildHalted = false;
+    rival.oil -= cost;
+    cell.buildProgress = (cell.buildProgress ?? 0) + 1;
+    if (cell.buildProgress >= need) cell.built = true;
   }
 }
 

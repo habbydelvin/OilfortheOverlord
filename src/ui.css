@@ -1620,17 +1620,56 @@ body.shopping .ruin-btn {
   overflow: hidden;
   pointer-events: none;
 }
+#buildHover {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 6;
+  pointer-events: none;
+  padding: 5px 9px;
+  border: 2px solid #1c1c1c;
+  border-radius: 3px;
+  background: rgba(18, 14, 12, 0.88);
+  color: var(--gold);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+  text-transform: uppercase;
+}
+#buildHover.hidden {
+  display: none;
+}
+#buildHover.halted {
+  color: #ff8a72;
+}
 .factory-bar {
   position: absolute;
   left: 0;
   top: 0;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 3px;
   padding: 3px 4px;
   border: 2px solid #1c1c1c;
   border-radius: 3px;
   background: rgba(18, 14, 12, 0.82);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
+}
+.factory-bar .halt-label {
+  flex: 1 0 100%;
+  color: #ff8a72;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+}
+.factory-bar.halted {
+  padding: 4px 6px;
 }
 .factory-bar i {
   position: relative;
@@ -1660,7 +1699,12 @@ body.shopping .ruin-btn {
 }
 body.shopping .factory-bar,
 body.dialogue .factory-bar,
-body.striking .factory-bar {
+body.striking .factory-bar,
+body.shopping #buildHover,
+body.dialogue #buildHover,
+body.striking #buildHover,
+body.globe-view #buildHover,
+body.rival-view #buildHover {
   display: none;
 }
 

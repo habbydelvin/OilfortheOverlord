@@ -64,7 +64,7 @@ function sections() {
       [
         [plain(ICONS.food), L('Food', '食物'), L('Feeds the Capital and Settlements. Spare food is banked in the food stores.', '供养首都和定居点。多余的食物存入粮仓。')],
         [plain(ICONS.oil), L('Oil', '石油'), L('The Overlord\'s tribute. The stockpile is taken after Winter.', '献给霸主的贡品。冬季过后石油库存会被收走。')],
-        [plain(ICONS.manpower), L('Manpower', '人力'), L('Workers to staff farms, Oil Stations, Refineries, missile labs and Magazines.', '为农场、采油站、炼油厂、导弹研究所和储弹仓提供人手。')],
+        [plain(ICONS.manpower), L('Manpower', '人力'), L('Workers to staff farms, Oil Stations, Refineries and Magazines.', '为农场、采油站、炼油厂和储弹仓提供人手。')],
       ],
     ],
   ];

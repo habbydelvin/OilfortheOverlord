@@ -2,6 +2,10 @@ import { DIRS, hexesAround } from './grid.js';
 
 /** Oil a Military Factory spends each season it works. */
 export const FACTORY_OIL = 3;
+/** Oil a Recipe Lab spends each season. */
+export const RECIPE_OIL = 1;
+/** Oil a Warhead Institute spends each season. */
+export const WARHEAD_OIL = 1;
 /** Rush Order used to spend oil on play; it is free to play now (shop price is 2 barrels). */
 export const OVERTIME_OIL = 2;
 /** Oil an Intercept Network spends to stop one incoming hit. */
@@ -44,26 +48,39 @@ const near = (grid, x, z) => DIRS.map(([dx, dz]) => grid.get(x + dx, z + dz)).fi
 
 const idleAt = (idleKeys, cell) => idleKeys?.has(`${cell.x},${cell.z}`);
 
+export const isMilitaryLab = (t) => t === 'missilelab' || t === 'warhead';
+export const labOilCost = (t) => (t === 'missilelab' ? RECIPE_OIL : t === 'warhead' ? WARHEAD_OIL : 0);
+
+/** Recipe Labs next to this cell. */
+export function recipeLabsBeside(grid, cell) {
+  return near(grid, cell.x, cell.z).filter((n) => n.terrain === 'missilelab');
+}
+
+/** True if this Recipe Lab sits next to a Military Factory. */
+export function recipeLabLinked(grid, cell) {
+  return near(grid, cell.x, cell.z).some((n) => n.terrain === 'milfactory');
+}
+
 /** What one staffed Military Factory produces when a year of work completes. */
 export function factoryYield(grid, cell, idleKeys) {
   const nbs = near(grid, cell.x, cell.z);
-  const recipe = nbs.some((n) => n.terrain === 'missilelab' && !idleAt(idleKeys, n));
+  const recipe = nbs.some((n) => n.terrain === 'missilelab' && n.built);
   return { count: 1 + (recipe ? 1 : 0), kind: 'missile' };
 }
 
-/** Staffed Warhead Institutes on this board (each adds one extra hex to a missile). */
-export function warheadRadius(grid, idleKeys) {
+/** Finished Warhead Institutes on this board (each adds one extra hex). */
+export function warheadRadius(grid) {
   let n = 0;
-  for (const c of grid.cells.values()) if (c.terrain === 'warhead' && !idleAt(idleKeys, c)) n++;
+  for (const c of grid.cells.values()) if (c.terrain === 'warhead' && c.built) n++;
   return n;
 }
 
 /**
- * Extra hexes beyond the aimed tile. Only staffed Warhead Institutes add any.
+ * Extra hexes beyond the aimed tile. Each Warhead Institute adds one.
  * `footprint` always does 1 (the aim) + this. The debug Blast slider is combat-test only.
  */
-export function blastExtra(grid, idleKeys) {
-  return warheadRadius(grid, idleKeys);
+export function blastExtra(grid) {
+  return warheadRadius(grid);
 }
 
 /** Intercept Networks adjacent to a cell, in placement order. */
