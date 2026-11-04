@@ -1,7 +1,6 @@
 import { pieceOf, randomPiece, rotateCells, shapeFits, SHAPES, ROTATIONS } from './pieces.js';
 import { ACTIONS, ICONS, TERRAINS, cardDef, cardText, hex, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
 import { WORKERS } from './economy.js';
-import { OVERTIME_OIL } from './arsenal.js';
 import { bindCardHover, chirp, deal as dealSfx, tick } from './sfx.js';
 import { L } from './i18n.js';
 
@@ -26,7 +25,7 @@ function costBadge(p, t) {
 export function pieceCost(p) {
   const n = SHAPES[p.shape]?.cells.length ?? 1;
   const t = TERRAINS[p.terrain];
-  if (p.terrain === 'overtime') return { workers: 0, food: 0, oil: OVERTIME_OIL };
+  if (p.terrain === 'overtime') return { workers: 0, food: 0, oil: 0 };
   return {
     workers: (WORKERS[p.terrain] ?? 0) * n,
     food: -Math.min(0, t?.stats?.food ?? 0) * n,

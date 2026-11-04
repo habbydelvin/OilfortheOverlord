@@ -7,10 +7,10 @@ const decimals = (step) => (String(step).split('.')[1] ?? '').length;
  * Each tuning section edits its `cfg` in place (read live) and saves to localStorage.
  * `fog` and `gfx` are optional extra sections: { params, defaults, cfg, save, clear, onChange(param) }.
  */
-export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog, globe, gfx, missiles, icons, scaling, audio, preview, shake, onShake, onMissiles, onPerf, onResetTutorial, crtOn, onCrt, onGiveTile, giveKeys }) {
+export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog, globe, gfx, missiles, intercept, icons, scaling, audio, preview, shake, onShake, onMissiles, onPerf, onResetTutorial, crtOn, onCrt, onGiveTile, giveKeys, onGiveMissile }) {
   const fmt = (p, v) => (p.type === 'select' || p.type === 'color' ? v : Number(v).toFixed(decimals(p.step)));
   const payout = { id: 'payout', params: PAYOUT_PARAMS, defaults: PAYOUT_DEFAULTS, cfg, save: savePayoutConfig, clear: clearPayoutConfig };
-  const sections = [audio && { id: 'audio', ...audio }, gfx && { id: 'gfx', ...gfx }, preview && { id: 'preview', ...preview }, shake && { id: 'shake', ...shake }, missiles && { id: 'missiles', ...missiles }, payout, scaling && { id: 'scaling', ...scaling }, icons && { id: 'icons', ...icons }, fog && { id: 'fog', ...fog }, globe && { id: 'globe', ...globe }].filter(Boolean);
+  const sections = [audio && { id: 'audio', ...audio }, gfx && { id: 'gfx', ...gfx }, preview && { id: 'preview', ...preview }, shake && { id: 'shake', ...shake }, missiles && { id: 'missiles', ...missiles }, intercept && { id: 'intercept', ...intercept }, payout, scaling && { id: 'scaling', ...scaling }, icons && { id: 'icons', ...icons }, fog && { id: 'fog', ...fog }, globe && { id: 'globe', ...globe }].filter(Boolean);
   const sectionOf = (id) => sections.find((s) => s.id === id);
 
   function rowsFor({ id, params, defaults, cfg }) {
@@ -64,6 +64,10 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
           <select data-act="giveKey">${(giveKeys ?? []).map((k) => `<option value="${k}">${k}</option>`).join('')}</select>
           <button type="button" data-act="give">Add to hand</button>
         </label>
+        <label class="dbg-row dbg-give">
+          <span class="dbg-name">Give missile</span>
+          <button type="button" data-act="giveMissile">Add to attack hand</button>
+        </label>
         ${rows}
       </div>
       <div class="dbg-actions">
@@ -115,6 +119,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
       const k = root.querySelector('[data-act="giveKey"]')?.value;
       status(onGiveTile?.(k) ?? '');
     }
+    else if (act === 'giveMissile') status(onGiveMissile?.() ?? '');
     else if (act === 'resetTutorial') status(onResetTutorial?.() ?? '');
     else if (act === 'missiles') status(onMissiles?.() ?? '');
     else if (act === 'shake') status(onShake?.() ?? '');

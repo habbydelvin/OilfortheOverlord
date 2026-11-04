@@ -281,6 +281,17 @@ export function click() {
   begin(0.04, (t, nodes) => noise(nodes, t, 0.025, 0.18, 2800, 0.6));
 }
 
+/** Factory missile lighting off and going up. */
+export function silo() {
+  begin(0.85, (t, nodes) => {
+    noise(nodes, t, 0.18, 0.18, 140, 0.8, 70);
+    tone(nodes, t, 'sine', 70, 0.28, 0.22, 40);
+    noise(nodes, t + 0.22, 0.28, 0.3, 420, 0.55, 140);
+    tone(nodes, t + 0.22, 'sawtooth', 90, 0.32, 0.16, 50);
+    noise(nodes, t + 0.38, 0.4, 0.22, 900, 0.6, 220);
+  });
+}
+
 /** Missile detonation. */
 export function boom() {
   begin(0.4, (t, nodes) => {
