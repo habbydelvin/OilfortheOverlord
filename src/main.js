@@ -6,7 +6,7 @@ import './themeShine.js';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
-import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws, silo } from './sfx.js';
+import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws } from './sfx.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed, hexesAround } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
@@ -27,9 +27,9 @@ import { setupLegend } from './legend.js';
 import { Mysteries } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
-import { computeEconomy, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS } from './economy.js';
+import { computeEconomy, computeEconomyIf, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS, rebelsRise, WORKERS } from './economy.js';
 import { FACTORY_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, blastExtra, isMilitaryLab, labOilCost } from './arsenal.js';
-import { pieceOf } from './pieces.js';
+import { pieceOf, pieceOffsets } from './pieces.js';
 import { findCiws } from './interceptMesh.js';
 import { queueDrawn, addMissile, missileCount, missileKinds, trimMissiles, resetMissiles, openCityStrike, drawStrikeHand, returnStrikeHand, bindCityStrikeUi, queueStrike, unqueueStrike, queuedStrikes, takeQueue, clearQueue } from './cityStrike.js';
 import { CAPITAL_HP, resolve as resolveWar, applyToRival, footprint, spreadFrom } from './war.js';
@@ -49,7 +49,7 @@ import { Perf } from './perfOverlay.js';
 import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig, applyGfx } from './graphics.js';
 import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
 import { MissileStrike, MISSILE_PARAMS, MISSILE_DEFAULTS, MISSILE_TAIL, loadMissileConfig, saveMissileConfig, clearMissileConfig } from './missiles.js';
-import { Tutorial, TUTORIAL_KEY, HINTS_KEY, tutorialDone, markTutorialDone } from './tutorial.js';
+import { Tutorial, TUTORIAL_KEY, OPENING, tutorialDone, markTutorialDone } from './tutorial.js';
 import { L, both, isZh, toggleLang, onLangChange, applyStatic, textOf, retranslate } from './i18n.js';
 import { createRivals, advanceRivals, rivalStats, PLAYER_NODE } from './rivals.js';
 import { createRivalView } from './rivalView.js';
@@ -187,8 +187,7 @@ const debug = RELEASE
   onPerf: () => perf.setOpen(!perf.enabled),
   onResetTutorial: () => {
     localStorage.removeItem(TUTORIAL_KEY); // next reload starts with the tutorial again
-    localStorage.removeItem(HINTS_KEY);
-    resetIsland({ tutorial: true });
+    resetIsland({ tutorial: true }); // (its lessons start over too)
     return 'Tutorial reset: guided first Spring started';
   },
   onMissiles: () => (tutorialBlocks() ? 'Not during the tutorial' : previewMissileStrike()),
@@ -299,6 +298,8 @@ const oilFlights = new OilFlights(document.body, gauge, (value) => {
 });
 const anims = [];
 let piecesPlaced = 0;
+/** The held card and cell the HUD's forecast was worked out for (null: work it out again). */
+let forecastKey = null;
 
 // Turn state: a turn is a season, a round is four seasons, tribute after Winter.
 /** Food in the store at the start, so a bad first year isn't an instant loss. */
@@ -324,20 +325,42 @@ const tutorial = new Tutorial({
   scene,
   camera,
   hand,
+  factory,
   api: {
     grid,
     placement,
     mysteries,
     /** This season if it ended now (food and oil), and the food in the stores. */
     economy: () => economyNow(),
+    /** The same, as if `cells` were built as `terrain` (a forecast: nothing changes). */
+    economyIf: (terrain, cells) => economyIf(terrain, cells),
     stores: () => turn.food,
+    /** The season (0 Spring), and the season the tribute is due in. */
+    season: () => turn.season,
+    tributeSeason: () => yearLength() - 1,
     /** The board cell under the pointer, or null. */
     cursor: () => hoveredCell(),
     focus: (x, z) => rig.focus(x, z),
+    /** Frame the city for the first payout: all of it where it fits, else the Capital and the buildings around it. */
+    frameCity: () => {
+      const panel = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--panel-w')) || 300;
+      const narrow = window.innerWidth - panel < 600; // (a phone: the city is wider than the board area)
+      rig.focus(...(narrow ? [0, 0] : grid.centroid()));
+      rig.goalDistance = homeDistance();
+    },
     skip: () => skipTutorial(),
+    /** 'touch' or 'mouse': the input last used (demonstrations follow it). */
+    modality: () => modality,
+    isAction: (terrain) => Boolean(ACTIONS[terrain]),
+    /** A reroll is possible now (free, or the oil for it). */
+    canReroll: () => !hand.isEmpty && (turn.freeRerolls > 0 || turn.stockpile >= rerollCost()),
+    /** This card could do something somewhere right now. */
+    canPlay: (piece) => canPlay(piece),
+    /** The Black Market walkthrough: this card's price taken off your oil, as a ghost (null: none). */
+    ghostPrice: (i) => ghostPrice(i),
     /** Which screen is up ('board' | 'globe' | 'rival'), and whether a switch or the globe's flight is under way. */
     view: () => view,
-    moving: () => switching || (view === 'globe' && globe.busy),
+    moving: () => switching || (view === 'globe' && globe.flying), // (the attack phase alone doesn't count)
     /** On the War Map: fly to a city ('player' is Hive City), when its label can't be pointed at. */
     visit: (id) => globe.visit(id),
     rivalIds: () => rivals.map((r) => r.id),
@@ -356,6 +379,27 @@ const tutorial = new Tutorial({
     rivalTarget: () => rivalTarget(),
     /** From Next turn until every missile has landed (the attack phase). */
     attacking: () => warPending || attackLive,
+    /** Pre-war Ruins on the board: { cell, clearable } for the nearest (clearable ones first), or null. */
+    ruins: () => {
+      let best = null;
+      for (const c of grid.cells.values()) {
+        if (c.terrain !== 'ruins') continue;
+        const r = { cell: [c.x, c.z], clearable: canClearRuins(c), d: hexDistance(c.x, c.z) };
+        if (!best || (r.clearable && !best.clearable) || (r.clearable === best.clearable && r.d < best.d)) best = r;
+      }
+      return best;
+    },
+    /** The rival city on screen (its id), or null. */
+    rivalShownId: () => (view === 'rival' ? (rivalShown?.id ?? null) : null),
+    /** The first strike's flight, held in the air for you to follow (the city it's aimed at), or null. */
+    following: () => following?.to ?? null,
+    /** Let a held flight go (the lesson put aside). */
+    letGo: () => (following = null),
+    /** A Missile Magazine stands on the board; the cell of one (for the lesson to point at), or null. */
+    magazineAt: () => {
+      const c = [...grid.cells.values()].find((x) => x.terrain === 'magazine');
+      return c ? [c.x, c.z] : null;
+    },
     /** A season is settling (from Next turn until the new hand: payout, attack phase, scenes). */
     settling: () => turnRunning || warPending || attackLive || eventOpen || payout.active,
     /** The Smuggler is at the gates, and there's oil for something in the Crawler. */
@@ -379,8 +423,67 @@ const tutorial = new Tutorial({
 // In a rival city with the missile hand out, missile cards can be picked (and dragged onto a tile to aim them).
 hand.guard = (action, piece) =>
   (view === 'rival' && rivalHand && isPlayerMissile(piece?.terrain) && !screenBusy()) || (!busy() && tutorial.allows(action, piece));
-hand.onBlocked = () => tutorial.nudge();
-placement.guard = (cells, piece) => tutorial.placeGuard(cells, piece);
+// A parked card (the guided opening's Wasteland, waiting for the Farm and the Station) shakes; the one to play hops.
+hand.onBlocked = (piece) => {
+  if (tutorial.active && tutorial.parks(piece)) tutorial.rejected({ code: 'parked' }, piece);
+};
+hand.parked = (piece) => tutorial.parks(piece);
+hand.onRotate = (piece) => {
+  tutorial.notify('rotated', { piece });
+  updateRotateButton();
+};
+{
+  const setPiece = hand.onChange;
+  hand.onChange = (piece) => {
+    setPiece(piece);
+    if (piece) tutorial.notify('selected', { piece });
+    updateRotateButton();
+  };
+}
+// The tutorial's placement rule, as an answer only: hovering a cell never sets off its feedback.
+placement.guard = (cells, piece) => tutorial.check(cells, piece);
+
+/** The input in use: touch or mouse (pen counts as touch). Demonstrations show the matching gesture. */
+let modality = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 'touch' : 'mouse';
+window.addEventListener(
+  'pointerdown',
+  (e) => {
+    modality = e.pointerType === 'mouse' ? 'mouse' : 'touch';
+    document.body.classList.toggle('touch', modality === 'touch');
+  },
+  { capture: true },
+);
+document.body.classList.toggle('touch', modality === 'touch');
+
+/**
+ * The camera distance the city opens at: 15 on a wide screen; a little further out when the board area (left of the
+ * panel) is narrow, so the Capital and its six neighbours fit.
+ */
+function homeDistance() {
+  const panel = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--panel-w')) || 300;
+  const board = Math.max(160, window.innerWidth - panel);
+  // ...but no further than where the map icons start to replace the models (zoomIcons fadeNear): the opening is
+  // about seeing the buildings themselves. The tutorial pans to anything it points at that's off screen.
+  return THREE.MathUtils.clamp(15 * Math.max(1, 560 / board), rig.minDistance, Math.min(rig.maxDistance, iconCfg.fadeNear));
+}
+
+/** The economy as if `cells` were built as `terrain` (forecasts only). */
+const economyIf = (terrain, cells) =>
+  computeEconomyIf(grid, { mods: turn.event?.mods, population: turn.population, foodStore: turn.food }, terrain, cells);
+
+/** Whether a card could do anything right now: a tile somewhere legal, an action with something to act on. */
+function canPlay(piece) {
+  const keep = placement.piece;
+  placement.piece = piece;
+  try {
+    const offs = ACTIONS[piece.terrain] ? [[0, 0]] : pieceOffsets(piece);
+    const cells = ACTIONS[piece.terrain] ? [...grid.cells.values()].map((c) => [c.x, c.z]) : [...grid.openKeys()].map((k) => k.split(',').map(Number));
+    for (const [x, z] of cells.slice(0, 400)) if (placement.validate(offs.map(([a, b]) => [x + a, z + b])).ok) return true;
+    return false;
+  } finally {
+    placement.piece = keep;
+  }
+}
 /** Debug tools and shortcuts are off during the tutorial (it has to stay on script). */
 /** True while something owns the screen (dialogue, missiles, shop, payout). */
 const screenBusy = () => eventOpen || striking || shopOpen || blackMarketOpen || payout.active || turn.over;
@@ -393,7 +496,7 @@ const mapBlocked = () => (screenBusy() && !attackLive && !onlyPaying()) || (tuto
 const busy = () => screenBusy() || view !== 'board';
 const tutorialBlocks = () => {
   if (!tutorial.active) return false;
-  tutorial.nudge();
+  tutorial.rejected({ code: 'early' });
   return true;
 };
 
@@ -1270,6 +1373,7 @@ function clearRuins(x, z) {
   placement.cell = null;
   frontier.rebuild(grid);
   updateHUD();
+  tutorial.notify('ruinsCleared');
   toast(
     drawn
       ? L(`Ruins cleared: salvaged ${drawn} new piece${drawn === 1 ? '' : 's'}`, `遗迹已清理：回收了 ${drawn} 个新板块`)
@@ -1517,32 +1621,22 @@ function dockMissile(kind) {
   latch();
 }
 
-/** The missile rises from the factory. Each rise banks one. */
+/**
+ * A finished missile goes into the silo: the factory hops, "+n" with the missile icon rises over it, and the Missiles
+ * row pops for each one. No flight: a missile in the air means an attack, and this one goes nowhere.
+ */
 async function playMissileMade(cell, n, kind) {
   const run = runId;
-  silo();
-  dust.burst(cell.x, cell.z, 0.7);
-  camShake.add(0.18);
-  if (view !== 'board') {
-    for (let i = 0; i < n; i++) {
-      if (run !== runId) return;
-      dockMissile(kind);
-      await wait(0.12);
-    }
-    return;
+  if (view === 'board') {
+    const icon = document.querySelector('#panel .res.missile .ico')?.outerHTML ?? '';
+    spawnFactoryFloater(cell, `<div class="row" style="--c:#ff8a2a"><b>+${n}</b>${icon}</div>`);
+    hopFactory(cell);
   }
-  const w = hexToWorld(cell.x, cell.z);
-  await Promise.all(
-    Array.from({ length: n }, (_, i) =>
-      missiles.rollOut(w.x, w.z, {
-        delay: i * 0.18,
-        onArrive: () => {
-          if (run !== runId) return;
-          dockMissile(kind);
-        },
-      }),
-    ),
-  );
+  for (let i = 0; i < n; i++) {
+    if (run !== runId) return;
+    dockMissile(kind);
+    await wait(0.15);
+  }
 }
 
 function spawnFactoryFloater(cell, html) {
@@ -2166,6 +2260,8 @@ function updateHUD() {
   $('resMp').classList.toggle('neg', e.idle > 0);
   $('resMpD').textContent = e.idle ? L(`(${e.idle} idle)`, `(${e.idle} 闲置)`) : '';
   $('resMpD').className = e.idle ? 'down' : '';
+  forecastKey = null; // the board changed: the forecast (if a card is held) is worked out again
+  renderRack(e, null);
   shadeIdle(e);
   // Oil: big number = the stockpile (the Overlord takes it all after Winter), small = this season's yield.
   const oilUpkeep = (e.factoryOil || 0) + (e.labOil || 0);
@@ -2604,11 +2700,13 @@ function endTurn() {
       return;
     }
   }
-  if (!tutorial.allows('endTurn')) return tutorial.nudge();
+  if (!tutorial.allows('endTurn')) return tutorial.rejected({ code: 'early' });
   // Wasteland must be placed first, but only if it fits somewhere; if there's no room, the turn can end.
+  // (The latch: the Wasteland cards hop and the button shakes; the guided opening shows only that.)
   const blocking = hand.placeableForced.length;
   if (blocking) {
-    toast(L(`Place your Wasteland first (${blocking} left in hand)`, `请先放置荒地（手牌中还剩 ${blocking} 张）`), 'bad');
+    tutorial.rejected({ code: 'mandatory' });
+    if (!tutorial.active) toast(L(`Place your Wasteland first (${blocking} left in hand)`, `请先放置荒地（手牌中还剩 ${blocking} 张）`), 'bad');
     return;
   }
   hand.select(-1);
@@ -2669,7 +2767,8 @@ function finishSeasonFx(e) {
     }
     showOil(turn.stockpile);
     document.body.classList.remove('paying');
-    settleTurn({ ...e, oil: 0, factoryWork: factoryWork.flat().filter(Boolean) });
+    // (Its oil is already in the stockpile: paid, for the season's summary.)
+    settleTurn({ ...e, oil: 0, paid: e.oil, factoryWork: factoryWork.flat().filter(Boolean) });
     // From here the shop, scenes or the new hand hold the screen themselves.
     setTurnRunning(false);
   });
@@ -2718,8 +2817,11 @@ function bump(el) {
 }
 
 /** Show an oil amount in the stockpile counter and the quota bar at the top. */
+/** While the first tribute is carried off (tutorial.tribute): the gauge still shows what was delivered, of what. */
+let tributeHeld = null; // { amount, quota }
 function showOil(amount, bump = false) {
-  const quota = turn.quota;
+  if (tributeHeld) amount = tributeHeld.amount;
+  const quota = tributeHeld?.quota ?? turn.quota;
   $('oilStock').textContent = amount;
   $('resOil').textContent = amount;
   $('quotaCount').textContent = L(`${amount} / ${quota} barrels`, `${amount} / ${quota} 桶`);
@@ -2858,8 +2960,6 @@ function splitTriggers(p) {
 /** Tiles that hop even without a number of their own (they boost their neighbours). */
 const EFFECT_TILES = new Set(['pump', 'oasis', 'tarpit', 'refinery', 'raider', ...BANDIT_KEYS]);
 
-/** Rebels rise when a season ends with no food left: nothing gained (net ≤ 0) and the stores empty. */
-const rebelsRise = (e) => Math.round(e.foodBalance) <= 0 && e.storeAfter <= 0;
 
 /**
  * A season that ends with no food (net ≤ 0, stores empty) draws raiders. They camp on an empty cell next to your land first, then on a Wasteland,
@@ -3069,6 +3169,7 @@ function settleTurn(e) {
   turn.total += e.oil;
   turn.food = e.storeAfter;
   const factoryWork = e.factoryWork ?? [];
+  const earned = e.paid ?? e.oil; // what the season made (the payout may have banked it already)
 
   const sgn = (n) => {
     const r = Math.round(n);
@@ -3078,12 +3179,12 @@ function settleTurn(e) {
   const lines = [
     `<b>${label()}</b>`,
     L(
-      `Food ${tag(e.foodBalance)} · Free workers ${e.free}/${e.cap}${e.idle ? ` <span class="bad">(${e.idle} idle)</span>` : ''} · Oil ${tag(e.oil)}`,
-      `食物 ${tag(e.foodBalance)} · 空闲人力 ${e.free}/${e.cap}${e.idle ? ` <span class="bad">（${e.idle} 闲置）</span>` : ''} · 石油 ${tag(e.oil)}`,
+      `Food ${tag(e.foodBalance)} · Free workers ${e.free}/${e.cap}${e.idle ? ` <span class="bad">(${e.idle} idle)</span>` : ''} · Oil ${tag(earned)}`,
+      `食物 ${tag(e.foodBalance)} · 空闲人力 ${e.free}/${e.cap}${e.idle ? ` <span class="bad">（${e.idle} 闲置）</span>` : ''} · 石油 ${tag(earned)}`,
     ),
   ];
   // The toast: parts that are each one L() sentence (switchable as they are) or a function.
-  const msg = [() => L(`${label()}: +${e.oil} oil`, `${label()}：+${e.oil} 石油`)];
+  const msg = [() => L(`${label()}: +${earned} oil`, `${label()}：+${earned} 石油`)];
   let kind = 'good';
   if (e.foodWasted)
     lines.push(`<span class="bad">${L(`The stores are full: ${e.foodWasted} food spoiled.`, `粮仓已满：${e.foodWasted} 食物腐坏了。`)}</span>`);
@@ -3148,6 +3249,8 @@ function settleTurn(e) {
   function finishSettle() {
   // Tribute at the end of the year, on its last season.
   let failure = null; // set when the tribute is missed: the Overlord comes to speak instead of the shop
+  const delivered0 = turn.stockpile;
+  const quota0 = turn.quota;
   if (yearEnds) {
     const quota = turn.quota;
     const delivered = turn.stockpile;
@@ -3218,6 +3321,20 @@ function settleTurn(e) {
   $('report').innerHTML = lines.join('<br />');
 
   // (The attack phase already played at End Turn, before the payout.)
+  // The first tribute met: the oil leaves the gauge for the Overlord, then the new target, before the shop.
+  if (yearEnds && !failure && tutorial.lessons.open('tribute')) {
+    const run = runId;
+    tributeHeld = { amount: delivered0, quota: quota0 }; // the full gauge the barrels leave from
+    showOil(0);
+    tutorial.tribute().then(() => {
+      tributeHeld = null;
+      if (run !== runId) return;
+      updateHUD();
+      tutorial.newTarget();
+      afterWar();
+    });
+    return;
+  }
   afterWar();
 
   function afterWar() {
@@ -3624,11 +3741,50 @@ function applyYearEvent(key, ev, choiceIdx) {
 function dealNewHand() {
   // Dust Storm: extra Wasteland dealt on top of the normal hand.
   const waste = turn.event?.mods?.extraWaste ?? 0;
-  hand.deal(handSize() + waste, [...turn.pinned, ...Array(waste).fill('wasteland')]);
+  hand.deal(handSize() + waste, [...turn.pinned, ...lessonCards(), ...Array(waste).fill('wasteland')]);
   turn.pinned = [];
   holdingPurchases = false;
   updateHUD();
   pop($('oilStock'));
+  tutorial.notify('dealt');
+}
+
+/**
+ * A tutorial run deals the cards its lessons need, when they need them: the guided opening's card to place on your
+ * own, then (once) a Settlement when the workers are about to run out, with a Farm if the food couldn't carry it.
+ */
+function lessonCards() {
+  if (!turn.guided) return [];
+  if (tutorial.active) return [OPENING.next];
+  const cards = [];
+  const e = economyNow();
+  // The military lesson, from Autumn of the first year: a Missile Magazine card (kept until it's placed). Its missile
+  // comes loaded in it, so the first strike has somewhere to come from.
+  const magazine = !turn.gifted && tutorial.lessons.open('war') && (turn.round > 1 || turn.season >= 2) && !hasMagazine();
+  if (magazine) cards.push('magazine');
+  // Housing, once, when the workers are about to run out (the Magazine needs two): a Settlement, and a Farm if the
+  // food couldn't carry it.
+  const need = magazine ? WORKERS.magazine : 1;
+  if (tutorial.lessons.open('workers') && !turn.housingDealt && (e.free <= need || e.idle)) {
+    turn.housingDealt = true;
+    cards.push('settlement');
+    if (Math.round(e.foodBalance) - 2 < 1) cards.push('farm');
+  }
+  return cards;
+}
+
+const hasMagazine = () => [...grid.cells.values()].some((c) => c.terrain === 'magazine');
+
+/**
+ * A tutorial run's Missile Magazine is down: its missile loads into it (a missile rises from it into the Missiles
+ * row). That's the one the military lesson fires.
+ */
+function loadGiftMissile(cell) {
+  if (!turn.guided || turn.gifted) return;
+  turn.gifted = true;
+  if (!tryStoreMissile('missile')) return;
+  updateHUD();
+  tutorial.missileIn(cell);
 }
 
 // ---------- shop (after Winter) ----------
@@ -3963,7 +4119,7 @@ async function openBlackMarket() {
   if (turn.bmCooldown > 0) return toast(L(`The Smuggler is gone. Back in ${turn.bmCooldown} season${turn.bmCooldown === 1 ? '' : 's'}.`, `走私贩已离开，${turn.bmCooldown} 季后回来。`), 'bad');
   if (view !== 'board') return toast(L('Return to Hive City first', '请先返回蜂巢城'));
   if (screenBusy() || strikeOpen || warPending || previewing) return toast(L('Finish the current screen first', '请先完成当前界面'));
-  if (tutorial.active) return toast(L('Finish the tutorial first', '请先完成教程'));
+  if (!tutorial.allows('market')) return tutorial.rejected({ code: 'early' });
   const run = runId;
   blackMarketOpen = true;
   tutorial.notify('market');
@@ -4091,6 +4247,8 @@ $('bmCards').addEventListener('click', (e) => {
   item[2] = true;
   turn.unlocked.add(k);
   hand.addPinned(k); // kept through the next deal until played
+  ghostPrice(null);
+  tutorial.notify('purchased');
   showOil(turn.stockpile, true);
   coin();
   renderBlackMarket();
@@ -4216,6 +4374,9 @@ renderer.domElement.addEventListener('pointermove', (e) => {
 renderer.domElement.addEventListener('pointerleave', () => (pointerInside = false));
 renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 renderer.domElement.addEventListener('pointerdown', (e) => {
+  // A touch has no hover before it presses: where it lands is where it points.
+  pointer.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+  pointerInside = true;
   if (e.button === 2) hand.rotate(1);
 });
 
@@ -4264,8 +4425,10 @@ function hoveredCell() {
 function revealMysteries(cells) {
   const found = mysteries.revealAround(cells);
   if (!found.length) return;
+  tutorial.notify('revealed', { found });
   const tiles = landReveals(found, (i) => 0.25 + i * 0.15);
   if (tiles.length < found.length) return; // a missile: its own toast
+  if (tutorial.active) return; // the guided opening shows the find itself (no caption)
   toast(
     () => L(
       `Uncovered ${tiles.map((f) => `a ${TERRAINS[f.terrain].name}`).join(', ')}!`,
@@ -4347,7 +4510,7 @@ function tryPlace() {
   }
   const piece = hand.piece;
   if (!piece) {
-    if (tutorial.active) return tutorial.nudge();
+    if (tutorial.active) return tutorial.rejected({ code: 'early' });
     toast(
       strikeOpen
         ? L('Pick a missile, then click a building', '选出导弹，再点一座建筑')
@@ -4368,7 +4531,10 @@ function tryPlace() {
   if (!result.ok) {
     placement.reject();
     buzz();
-    if (result.reason) toast(result.reason, 'bad', 1600, false); // the tutorial refuses without words
+    // Shown where the problem is (crosses on what's in the way, a broken link, the cells to use); the guided opening
+    // refuses without words.
+    tutorial.rejected(result, piece, cells);
+    if (result.reason && !tutorial.active) toast(result.reason, 'bad', 1600, false);
     return;
   }
   if (ACTIONS[piece.terrain]) {
@@ -4400,18 +4566,20 @@ function tryPlace() {
     }
     return;
   }
-  const idleBefore = economyNow().idle;
+  const before = economyNow();
+  const idleBefore = before.idle;
   if (piece.terrain.startsWith('wasteland')) addWastePiece(piece, cells);
   else cells.forEach(([x, z], i) => addTile(x, z, piece.terrain, i * 0.05, false, { rot: piece.rot }));
   piecesPlaced++;
-  showPlacementCost(piece, cells);
+  if (!tutorial.active) showPlacementCost(piece, cells); // (the guided opening shows the cost with its own tokens)
   hand.consume();
   if (!grid.expansionMode) revealMysteries(cells);
   frontier.rebuild(grid);
   updateHUD();
-  if (economyNow().idle > idleBefore)
+  if (economyNow().idle > idleBefore && !tutorial.active)
     toast(L('No free workers: this building sits idle until you add housing', '没有空闲人力：这座建筑将一直闲置，直到你建造更多住房'), 'bad', 2400);
-  tutorial.notify('placed', cells);
+  tutorial.notify('placed', { terrain: piece.terrain, cells, before });
+  if (piece.terrain === 'magazine') loadGiftMissile(cells[0]);
   if (piece.terrain === 'milfactory' && !turn.seenMilFactory && !tutorial.active) {
     turn.seenMilFactory = true;
     playMilFactoryScene();
@@ -4868,7 +5036,7 @@ function dropMissileOnRival() {
   }
   const aimedNow = queuedStrikes(rival.id).length;
   confirm();
-  if (aimedNow > before) tutorial.notify(piece.terrain === 'salvo' ? 'salvo' : 'aimed');
+  if (aimedNow > before) tutorial.notify('aimed', { salvo: piece.terrain === 'salvo' });
   updateAimBar();
   updateHUD();
 }
@@ -5240,7 +5408,10 @@ async function runAttackPhase() {
   warTimer.classList.remove('hidden');
   const phase = globe.playAttack(res, rivals);
   // Everyone fires at once: on Hive City your magazines open and the salvo climbs away as the countdown starts.
+  // The first strike while the military lesson is open: launched from home, it waits in the air for you to follow it.
+  const follow = view === 'board' && mine.length > 0 && readySilos().length > 0 && tutorial.lessons.open('war');
   if (view === 'board' && mine.length) launchSalvo(res.filter((s) => s.from === 'player'));
+  if (follow) holdForFollow(run, mine[0].to);
   // The first time missiles fly each way, the Field Report briefs you with everything frozen in the air.
   const briefed = await briefAttack(mine, theirs);
   if (run !== runId) return true;
@@ -5268,6 +5439,7 @@ async function runAttackPhase() {
   eventOpen = false;
   updateHUD();
   toastWarSummary(res);
+  tutorial.notify('attackDone', { mine: mine.length });
 
   if (turn.capitalHp <= 0) {
     gameOver(() => L('Rival missiles have levelled your Capital. Hive City has fallen.', '敌方导弹夷平了你的首都。蜂巢城已陷落。'));
@@ -5280,9 +5452,52 @@ async function runAttackPhase() {
   return false;
 }
 
+/**
+ * The first strike, followed (the military lesson): launched from Hive City, the flight is held on the War Map while
+ * the Magazine fires, then let go until it's about mid-way, and held there until you've followed it into the city
+ * it's aimed at, where it comes down. So both ends are seen: the launch, and the impact. It lets go anyway after a
+ * while (or if the run is reset), so nothing waits forever.
+ */
+let following = null; // { to } while a flight waits for you
+const FOLLOW_ETA = 3.4; // seconds left when it's held (more than the 2.2 s the incoming flight takes)
+async function holdForFollow(run, to) {
+  const hold = (on) => run === runId && globe.pauseAttack(on);
+  const mineInAir = () => globe.inFlight().find((f) => f.s.from === 'player' && f.s.to === to);
+  // The Magazine opens and the missile climbs away: nothing moves on the War Map meanwhile.
+  const t0 = performance.now();
+  while (run === runId && performance.now() - t0 < (SILO_CUT / SILO_SPEED + 1.4) * 1000) {
+    hold(true);
+    await wait(0.1);
+  }
+  if (run !== runId) return;
+  // On to about mid-way...
+  hold(false);
+  for (let i = 0; i < 300 && run === runId; i++) {
+    const f = mineInAir();
+    if (!f || f.eta <= FOLLOW_ETA) break;
+    await wait(0.05);
+  }
+  if (run !== runId || !mineInAir()) return;
+  // ...and held there until you're in that city (a dialogue unpausing it doesn't count: re-held every tick).
+  following = { to };
+  // (Wall time: the wait is for the player, not for the frames. Arriving there ends it; skipping the lesson too.)
+  const t1 = performance.now();
+  while (run === runId && following) {
+    const there = view === 'rival' && rivalShown?.id === to && !switching;
+    if (there || performance.now() - t1 > 90000) break;
+    hold(true);
+    await wait(0.1);
+  }
+  following = null;
+  hold(false);
+}
+
 /** Incoming! A banner naming who is firing at Hive City, before the missiles fly. */
 async function briefAttack(mine, theirs) {
   const at = theirs.filter((x) => x.to === 'player');
+  // The military lesson is still being taught: it shows the launch itself (countdown, flight, impact), so no briefing
+  // on top of it. (Those who know it get the Field Report once, as before.)
+  if (mine.length && !turn.seenLaunch && tutorial.lessons.open('war')) turn.seenLaunch = true;
   const launch = mine.length > 0 && !turn.seenLaunch;
   const incoming = at.length > 0 && !turn.seenIncoming;
   if (!launch && !incoming) return { launch, incoming };
@@ -5298,8 +5513,10 @@ async function briefAttack(mine, theirs) {
     lines.push(
       () => L(`That's it, Overseer, they're away. ${plural(mine.length, 'warhead')}, heading for ${targets}.`, `发射了，总督，它们已经出发。${mine.length} 枚弹头，正飞向${targets}。`),
       () => L(`About ${eta} seconds until they land. Their Intercept Networks will try to shoot some down, so don't count on every one.`, `大约 ${eta} 秒后落地。对方的拦截网会设法击落一部分，所以别指望每一枚都能命中。`),
-      () => L("If you'd like to watch, zoom out to the War Map and dive into their city. I'll keep the coffee warm.", '想亲眼看的话，就缩放到战争地图，再进入对方城市。咖啡我给您热着。'),
     );
+    // Only worth saying when you aren't watching one of their cities already.
+    if (view !== 'rival')
+      lines.push(() => L("If you'd like to watch, zoom out to the War Map and dive into their city. I'll keep the coffee warm.", '想亲眼看的话，就缩放到战争地图，再进入对方城市。咖啡我给您热着。'));
   }
   if (incoming) {
     turn.seenIncoming = true;
@@ -5432,6 +5649,7 @@ function openGlobe() {
     }
     setBoardFraming(false);
     view = 'globe';
+    tutorial.notify('globe');
     document.body.classList.add('globe-view');
     globe.enter(rivals, from);
     globe.setQueued(queuedStrikes().map((s) => ({ from: 'player', to: s.to })));
@@ -5566,7 +5784,7 @@ window.addEventListener('keydown', (e) => {
     return; // no placing / rotating / nuking mid-payout
   }
   // The guided Spring stays on track: the debug shortcuts are off.
-  if (tutorial.active && 'nmpvtx'.includes(k) && k.length === 1) return tutorial.nudge();
+  if (tutorial.active && 'nmpvtx'.includes(k) && k.length === 1) return tutorial.rejected({ code: 'early' });
   if (k >= '1' && k <= '9' && Number(k) <= hand.cards.length) {
     const i = Number(k) - 1;
     hand.select(hand.selected === i ? -1 : i);
@@ -5588,7 +5806,7 @@ window.addEventListener('keydown', (e) => {
   else if (dev && k === 't' && !e.repeat) debugTarget(e.shiftKey);
   else if (dev && k === 'x' && !e.repeat) setExpansionMode(!grid.expansionMode);
   else if (!RELEASE && k === 'j' && !e.repeat) {
-    if (tutorial.active) return tutorial.nudge();
+    if (tutorial.active) return tutorial.rejected({ code: 'early' });
     const msg = debugMissileSettle();
     toast(msg, msg.includes('Finish') || msg.includes('请先') ? 'bad' : 'good');
   }
@@ -5598,12 +5816,13 @@ window.addEventListener('keydown', (e) => {
 $('btnReroll').addEventListener('click', (e) => {
   e.currentTarget.blur();
   if (hand.isEmpty || payout.active || turn.over || shopOpen || eventOpen || strikeOpen) return;
-  if (tutorial.active) return tutorial.nudge(); // the guided Spring plays the opening hand as dealt
+  if (!tutorial.allows('reroll')) return tutorial.rejected({ code: 'early' }); // the guided opening plays its hand
   if (turn.freeRerolls > 0) {
     // Target reward: free, and doesn't raise the price of the next paid reroll.
     turn.freeRerolls--;
     shuffle();
     hand.reroll();
+    tutorial.notify('rerolled');
     updateHUD();
     toast(
       L(
@@ -5623,6 +5842,7 @@ $('btnReroll').addEventListener('click', (e) => {
   hand.reroll();
   turn.rerolls++;
   turn.stockpile -= cost;
+  tutorial.notify('rerolled');
   updateHUD();
   toast(L(`Hand rerolled: -${cost} oil (next reroll costs ${rerollCost()})`, `已重抽手牌：-${cost} 石油（下次重抽花费 ${rerollCost()}）`));
 });
@@ -5634,6 +5854,131 @@ $('btnNext').addEventListener('click', (e) => {
   e.currentTarget.blur(); // so Space doesn't re-click it
   endTurn();
 });
+
+// ---------- what a card would do, before it's placed (a forecast: nothing is earned or spent) ----------
+/**
+ * While a card is held over a cell it can go on: the economy with it in place, shown as hollow tokens over the cell
+ * (tutorial.js), ghost slots in the worker rack and the new food / oil figures beside the HUD's. Same calculation as
+ * the season itself (computeEconomyIf), so the forecast is what the season will pay.
+ */
+function updateForecast(cell) {
+  const piece = hand.piece;
+  const ok = Boolean(piece && cell && view === 'board' && placement.result?.ok && !ACTIONS[piece.terrain] && !piece.terrain.startsWith('wasteland'));
+  const key = ok ? `${piece.id}:${piece.rot}:${cell}:${grid.size}:${turn.season}:${turn.food}` : '';
+  if (key === forecastKey) return;
+  forecastKey = key;
+  if (!ok) {
+    tutorial.forecast(null);
+    renderForecastHUD(null);
+    return;
+  }
+  const cells = placement.cellsAt(cell);
+  const before = economyNow();
+  const after = economyIf(piece.terrain, cells);
+  tutorial.forecast(cells, piece.terrain, before, after);
+  renderForecastHUD(before, after);
+}
+
+function renderForecastHUD(before, after = null) {
+  const sign = (n) => `${n > 0 ? '+' : ''}${Math.round(n)}`;
+  const food = after && Math.round(after.foodBalance) !== Math.round(before.foodBalance);
+  $('resFoodF').textContent = food ? `→ ${sign(after.foodBalance)}` : '';
+  $('resFoodF').classList.toggle('neg', Boolean(food && Math.round(after.foodBalance) < 0));
+  const oil = after && after.oil !== before.oil;
+  $('resOilF').textContent = oil ? `→ (+${after.oil})` : '';
+  renderRack(before ?? economyNow(), after);
+}
+
+/**
+ * The worker rack under Manpower: a slot per worker the city can staff. Filled = in use, hollow = free, dashed red =
+ * a building with no one to run it. With a forecast (`f`): the slots it adds, takes or fills show as ghosts.
+ */
+function renderRack(e, f = null) {
+  const el = $('mpRack');
+  if (!el) return;
+  const src = f ?? e;
+  const slots = [];
+  const n = Math.max(src.cap, e.cap);
+  for (let i = 0; i < n; i++) {
+    const exists = i < src.cap;
+    const on = exists && i < src.used;
+    let cls = on ? 'on' : 'free';
+    if (f) {
+      if (!exists) cls = 'lost ghost';
+      else if (i >= e.cap || (on && i >= e.used)) cls += ' ghost';
+    }
+    slots.push(cls);
+  }
+  const missing = Math.max(0, src.needed - src.used);
+  const nowMissing = Math.max(0, e.needed - e.used);
+  for (let i = 0; i < missing; i++) slots.push(`missing${f && i >= nowMissing ? ' ghost' : ''}`);
+  const shown = slots.slice(0, 40);
+  const html = shown.map((c) => `<i class="${c}"></i>`).join('');
+  if (el._html !== html) {
+    el.innerHTML = el._html = html;
+    el.classList.toggle('dense', shown.length > 18);
+  }
+}
+
+/** The Black Market walkthrough: card i's price coming off the oil you have, as a ghost (null: none). */
+function ghostPrice(i) {
+  let g = $('bmGhost');
+  const item = i === null || i === undefined || !bmCategory ? null : bmStock[bmCategory]?.[i];
+  if (!item) {
+    g?.remove();
+    return;
+  }
+  if (!g) {
+    g = document.createElement('div');
+    g.id = 'bmGhost';
+    g.className = 'coach-ghost-price';
+    $('bmOil').insertAdjacentElement('afterend', g);
+  }
+  const html = `<b>−${item[1]}</b>${ICONS.oil}<span>→ ${Math.max(0, turn.stockpile - item[1])}</span>`;
+  if (g._html !== html) g.innerHTML = g._html = html;
+}
+
+/** The rotate button over the board: there while a piece of 2+ cells is held (touch has no R key). */
+function updateRotateButton() {
+  const p = hand.piece;
+  const multi = Boolean(p && !ACTIONS[p.terrain] && pieceOffsets(p).length > 1);
+  $('btnRotate').classList.toggle('hidden', !multi || view !== 'board');
+}
+
+/** Back to Hive City: the button shows once the camera has wandered off the city. */
+let recenterCheck = 0;
+function updateRecenter(dt) {
+  recenterCheck -= dt;
+  if (recenterCheck > 0) return;
+  recenterCheck = 0.4;
+  const [cx, cz] = grid.expansionMode ? grid.territoryCenter() : grid.centroid();
+  const reach = 5 + Math.sqrt(grid.size) * 0.9;
+  const far = Math.hypot(rig.target.x - cx, rig.target.z - cz) > reach;
+  $('btnRecenter').classList.toggle('hidden', view !== 'board' || !far || hand.dragging);
+}
+
+$('btnWarMap').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  if (!tutorial.allows('globe')) return tutorial.rejected({ code: 'early' });
+  openGlobe();
+});
+$('btnRotate').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  hand.rotate(1);
+});
+$('btnRecenter').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  rig.focus(...(grid.expansionMode ? grid.territoryCenter() : grid.centroid()));
+});
+// The Controls panel's "show me again": a demonstration on the city as it is (nothing changes).
+for (const b of document.querySelectorAll('[data-demo]')) {
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.currentTarget.blur();
+    setHelp(false);
+    tutorial.demo(b.dataset.demo);
+  });
+}
 
 // Controls popup: toggled by its button, closed by ✕, Esc or a click elsewhere.
 const helpOpen = () => !$('help').classList.contains('hidden');
@@ -5694,6 +6039,8 @@ function resetIsland(opts) {
   piecesPlaced = 0;
   if (strikeOpen) closeStrikeScreen();
   resetMissiles(); // and any aimed strikes
+  tributeHeld = null;
+  following = null;
   warPending = false;
   setTurnRunning(false);
   settledSeason = null;
@@ -5740,6 +6087,8 @@ function resetIsland(opts) {
     shopMult: 1,
     bmCooldown: 0,
     bmMet: false,
+    guided: tut && !ALL_TILES, // a tutorial run: its opening is authored, and a few lessons get their cards dealt
+    gifted: false, // (tutorial run) the free missile for the military lesson
     ...freshTargetState(),
   });
   shopOpen = false;
@@ -5754,12 +6103,18 @@ function resetIsland(opts) {
   $('report').textContent = L('No seasons played yet.', '尚未度过任何季节。');
   addTile(0, 0, SEED_TERRAIN, 0, true); // the game opens with the Capital already standing
   mysteries.reset();
+  // The guided opening's first discovery: one "?" site three steps out, always a Water Pump (and none nearer).
+  if (turn.guided && !grid.expansionMode) mysteries.plant(...OPENING.site.at, OPENING.site.terrain);
   frontier.rebuild(grid);
   if (ALL_TILES) {
     for (const [k] of SHOP_ITEMS) turn.unlocked.add(k);
     turn.freeRerolls = 20;
     turn.stockpile = Math.max(turn.stockpile, 30);
     hand.deal(HAND_SIZE);
+  } else if (turn.guided) {
+    // The guided opening's hand, in order: a Farm, an Oil Station and two Wasteland pieces (no Settlement yet:
+    // the Capital's workers are enough for now; housing comes when they run out).
+    hand.replaceHand(OPENING.hand);
   } else {
     // Opening hand: always one of each basic building plus two Wasteland, in random order.
     hand.deal(HAND_SIZE, OPENING_HAND);
@@ -5767,15 +6122,16 @@ function resetIsland(opts) {
   }
   hand.render();
   rig.focus(0, 0);
+  rig.distance = rig.goalDistance = homeDistance(); // the city fits the board area, whatever the screen
   updateHUD();
   if (ALL_TILES) {
     skipTutorial();
     tutorial.begin();
-  } else {
-    if (tut) tutorial.start(); // guides the first Spring once the opening scene is over
-    if (opts?.intro !== false) playIntro();
-    else tutorial.begin();
-  }
+  } else if (turn.guided) {
+    // The commission (wordless, a few seconds) replaces the spoken opening; the first card is usable at once.
+    tutorial.start();
+    tutorial.begin();
+  } else if (opts?.intro !== false) playIntro();
 }
 
 /** Skip tutorial: the guiding stops and Spring carries on as a normal season. */
@@ -6087,7 +6443,8 @@ function frame(now) {
   neonTiles.update(dt, time);
   // Outlines where the card being placed (or hovered) would be boosted.
   const placing = hand.piece;
-  boostHints.update(dt, time, grid, (placing ?? hand.hoveredPiece)?.terrain ?? null, Boolean(placing), placing && !rig.isDragging ? hoveredCell() : null, placing && placement.result && !placement.result.ok);
+  // (Not while the guided opening teaches a placement: its own outlines show the spot, one signal at a time.)
+  boostHints.update(dt, time, grid, tutorial.guiding ? null : ((placing ?? hand.hoveredPiece)?.terrain ?? null), Boolean(placing), placing && !rig.isDragging ? hoveredCell() : null, placing && placement.result && !placement.result.ok);
   perf.end('ships');
   perf.begin('frontier+mysteries');
   frontier.update(dt, time);
@@ -6119,6 +6476,8 @@ function frame(now) {
   // Hide the ghost while choosing a plot or while the payout plays.
   if (busy() && hand.selected >= 0 && !payout.active) hand.select(-1);
   placement.update(expansion.active || busy() ? null : cell, dt, time);
+  updateForecast(expansion.active || busy() ? null : cell);
+  updateRecenter(dt);
   perf.end('placement');
   tutorial.update(time);
 

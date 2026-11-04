@@ -433,6 +433,37 @@ export function computeEconomy(grid, state = {}) {
   };
 }
 
+/**
+ * A season that ends with nothing to eat: net food ≤ 0 and the stores empty afterwards (exactly using up the last of
+ * the store counts). Settlement brings a rebel camp then (main.js settleTurn); the tutorial's food warning asks the same
+ * question, so the two can never disagree.
+ */
+export const rebelsRise = (e) => Math.round(e.foodBalance) <= 0 && e.storeAfter <= 0;
+
+/**
+ * How long the food holds if nothing changes: seasons from now until one ends with nothing to eat (0: this one),
+ * or Infinity when the balance keeps the stores from emptying.
+ */
+export function seasonsOfFood(e) {
+  if (rebelsRise(e)) return 0;
+  const net = Math.round(e.foodBalance);
+  if (net >= 0) return Infinity;
+  return Math.ceil(e.storeAfter / -net);
+}
+
+/**
+ * The economy as it would be with `cells` built as `terrain` (a forecast: nothing on the board changes). Only
+ * grid.cells and grid.get are read by computeEconomy, so a light copy of the board is enough.
+ */
+export function computeEconomyIf(grid, state, terrain, cells) {
+  const map = new Map(grid.cells);
+  for (const [x, z] of cells) {
+    const old = map.get(`${x},${z}`);
+    map.set(`${x},${z}`, { x, z, terrain, onRuins: old?.terrain === 'ruins' || Boolean(old?.onRuins) });
+  }
+  return computeEconomy({ cells: map, get: (x, z) => map.get(`${x},${z}`) }, state);
+}
+
 function counts0(grid, terrain) {
   let n = 0;
   for (const c of grid.cells.values()) if (c.terrain === terrain) n++;

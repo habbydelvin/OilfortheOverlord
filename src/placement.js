@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { pieceOffsets, ROTATIONS } from './pieces.js';
 import { inWorld, hexToWorld, hexesAround } from './grid.js';
-import { hexPlane, hexPrism } from './hexGeometry.js';
+import { hexPlane, hexPrism, hexOutline } from './hexGeometry.js';
 import { hasBlockout } from './models.js';
 import { ACTIONS, TERRAINS, cardDef, isBuilding, isCamp, applyTileGap, fitFull } from './tiles.js';
 import { L, both, onLangChange } from './i18n.js';
@@ -20,6 +20,44 @@ const toGhostLayer = (o) => o.layers.set(GHOST_LAYER);
 const goal = new THREE.Vector3(); // reused every frame
 /** How fast a rotation swings into place (1/s): higher is snappier. ~0.15s to settle. */
 const SPIN_RATE = 26;
+
+/**
+ * Diagonal hatching for a footprint that can't go down (the shape of "no", not only its colour). Drawn once; white, so
+ * the footprint material's colour tints it.
+ */
+let hatch = null;
+function hatchTexture() {
+  if (hatch || typeof document === 'undefined') return hatch;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = 'rgba(255,255,255,0.28)';
+  g.fillRect(0, 0, 64, 64);
+  g.strokeStyle = '#fff';
+  g.lineWidth = 9;
+  for (let k = -64; k <= 128; k += 22) {
+    g.beginPath();
+    g.moveTo(k, 0);
+    g.lineTo(k + 64, 64);
+    g.stroke();
+  }
+  hatch = new THREE.CanvasTexture(c);
+  hatch.wrapS = hatch.wrapT = THREE.RepeatWrapping;
+  hatch.repeat.set(2, 2);
+  return hatch;
+}
+
+/** A cross over a cell that is in the way (two flat bars, lying on the tile). */
+function crossMark(mat) {
+  const g = new THREE.Group();
+  for (const a of [Math.PI / 4, -Math.PI / 4]) {
+    const bar = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.1).rotateX(-Math.PI / 2), mat);
+    bar.rotation.y = a;
+    bar.renderOrder = 6;
+    g.add(bar);
+  }
+  return g;
+}
 /** A full-cell ghost part in a holder (the holder takes the offset; the part shrinks by the tile gap). */
 function cellPart(geo, mat) {
   const holder = new THREE.Group();
@@ -84,6 +122,13 @@ export class Placement {
     this.footGeo = hexPlane();
     this.blockMat = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.8, roughness: 0.8 });
     this.footMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.4, depthWrite: false });
+    // A solid rim on every footprint cell (a stable outline where it can go), and crosses on the cells in the way.
+    this.rimGeo = hexOutline(0.94);
+    this.rimMat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.9, depthWrite: false });
+    this.crossMat = new THREE.MeshBasicMaterial({ color: BAD_COLOR, transparent: true, opacity: 0.95, depthWrite: false });
+    this.crosses = new THREE.Group();
+    this.crosses.visible = false;
+    scene.add(this.crosses);
     // The reason text is cached per cell: rebuild it in the new language.
     onLangChange(() => {
       if (this.piece && this.cell) this.result = this.validate(this.cellsAt(this.cell));
@@ -94,6 +139,23 @@ export class Placement {
     this.#build(piece);
     this.blocks.traverse(toGhostLayer);
     this.feet.traverse(toGhostLayer);
+    this.#cross(null);
+  }
+
+  /** Crosses over the cells that are in the way (null: none). */
+  #cross(cells) {
+    const key = cells?.map((c) => c.join(',')).join('|') ?? '';
+    if (key === this.crossKey) return;
+    this.crossKey = key;
+    this.crosses.clear();
+    for (const [x, z] of cells ?? []) {
+      const m = crossMark(this.crossMat);
+      const w = hexToWorld(x, z);
+      m.position.set(w.x, 0.05, w.z);
+      this.crosses.add(m);
+    }
+    this.crosses.traverse(toGhostLayer);
+    this.crosses.visible = this.crosses.children.length > 0;
   }
 
   #build(piece) {
@@ -135,6 +197,12 @@ export class Placement {
       return;
     }
     this.offsets = pieceOffsets(piece);
+    for (const [ox, oz] of this.offsets) {
+      const rim = new THREE.LineSegments(this.rimGeo, this.rimMat);
+      const w = hexToWorld(ox, oz);
+      rim.position.set(w.x, 0.02, w.z);
+      this.feet.add(rim);
+    }
     const world = this.offsets.map(([ox, oz]) => hexToWorld(ox, oz)); // offsets on the board (cell offsets convert linearly)
     this.spinCentre.set(world.reduce((a, w) => a + w.x, 0) / world.length, 0, world.reduce((a, w) => a + w.z, 0) / world.length);
     const blockout = hasBlockout(piece.terrain) && this.factory?.models?.has(piece.terrain);
@@ -201,8 +269,6 @@ export class Placement {
       return { ok: true, reason: '' };
     }
     if (this.piece?.terrain === 'missile' || this.piece?.terrain === 'missile2' || this.piece?.terrain === 'salvo') {
-      const guarded = this.guard?.(cells, this.piece); // the tutorial: only its target
-      if (guarded) return guarded;
       if (!this.missileable(cells).length) return { ok: false, reason: L('No building to destroy here', '这里没有可摧毁的建筑') };
       return { ok: true, reason: '' };
     }
@@ -212,25 +278,33 @@ export class Placement {
       if (!cell || cell.terrain !== 'milfactory') return { ok: false, reason: L('Play this on a Military Factory', '请打在军事工厂上') };
       return { ok: true, reason: '' };
     }
-    // Optional extra rule (the tutorial: only the highlighted cells).
-    const guarded = this.guard?.(cells, this.piece);
-    if (guarded) return guarded;
+    // The rules first, each refusal with its cause (code) and the cells in the way, so the feedback can point at them.
     const building = this.piece && isBuilding(this.piece.terrain);
-    if (cells.some(([x, z]) => !inWorld(x, z))) return { ok: false, reason: L('Edge of the world', '世界边缘') };
-    if (cells.some(([x, z]) => !this.grid.allowed(x, z))) return { ok: false, reason: L('Outside your territory', '超出你的领地') };
-    if (!this.grid.expansionMode && this.mysteries && cells.some(([x, z]) => this.mysteries.has(x, z)))
-      return { ok: false, reason: L('Build next to a ? site to uncover it', '在“?”神秘地点旁建造即可揭开它') };
+    const off = cells.filter(([x, z]) => !inWorld(x, z));
+    if (off.length) return { ok: false, code: 'edge', cells: off, reason: L('Edge of the world', '世界边缘') };
+    const outside = cells.filter(([x, z]) => !this.grid.allowed(x, z));
+    if (outside.length) return { ok: false, code: 'territory', cells: outside, reason: L('Outside your territory', '超出你的领地') };
+    const sites = !this.grid.expansionMode && this.mysteries ? cells.filter(([x, z]) => this.mysteries.has(x, z)) : [];
+    if (sites.length) return { ok: false, code: 'site', cells: sites, reason: L('Build next to a ? site to uncover it', '在“?”神秘地点旁建造即可揭开它') };
+    const taken = [];
+    let why = null;
     for (const [x, z] of cells) {
       const cell = this.grid.get(x, z);
       if (!cell) continue;
       const t = TERRAINS[cell.terrain];
       if (building && t.buildable) continue; // buildings may go on Wasteland / Ruins
-      if (t.buildable) return { ok: false, reason: both(() => L(`Only buildings can go on ${t.name}`, `只有建筑可以放在${t.name}上`)) };
-      return { ok: false, reason: both(() => L(`Can't build on ${t.name}`, `不能在${t.name}上建造`)) };
+      taken.push([x, z]);
+      why ??= t.buildable
+        ? both(() => L(`Only buildings can go on ${t.name}`, `只有建筑可以放在${t.name}上`))
+        : both(() => L(`Can't build on ${t.name}`, `不能在${t.name}上建造`));
     }
+    if (taken.length) return { ok: false, code: 'occupied', cells: taken, reason: why };
     // Every piece must touch existing land (cells it builds over count as touching).
     if (!cells.some(([x, z]) => this.grid.has(x, z) || this.grid.touchesIsland(x, z)))
-      return { ok: false, reason: L('Pieces must touch your land', '板块必须与你的领地相连') };
+      return { ok: false, code: 'disconnected', cells: [], reason: L('Pieces must touch your land', '板块必须与你的领地相连') };
+    // Then any extra rule (the guided tutorial's: a lesson's cells). Pure: it only answers, the feedback is elsewhere.
+    const guarded = this.guard?.(cells, this.piece);
+    if (guarded) return { code: 'tutorial', cells: [], ...guarded };
     return { ok: true, reason: '' };
   }
 
@@ -243,6 +317,7 @@ export class Placement {
     if (!this.piece || !cell) {
       this.blocks.visible = this.feet.visible = false;
       this.cell = null;
+      this.#cross(null);
       return;
     }
     const wasHidden = !this.blocks.visible;
@@ -264,7 +339,15 @@ export class Placement {
 
     const ok = this.result.ok;
     this.footMat.color.copy(ok ? OK_COLOR : BAD_COLOR);
-    this.footMat.opacity = ok ? this.cfg.validOpacity : this.cfg.invalidOpacity;
+    this.footMat.opacity = ok ? this.cfg.validOpacity : Math.max(this.cfg.invalidOpacity, 0.55);
+    // Where it can't go the footprint is hatched (not only red), with crosses on whatever is in the way.
+    const map = ok ? null : hatchTexture();
+    if (this.footMat.map !== map) {
+      this.footMat.map = map;
+      this.footMat.needsUpdate = true;
+    }
+    this.rimMat.color.copy(ok ? OK_COLOR : BAD_COLOR);
+    this.#cross(ok ? null : this.result.cells?.length ? this.result.cells : null);
     this.blockMat.opacity = this.cfg.blockOpacity;
     this.blockMat.color.set(cardDef(this.piece.terrain).top);
     if (!ok) this.blockMat.color.lerp(BAD_COLOR, 0.55);

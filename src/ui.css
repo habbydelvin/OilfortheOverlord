@@ -2367,7 +2367,7 @@ body.striking #mapIcons {
 }
 
 
-/* ---------- Year 0 tutorial (src/tutorial.js) ---------- */
+/* ---------- the wordless tutorial (src/tutorial.js) ---------- */
 #btnTutorial {
   display: block;
   margin-top: 10px;
@@ -2544,11 +2544,6 @@ body.striking #mapIcons {
   color: #241808;
   animation: coach-press 1.2s ease-in-out infinite;
 }
-.coach-turn {
-  width: 26px;
-  height: 26px;
-  animation: coach-spin 1.2s ease-in-out infinite;
-}
 .coach-mouse {
   width: 22px;
   height: 31px;
@@ -2568,80 +2563,12 @@ body.striking #mapIcons {
     box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35), 0 0 0 #2a2218;
   }
 }
-@keyframes coach-spin {
-  from {
-    rotate: 0deg;
-  }
-  60%,
-  to {
-    rotate: 90deg;
-  }
-}
 @keyframes coach-blink {
   50% {
     opacity: 0.2;
   }
 }
 
-/* Zoom out: a mouse over the middle of the board, its wheel rolling down, chevrons going down and four corner
-   brackets opening outward (the view widening). */
-.coach-zoom {
-  position: fixed;
-  left: calc((100% - var(--panel-w)) / 2);
-  top: 44%;
-  width: 150px;
-  height: 150px;
-  translate: -50% -50%;
-  display: grid;
-  place-items: center;
-  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.6));
-}
-.coach-zoom.hidden {
-  display: none;
-}
-.cz-mouse {
-  width: 46px;
-  height: 69px;
-  margin-top: -18px;
-}
-.cz-roll {
-  animation: cz-roll 1.1s ease-in infinite;
-}
-@keyframes cz-roll {
-  0% { transform: translateY(0); opacity: 1; }
-  70% { transform: translateY(7px); opacity: 1; }
-  100% { transform: translateY(7px); opacity: 0; }
-}
-.cz-down {
-  position: absolute;
-  left: 50%;
-  top: calc(50% + 26px);
-  width: 26px;
-  height: 26px;
-  translate: -50% 0;
-  animation: cz-down 1.1s ease-in infinite;
-}
-@keyframes cz-down {
-  0% { transform: translateY(-4px); opacity: 0; }
-  40% { opacity: 1; }
-  100% { transform: translateY(8px); opacity: 0; }
-}
-.cz-corner {
-  position: absolute;
-  width: 22px;
-  height: 22px;
-  border: 3px solid #ffb347;
-  animation: cz-open 1.6s ease-out infinite;
-}
-.cz-tl { left: 34px; top: 34px; border-right: 0; border-bottom: 0; --dx: -1; --dy: -1; }
-.cz-tr { right: 34px; top: 34px; border-left: 0; border-bottom: 0; --dx: 1; --dy: -1; }
-.cz-bl { left: 34px; bottom: 34px; border-right: 0; border-top: 0; --dx: -1; --dy: 1; }
-.cz-br { right: 34px; bottom: 34px; border-left: 0; border-top: 0; --dx: 1; --dy: 1; }
-@keyframes cz-open {
-  0% { transform: translate(0, 0); opacity: 0; }
-  25% { opacity: 1; }
-  100% { transform: translate(calc(var(--dx) * 26px), calc(var(--dy) * 26px)); opacity: 0; }
-}
 /* The planet in view (the War Map, full screen): a gold ring sweeping out over it. */
 .coach-reveal {
   position: fixed;
@@ -3530,4 +3457,580 @@ body.rival-view #panel > *:not(#btnNext) {
 #btnNext.running {
   filter: grayscale(0.8) brightness(0.8);
   cursor: progress;
+}
+
+/* ---------- the wordless tutorial: one visual vocabulary (src/tutorial.js) ----------
+   suggested spot    dotted hex outline round a see-through model (3D, tutorial.js)
+   legal cells       solid outline (3D); the placement ghost: a solid rim where it can go
+   can't go there    hatched footprint, crosses on what's in the way (3D, placement.js)
+   relationship      a short link across the shared edge, with the resource it carries
+   forecast          hollow tokens (dashed rim, see-through), marked with the season dial when it's every season
+   real              solid tokens (the payout's), settled fill
+   capacity          the worker rack (slots); stock: the gauge and the store bar
+   done              a stamped check, then it stops asking for attention */
+
+/* Screen-space links (SVG): Capital to building across their shared edge, a broken link, a dotted path. */
+.coach-lines {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.coach-lines .cl-link {
+  stroke: #ffe2a0;
+  stroke-width: 4;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 4px rgba(255, 200, 110, 0.9));
+}
+.coach-lines .cl-edge {
+  stroke: #fff1c8;
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-dasharray: 4 5;
+  filter: drop-shadow(0 0 4px rgba(255, 200, 110, 0.95));
+}
+.coach-lines .cl-joint {
+  fill: #fff1c8;
+  stroke: #3a2a10;
+  stroke-width: 1.5;
+}
+.coach-lines .cl-broken {
+  stroke: #ff8a6a;
+  stroke-width: 3;
+  stroke-dasharray: 7 6;
+  stroke-linecap: round;
+}
+.coach-lines .cl-break {
+  fill: none;
+  stroke: #ff5a3c;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.coach-lines .cl-path {
+  stroke: #ffe2a0;
+  stroke-width: 3;
+  stroke-dasharray: 2 7;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.8));
+}
+.coach-lines .cl-site {
+  fill: none;
+  stroke: #ffe2a0;
+  stroke-width: 2.5;
+  stroke-dasharray: 3 4;
+}
+
+.coach-rings .coach-ring {
+  animation-duration: 1.1s;
+}
+
+/* The commission: a ghost fill sweeping across the tribute gauge to its mark (nothing earned: hollow, see-through). */
+.coach-ghostfill {
+  position: fixed;
+  pointer-events: none;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 2px rgba(255, 214, 140, 0.55);
+}
+.coach-ghostfill.hidden,
+.coach-arc.hidden {
+  display: none;
+}
+.coach-ghostfill i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--k, 0) * 100%);
+  border-radius: 6px;
+  background: repeating-linear-gradient(90deg, rgba(255, 196, 92, 0.38) 0 9px, rgba(255, 196, 92, 0.16) 9px 12px);
+  box-shadow: 0 0 14px rgba(255, 190, 90, 0.5);
+}
+/* Its mark: the end of the gauge is the target. */
+.coach-ghostfill b {
+  position: absolute;
+  right: -3px;
+  top: -8px;
+  bottom: -8px;
+  width: 4px;
+  border-radius: 2px;
+  background: #fff1c8;
+  box-shadow: 0 0 8px rgba(255, 220, 150, 0.95);
+}
+/* ... and the season clock's sweep to the tribute season (the red mark). */
+.coach-arc {
+  position: fixed;
+  pointer-events: none;
+  overflow: visible;
+}
+.coach-arc circle {
+  fill: none;
+  stroke: #ffe2a0;
+  stroke-width: 5;
+  stroke-linecap: round;
+  transform-origin: 0 0;
+  filter: drop-shadow(0 0 4px rgba(255, 200, 110, 0.9));
+}
+
+/* Tokens over the board and the HUD. */
+.coach-tokens {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+.coach-token {
+  position: fixed;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px 2px 6px;
+  border-radius: 14px;
+  font: 800 19px 'Avenir Next', 'Nunito', 'Segoe UI', 'OTO Han Sans', system-ui, sans-serif;
+  color: var(--tk, #ffe2a0);
+  white-space: nowrap;
+  will-change: transform, opacity;
+}
+.coach-token .ico {
+  width: 20px;
+  height: 20px;
+}
+.coach-token.food {
+  --tk: #9be36f;
+}
+.coach-token.oil {
+  --tk: #ffb347;
+}
+.coach-token.workers {
+  --tk: #f0c08a;
+}
+.coach-token.neg {
+  --tk: #ff8a6a;
+}
+/* Forecast: hollow, see-through, dashed rim; real: solid. */
+.coach-token.ghost {
+  background: rgba(16, 18, 20, 0.35);
+  box-shadow: inset 0 0 0 1.5px var(--tk);
+  outline: 1.5px dashed color-mix(in srgb, var(--tk) 70%, transparent);
+  outline-offset: 2px;
+  text-shadow: 0 1px 2px #000;
+}
+.coach-token.ghost b,
+.coach-token.ghost .ico {
+  opacity: 0.72;
+}
+.coach-token.solid {
+  background: transparent;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.6));
+}
+.coach-token.big .ico {
+  width: 30px;
+  height: 30px;
+}
+.coach-token.socket {
+  padding: 3px;
+  border-radius: 50%;
+  background: rgba(16, 18, 20, 0.8);
+  box-shadow: 0 0 0 1.5px #f0c08a;
+  color: #f0c08a;
+}
+.coach-token.socket svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+.coach-token.socket.bad {
+  box-shadow: 0 0 0 1.5px #ff5a3c, 0 0 10px rgba(255, 90, 60, 0.7);
+}
+.coach-token.check svg {
+  width: 34px;
+  height: 34px;
+  display: block;
+}
+.coach-token.check {
+  padding: 0;
+  background: none;
+  filter: drop-shadow(0 0 6px rgba(155, 227, 111, 0.7));
+}
+.coach-token .coach-clock {
+  width: 15px;
+  height: 15px;
+  margin-left: 2px;
+}
+.coach-token.cross {
+  padding: 0;
+}
+.coach-x {
+  position: relative;
+  display: block;
+  width: 34px;
+  height: 34px;
+}
+.coach-x::before,
+.coach-x::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 15px;
+  height: 5px;
+  border-radius: 3px;
+  background: #ff5a3c;
+  box-shadow: 0 0 6px rgba(255, 90, 60, 0.9);
+  rotate: 45deg;
+}
+.coach-x::after {
+  rotate: -45deg;
+}
+
+/* Rotation: a hex dial whose pointer clicks round a sixth of a turn (60°) at a time, as the piece does. */
+.coach-dial {
+  width: 30px;
+  height: 30px;
+}
+.coach-dial-hand {
+  animation: coach-sixth 2.4s steps(1, end) infinite;
+}
+@keyframes coach-sixth {
+  0% { rotate: 0deg; }
+  33% { rotate: 60deg; }
+  66% { rotate: 120deg; }
+}
+
+/* A refused Next turn: the button shakes (the Wasteland cards hop: hand.js). */
+.coach-shake {
+  animation: coach-nudge 0.35s ease;
+}
+
+/* Hand cards. Parked: waits its turn (low, dim, can't be picked). Salient: the one to play now. Discard: would go
+   at Next turn (optional cards don't have to be played). */
+#hand .card.parked {
+  filter: grayscale(0.85) brightness(0.55);
+  cursor: not-allowed;
+}
+#hand .card.salient {
+  filter: drop-shadow(0 0 2px #ffe2a0) drop-shadow(0 0 10px rgba(255, 200, 110, 0.75));
+}
+#hand .card.nudge {
+  animation: coach-nudge 0.35s ease;
+}
+#hand .card.discard {
+  filter: grayscale(0.6) brightness(0.7);
+  translate: 0 22px;
+}
+#hand .card.discard::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  width: 46px;
+  height: 46px;
+  translate: -50% 0;
+  border-radius: 50%;
+  background: rgba(16, 18, 20, 0.8) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 9l6 6 6-6M6 4l6 6 6-6' fill='none' stroke='%23ff8a6a' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 28px no-repeat;
+  box-shadow: 0 0 0 1.5px #ff8a6a;
+  pointer-events: none;
+}
+
+/* The guided opening: what waits for later is parked in plain sight (dim), not secretly refused. */
+body.guided #btnReroll,
+body.guided #btnBlackMarket,
+body.guided #btnWarMap {
+  filter: grayscale(0.9) brightness(0.6);
+  cursor: not-allowed;
+}
+
+/* The worker rack under Manpower: a slot per worker the city can staff. */
+.mp-rack {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-top: 5px;
+}
+.mp-rack i {
+  width: 13px;
+  height: 15px;
+  background: currentColor;
+  color: #f0c08a;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='3 2 18 20'%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3Cpath d='M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='3 2 18 20'%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3Cpath d='M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+/* Free: hollow (only the outline). */
+.mp-rack i.free {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='3 2 18 20'%3E%3Ccircle cx='12' cy='7' r='3.2' fill='none' stroke='black' stroke-width='1.6'/%3E%3Cpath d='M4.8 20.2c.4-3.8 3.4-6.4 7.2-6.4s6.8 2.6 7.2 6.4z' fill='none' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='3 2 18 20'%3E%3Ccircle cx='12' cy='7' r='3.2' fill='none' stroke='black' stroke-width='1.6'/%3E%3Cpath d='M4.8 20.2c.4-3.8 3.4-6.4 7.2-6.4s6.8 2.6 7.2 6.4z' fill='none' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E") center / contain no-repeat;
+  opacity: 0.8;
+}
+/* A building with no one to run it: a dashed red socket. */
+.mp-rack i.missing {
+  color: #ff6a4a;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='3 2 18 20'%3E%3Ccircle cx='12' cy='7' r='3.2' fill='none' stroke='black' stroke-width='1.6' stroke-dasharray='2 1.4'/%3E%3Cpath d='M4.8 20.2c.4-3.8 3.4-6.4 7.2-6.4s6.8 2.6 7.2 6.4z' fill='none' stroke='black' stroke-width='1.6' stroke-dasharray='2 1.4'/%3E%3Cpath d='M4 3l16 18' stroke='black' stroke-width='2'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='3 2 18 20'%3E%3Ccircle cx='12' cy='7' r='3.2' fill='none' stroke='black' stroke-width='1.6' stroke-dasharray='2 1.4'/%3E%3Cpath d='M4.8 20.2c.4-3.8 3.4-6.4 7.2-6.4s6.8 2.6 7.2 6.4z' fill='none' stroke='black' stroke-width='1.6' stroke-dasharray='2 1.4'/%3E%3Cpath d='M4 3l16 18' stroke='black' stroke-width='2'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+/* Forecast (a card held over a cell): the slots it adds, fills or takes, as ghosts. */
+.mp-rack i.ghost {
+  color: #fff1c8;
+  opacity: 0.55;
+  outline: 1px dashed rgba(255, 241, 200, 0.8);
+  outline-offset: 1px;
+}
+.mp-rack i.lost {
+  color: #ff6a4a;
+  opacity: 0.45;
+}
+.mp-rack.dense i {
+  width: 9px;
+  height: 11px;
+}
+/* The forecast figure beside a resource (a card held over a cell): hollow, like the board's tokens. */
+#panel .res .v .fc {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-style: normal;
+  font-size: 14px;
+  color: #fff1c8;
+  outline: 1px dashed rgba(255, 241, 200, 0.6);
+}
+#panel .res .v .fc:empty {
+  display: none;
+}
+#panel .res .v .fc.neg {
+  color: #ff8a6a;
+}
+/* "This season": its flows come round every season (the small season dial). */
+#panel .section::before {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-10 -10 20 20'%3E%3Ccircle r='8.6' fill='%231d2326' stroke='%23e8d9b8' stroke-width='1.4'/%3E%3Cpath d='M0 0L5 -5' stroke='%23ffb347' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* The War Map button (on the board; on the War Map, Return to Hive takes its place). */
+#btnWarMap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 4px;
+  padding: 10px 16px;
+  font-size: 17px;
+  background: linear-gradient(180deg, #4a5459, #2c3337);
+  color: #e8d9b8;
+  box-shadow: inset 0 0 0 1px rgba(232, 191, 104, 0.35), 0 4px 0 rgba(0, 0, 0, 0.35);
+}
+#btnWarMap svg {
+  width: 24px;
+  height: 24px;
+  flex: none;
+}
+body.globe-view #btnWarMap,
+body.rival-view #btnWarMap {
+  display: none;
+}
+
+/* Round buttons over the board: rotate the held piece (touch has no R key), and back to Hive City. */
+.float-btn {
+  position: fixed;
+  bottom: 300px;
+  z-index: 31;
+  width: 54px;
+  height: 54px;
+  padding: 10px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(10, 12, 14, 0.78);
+  box-shadow: inset 0 0 0 1.5px rgba(232, 191, 104, 0.7), 0 3px 10px rgba(0, 0, 0, 0.6);
+  color: #e8d9b8;
+  cursor: pointer;
+  pointer-events: auto; /* (#ui lets clicks through to the board; these take them) */
+  touch-action: manipulation;
+}
+.float-btn svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.float-btn:hover {
+  filter: brightness(1.25);
+}
+.float-btn.hidden {
+  display: none;
+}
+#btnRotate {
+  left: calc((100% - var(--panel-w)) / 2 + 40px);
+}
+#btnRecenter {
+  left: calc((100% - var(--panel-w)) / 2 - 94px);
+}
+body.dialogue .float-btn,
+body.shopping .float-btn,
+body.paying .float-btn {
+  display: none;
+}
+
+/* The Controls panel's "show me again" row: icon buttons, one per demonstration. */
+.help-demos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.help-demos button {
+  width: 40px;
+  height: 36px;
+  padding: 5px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(232, 191, 104, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(232, 191, 104, 0.4);
+  color: #e8d9b8;
+  cursor: pointer;
+}
+.help-demos button:hover {
+  background: rgba(232, 191, 104, 0.24);
+}
+.help-demos svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The Black Market walkthrough: the price coming off your oil, as a ghost. */
+.coach-ghost-price {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 4px auto 0;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font: 800 18px 'Avenir Next', 'Nunito', 'Segoe UI', 'OTO Han Sans', system-ui, sans-serif;
+  color: #ffb347;
+  outline: 1.5px dashed rgba(255, 179, 71, 0.8);
+  outline-offset: 2px;
+  opacity: 0.85;
+}
+.coach-ghost-price .ico {
+  width: 18px;
+  height: 18px;
+}
+.coach-ghost-price span {
+  margin-left: 6px;
+  color: #fff1c8;
+}
+#blackMarket .shop-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Reduced motion: the coach still teaches, in still frames (tutorial.js swaps the hand's motion for two positions
+   and a dotted path); nothing pulses, bobs or spins. */
+@media (prefers-reduced-motion: reduce) {
+  .coach-ring,
+  .coach-rings .coach-ring,
+  .coach-rotate,
+  .coach-key,
+  .coach-mouse path:last-child,
+  .coach-dial-hand,
+  .coach-reveal.on,
+  .coach-shake,
+  #hand .card.nudge,
+  body.homeward #btnHive,
+  body.homeward #btnRivalBack {
+    animation: none !important;
+  }
+  .coach-dial-hand {
+    rotate: 60deg;
+  }
+}
+
+/* ---------- narrow screens (phones): the board and the cards need the room ---------- */
+@media (max-width: 760px) {
+  :root {
+    --panel-w: 104px;
+  }
+  #panel {
+    padding: 8px 0 8px 6px;
+  }
+  #panel .stat .big {
+    font-size: 30px;
+  }
+  #panel .stat .label,
+  #panel .section,
+  #panel .res .k span,
+  #panel .res .pop-text,
+  #panel .res .v small,
+  #panel .res .v .fc {
+    display: none;
+  }
+  #panel .res {
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    margin: 4px 6px 0 0;
+    padding: 4px 6px;
+  }
+  #panel .res .v {
+    font-size: 15px;
+  }
+  .mp-rack i,
+  .mp-rack.dense i {
+    width: 8px;
+    height: 10px;
+  }
+  #panel .btn {
+    padding: 10px 6px;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+  }
+  #btnWarMap span,
+  #btnRerollSub,
+  #btnNextSub {
+    display: none;
+  }
+  #top {
+    transform: scale(0.62);
+    transform-origin: top center;
+  }
+  #leftcol {
+    left: 8px;
+    top: 8px;
+    gap: 6px;
+    transform: scale(0.8);
+    transform-origin: top left;
+  }
+  #hand {
+    height: 210px;
+    bottom: -10px;
+  }
+  #hand .card {
+    --w: 104px;
+  }
+  .float-btn {
+    bottom: 214px;
+    width: 46px;
+    height: 46px;
+  }
+  #btnRotate {
+    left: calc((100% - var(--panel-w)) / 2 + 12px);
+  }
+  #btnRecenter {
+    left: calc((100% - var(--panel-w)) / 2 - 58px);
+  }
+  .coach-skip {
+    bottom: 168px;
+  }
+  body.rival-view #btnNext {
+    width: 150px;
+    right: 8px;
+    bottom: 8px;
+  }
 }
