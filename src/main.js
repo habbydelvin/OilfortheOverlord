@@ -6,7 +6,7 @@ import './themeShine.js';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
-import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws, silo } from './sfx.js';
+import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws } from './sfx.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed, hexesAround } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
@@ -340,11 +340,12 @@ const tutorial = new Tutorial({
     /** The board cell under the pointer, or null. */
     cursor: () => hoveredCell(),
     focus: (x, z) => rig.focus(x, z),
-    /** Frame a cell of the board up close (the first payout is watched there). */
-    frame: (x, z) => {
-      const w = hexToWorld(x, z);
-      rig.focus(w.x, w.z);
-      rig.goalDistance = THREE.MathUtils.clamp(homeDistance() * 0.8, rig.minDistance, rig.maxDistance);
+    /** Frame the city for the first payout: all of it where it fits, else the Capital and the buildings around it. */
+    frameCity: () => {
+      const panel = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--panel-w')) || 300;
+      const narrow = window.innerWidth - panel < 600; // (a phone: the city is wider than the board area)
+      rig.focus(...(narrow ? [0, 0] : grid.centroid()));
+      rig.goalDistance = homeDistance();
     },
     skip: () => skipTutorial(),
     /** 'touch' or 'mouse': the input last used (demonstrations follow it). */
@@ -1533,32 +1534,22 @@ function dockMissile(kind) {
   latch();
 }
 
-/** The missile rises from the factory. Each rise banks one. */
+/**
+ * A finished missile goes into the silo: the factory hops, "+n" with the missile icon rises over it, and the Missiles
+ * row pops for each one. No flight: a missile in the air means an attack, and this one goes nowhere.
+ */
 async function playMissileMade(cell, n, kind) {
   const run = runId;
-  silo();
-  dust.burst(cell.x, cell.z, 0.7);
-  camShake.add(0.18);
-  if (view !== 'board') {
-    for (let i = 0; i < n; i++) {
-      if (run !== runId) return;
-      dockMissile(kind);
-      await wait(0.12);
-    }
-    return;
+  if (view === 'board') {
+    const icon = document.querySelector('#panel .res.missile .ico')?.outerHTML ?? '';
+    spawnFactoryFloater(cell, `<div class="row" style="--c:#ff8a2a"><b>+${n}</b>${icon}</div>`);
+    hopFactory(cell);
   }
-  const w = hexToWorld(cell.x, cell.z);
-  await Promise.all(
-    Array.from({ length: n }, (_, i) =>
-      missiles.rollOut(w.x, w.z, {
-        delay: i * 0.18,
-        onArrive: () => {
-          if (run !== runId) return;
-          dockMissile(kind);
-        },
-      }),
-    ),
-  );
+  for (let i = 0; i < n; i++) {
+    if (run !== runId) return;
+    dockMissile(kind);
+    await wait(0.15);
+  }
 }
 
 function spawnFactoryFloater(cell, html) {
@@ -4109,6 +4100,7 @@ function revealMysteries(cells) {
   tutorial.notify('revealed', { found });
   const tiles = landReveals(found, (i) => 0.25 + i * 0.15);
   if (tiles.length < found.length) return; // a missile: its own toast
+  if (tutorial.active) return; // the guided opening shows the find itself (no caption)
   toast(
     () => L(
       `Uncovered ${tiles.map((f) => `a ${TERRAINS[f.terrain].name}`).join(', ')}!`,
@@ -4251,7 +4243,7 @@ function tryPlace() {
   if (piece.terrain.startsWith('wasteland')) addWastePiece(piece, cells);
   else cells.forEach(([x, z], i) => addTile(x, z, piece.terrain, i * 0.05, false, { rot: piece.rot }));
   piecesPlaced++;
-  showPlacementCost(piece, cells);
+  if (!tutorial.active) showPlacementCost(piece, cells); // (the guided opening shows the cost with its own tokens)
   hand.consume();
   if (!grid.expansionMode) revealMysteries(cells);
   frontier.rebuild(grid);

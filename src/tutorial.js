@@ -3,7 +3,7 @@ import { SHAPES, pieceOffsets, ROTATIONS } from './pieces.js';
 import { DIRS, HEX_RADIUS, hexToWorld, hexDistance } from './grid.js';
 import { hexPlane, hexOutline } from './hexGeometry.js';
 import { L, onLangChange } from './i18n.js';
-import { ICONS } from './tiles.js';
+import { ICONS, TERRAINS } from './tiles.js';
 import { WORKERS, seasonsOfFood } from './economy.js';
 import { LessonBook } from './lessons.js';
 
@@ -18,11 +18,14 @@ import { LessonBook } from './lessons.js';
  *      round a see-through model of the building). Placed, it shows what it does: Capital and building linked across
  *      their shared edge, a worker taking its place, separate hollow output tokens (each Capital beside it triggers it
  *      once more: two tokens next to one Capital).
- *   3. The two Wasteland cards (parked, low and dim, until then): any legal spot is fine; one suggested spot away from
- *      the Capital needs one 60° turn.
- *   4. Next turn, at home: the season pays out on the board (oil flies into the gauge) and the clock turns.
- *   5. On your own: the next hand holds a Farm; the coach waits, and only steps in (outlines, then one gesture, then a
- *      repeated demonstration) if you hesitate or struggle.
+ *   3. A Settlement: what it gives and costs, before and after it goes down (two worker slots, food every season;
+ *      the stores carry the small shortfall until the next Farm).
+ *   4. The two Wasteland cards (parked, low and dim, until then) lay a path out to a "?" site (a dotted link shows
+ *      where it leads): the first extends the land, the second (one 60° turn) touches the site and uncovers it, a
+ *      Water Pump. Any legal spot is fine; the suggestion is the path.
+ *   5. Next turn, at home: the season pays out on the board (oil flies into the gauge) and the clock turns.
+ *   6. On your own: the next hand holds a Farm (it feeds the Settlement): beside the Capital or beside the Pump. The
+ *      coach waits, and only steps in (outlines, then one gesture, then a repeated demonstration) if you hesitate.
  * Help is adaptive throughout: a normal affordance first, then a dotted suggestion, one ghost-hand gesture, and a
  * repeating demonstration only for whoever still needs it. While you're doing it yourself the hand stays away.
  *
@@ -44,24 +47,26 @@ export const markTutorialDone = () => localStorage.setItem(TUTORIAL_KEY, '1');
 
 /**
  * The guided opening's authored start, the same for every player (main.js deals the hand and plants the site):
- * cells next to the Capital for the Farm and the Station, a Wasteland footprint for each Wasteland card (the second
- * stands upright beside the Station while its card is dealt lying flat: one 60° turn), and one "?" site three steps
- * away that always holds a Water Pump (found later, it boosts the farm built next to it).
+ * cells next to the Capital for the Farm and the Station, one for the Settlement beside the Farm, and a Wasteland path
+ * out from the Station to a "?" site that always holds a Water Pump: the first piece fits as dealt, the second needs
+ * one 60° turn and is the one that touches the site (nothing before it does). tests/rules.test.mjs checks all this.
  */
 export const OPENING = {
   hand: [
     { terrain: 'farm' },
     { terrain: 'station' },
+    { terrain: 'settlement' },
     { terrain: 'wasteland1', shape: 'pair', rot: 0 },
     { terrain: 'wasteland1', shape: 'pair', rot: 0 },
   ],
   farm: [-1, 0],
   station: [1, 0],
+  settlement: [-2, 0],
   waste: [
-    [[-3, 1], [-2, 1]],
-    [[2, 0], [2, 1]],
+    [[2, 0], [3, 0]],
+    [[4, 0], [4, 1]],
   ],
-  site: { at: [3, -2], terrain: 'pump' },
+  site: { at: [4, 2], terrain: 'pump' },
   /** Pinned into the second hand: the card to place on your own. */
   next: 'farm',
 };
@@ -81,6 +86,7 @@ const STEPS = [
   { id: 'commission', wait: 'time', ms: 2700 },
   { id: 'farm', wait: 'place', terrain: 'farm', build: true },
   { id: 'station', wait: 'place', terrain: 'station', build: true },
+  { id: 'settlement', wait: 'place', terrain: 'settlement', build: true },
   { id: 'waste', wait: 'place', terrain: 'wasteland', build: true },
   { id: 'waste', wait: 'place', terrain: 'wasteland', build: true },
   { id: 'advance', wait: 'endTurn' },
@@ -250,6 +256,7 @@ export class Tutorial {
     this.heldAt = 0;
     this.flyAt = null;
     this.quietUntil = 0;
+    this.framedPath = false;
     this.seasonsPlayed = 0;
     for (const f of this.fx) f.el?.remove();
     this.fx = [];
@@ -308,14 +315,14 @@ export class Tutorial {
 
   // ---------- rules (pure: no feedback here) ----------
 
-  /** A card that waits its turn: the Wasteland until the Farm and the Station are down. */
+  /** A card that waits its turn: the Wasteland until the buildings (Farm, Station, Settlement) are down. */
   parks(piece) {
     if (!this.guiding || !piece?.terrain.startsWith('wasteland')) return false;
-    return !this.#builtProducers();
+    return !this.#builtBuildings();
   }
 
-  #builtProducers() {
-    return STEPS.every((s, i) => !(s.build && PRODUCERS.has(s.terrain)) || this.got.has(i));
+  #builtBuildings() {
+    return STEPS.every((s, i) => !(s.build && s.terrain !== 'wasteland') || this.got.has(i));
   }
 
   #buildDone() {
@@ -401,7 +408,10 @@ export class Tutorial {
       return !was;
     };
     if (event === 'rotated') done('rotate');
-    if (event === 'revealed') done('explore');
+    if (event === 'revealed') {
+      done('explore');
+      if (this.active) for (const f of data.found ?? []) this.#stamp([[f.x, f.z]]);
+    }
     if (event === 'globe') {
       this.sawPlanet = true;
       done('globe');
@@ -423,7 +433,7 @@ export class Tutorial {
       const { terrain, cells, before } = data;
       const after = this.api.economy();
       const boosted = (e) => [...(e?.boosts?.values() ?? [])].reduce((a, n) => a + n, 0);
-      if (terrain === 'settlement') done('workers');
+      if (terrain === 'settlement' && !this.guiding) done('workers'); // (the opening's doesn't: no one needed it yet)
       // A booster that now adds to something, or a producer a booster now adds to: the economy says so.
       if (before && boosted(after) > boosted(before)) done('boost');
       // A shortage on its way, fixed (whether its hint was up or not).
@@ -454,6 +464,7 @@ export class Tutorial {
     if (i < 0) return;
     this.got.add(i);
     if (PRODUCERS.has(terrain)) this.#yield(cells[0], terrain);
+    else if (terrain === 'settlement') this.#housing(cells[0]);
     else this.#stamp(cells);
     this.hand.render(); // the Wasteland may unpark
     if (i === this.index || this.got.has(this.index)) this.#go(this.index + 1);
@@ -481,8 +492,33 @@ export class Tutorial {
     document.body.classList.toggle('guided', this.guiding);
     if (s.id === 'commission') this.fx.push({ kind: 'commission', age: 0, life: s.ms / 1000 });
     if (s.id === 'clock') this.fx.push({ kind: 'ring', selector: '#seasonClock', age: 0, life: 1.6 });
-    if (s.id === 'advance') this.api.frame?.(0, 0); // the payout plays where it can be seen
+    if (s.id === 'advance') this.api.frameCity?.(); // the payout plays where it can all be seen
     this.hand.render();
+  }
+
+  /**
+   * The Wasteland beat, once: the view frames the whole city and the "?" site the path leads to; where that doesn't
+   * fit (a narrow screen), just the path and the site.
+   */
+  #framePath() {
+    const site = OPENING.site.at;
+    if (this.framedPath || !this.api.mysteries.has(...site)) return;
+    this.framedPath = true;
+    const box = (cells) => {
+      const pts = cells.map(([x, z]) => hexToWorld(x, z));
+      const xs = pts.map((p) => p.x);
+      const zs = pts.map((p) => p.z);
+      return { x0: Math.min(...xs), x1: Math.max(...xs), z0: Math.min(...zs), z1: Math.max(...zs) };
+    };
+    const city = box([...[...this.api.grid.cells.values()].map((c) => [c.x, c.z]), site]);
+    const path = box([...OPENING.waste.flat(), site]);
+    // Pixels per world unit at this zoom, against the board's free area.
+    const [ax] = this.#screen(0, 0, 0);
+    const [bx] = this.#screen(1, 0, 0);
+    const ppu = Math.abs(bx - ax) || 1;
+    const safe = this.#safeRect();
+    const b = (city.x1 - city.x0 + 1.2) * ppu < safe.right - safe.left ? city : path;
+    this.api.focus((b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2);
   }
 
   /** The level of help for the current beat: 0 nothing extra, 1 suggestion, 2 one gesture, 3 repeated gesture. */
@@ -521,7 +557,8 @@ export class Tutorial {
     if (s.wait === 'dealt') return null; // the payout plays on its own
     if (s.wait === 'place') {
       // One thing at a time: while the last building shows what it does, the next card only glows.
-      if (this.fx.some((f) => f.kind === 'yield' && f.age < 2.2)) return { salient: this.#wantedCard() };
+      if (this.fx.some((f) => (f.kind === 'yield' || f.kind === 'housing') && f.age < 2.4)) return { salient: this.#wantedCard() };
+      if (s.terrain === 'wasteland') this.#framePath();
       return this.#placeView(s);
     }
     return null;
@@ -550,13 +587,21 @@ export class Tutorial {
     const view = { salient: lv >= 1 ? piece : null };
     if (!plan) return view;
     if (lv >= 1 || held) view.marks = plan.legal;
+    // The Wasteland path's destination: a dotted link from the suggested piece to the "?" site it leads to.
+    const [sx, sz] = OPENING.site.at;
+    if (s.terrain === 'wasteland' && this.api.mysteries.has(sx, sz)) {
+      const near = [...plan.cells].sort((a, b) => hexDistance(a[0], a[1], sx, sz) - hexDistance(b[0], b[1], sx, sz))[0];
+      view.link = { from: near, to: [sx, sz] };
+    }
     // On your own the outlines come first (several right answers); a single suggestion only with more help.
     if ((lv >= 1 || held) && (s.id !== 'apply' || lv >= 2))
       view.suggest = { terrain: piece.terrain, shape: piece.shape, rot: plan.rot, cells: plan.cells, joins: plan.joins };
     // Held the wrong way round for the suggested spot, and over it: the rotation cue (60°, as the piece turns). Any
     // other legal spot is fine as it is, so it only shows there.
     const turned = held && plan.rot !== undefined && setKey(pieceOffsets(piece)) !== setKey(pieceOffsets({ shape: piece.shape, rot: plan.rot }));
-    if (turned && !this.hand.dragging && (this.#cursorNear(plan.cells) || (lv >= 2 && !this.api.cursor()))) {
+    // (Touch has no hover: a tap places at once, so there the cue shows as soon as it's held the wrong way round.)
+    const touch = this.api.modality() === 'touch';
+    if (turned && !this.hand.dragging && (touch || this.#cursorNear(plan.cells) || (lv >= 2 && !this.api.cursor()))) {
       Object.assign(view, this.rotateCueAt(plan.anchor));
       return view;
     }
@@ -587,15 +632,33 @@ export class Tutorial {
     if (PRODUCERS.has(piece.terrain)) {
       const legal = this.#aroundCapital();
       const want = s.id === 'apply' ? null : OPENING[piece.terrain];
-      const at = (want && legal.find((c) => same(c, want))) ?? legal.sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+      const at = (want && legal.find((c) => same(c, want))) ?? [...legal].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+      // On your own: beside a booster on the board is a right answer too (a Farm by the Pump found in the opening).
+      if (s.id === 'apply') legal.push(...this.#besideBoosters(piece).filter((c) => !legal.some((l) => same(l, c))));
       if (at) plan = { legal, cells: [at], anchor: at, rot: undefined, joins: [[0, 0], at] };
       else plan = this.#anywhere(piece);
+    } else if (piece.terrain === 'settlement' && this.guiding && this.#legalFor(piece, [OPENING.settlement])) {
+      const at = OPENING.settlement;
+      plan = { legal: null, cells: [at], anchor: at, rot: undefined, joins: this.#joinFor([at]) };
     } else if (piece.terrain.startsWith('wasteland')) {
       plan = this.#wastePlan(piece);
     } else plan = this.#anywhere(piece);
     if (plan) Object.assign(plan, { piece, rev: this.api.grid.size });
     this.plan = plan;
     return plan;
+  }
+
+  /** Free cells where `piece` (a Farm / Station) would stand beside one of its boosters (a Pump, an Oasis...). */
+  #besideBoosters(piece) {
+    const out = [];
+    for (const c of this.api.grid.cells.values()) {
+      if (BOOSTERS[c.terrain] !== piece.terrain) continue;
+      for (const [dx, dz] of DIRS) {
+        const n = [c.x + dx, c.z + dz];
+        if (!this.api.grid.has(...n) && this.#legalFor(piece, [n])) out.push(n);
+      }
+    }
+    return out;
   }
 
   /** A single-cell card anywhere legal (away from the Capital's sides when possible). */
@@ -711,6 +774,17 @@ export class Tutorial {
     // Linked to the Capital(s) beside it (each one triggers it once more).
     const capitals = n > 1 ? DIRS.map(([dx, dz]) => [cell[0] + dx, cell[1] + dz]).filter(([x, z]) => this.api.grid.get(x, z)?.terrain === 'capital') : [];
     this.fx.push({ kind: 'yield', cell, res, parts, capitals, idle: Boolean(per?.idle), age: 0, life: 3.4 });
+  }
+
+  /**
+   * A Settlement just placed: what it does, from the economy. Two worker slots join the rack (solid: they're there
+   * now), and the food it eats every season (hollow, with the season dial: it's a recurring cost, not paid yet).
+   */
+  #housing(cell) {
+    const e = this.api.economy();
+    const per = e.perCell.find((p) => p.x === cell[0] && p.z === cell[1]);
+    const slots = Math.max(0, TERRAINS[per?.terrain]?.stats?.manpower ?? 0); // the Settlement's +2
+    this.fx.push({ kind: 'housing', cell, slots, food: per?.food ?? 0, age: 0, life: 3.2 });
   }
 
   /** Done: a stamped check over the cells, then it stops asking for attention. */
@@ -1301,6 +1375,7 @@ export class Tutorial {
       else if (f.kind === 'token') this.#drawToken(f);
       else if (f.kind === 'crosses') this.#drawCrosses(f);
       else if (f.kind === 'load') this.#drawLoad(f);
+      else if (f.kind === 'housing') this.#drawHousing(f);
     }
     if (!this.fx.some((f) => f.kind === 'commission' || f.kind === 'tribute')) {
       this.fillEl.classList.add('hidden');
@@ -1427,6 +1502,27 @@ export class Tutorial {
       const [x, y] = this.#cellsCentre([c], 0.2);
       this.#at(f.els[i], x, y, 1, f.age > f.life - 0.4 ? (f.life - f.age) / 0.4 : 1);
     });
+  }
+
+  #drawHousing(f) {
+    if (this.api.view() !== 'board') return;
+    const calm = this.calm?.matches;
+    const t = f.age;
+    const [cx, cy] = this.#cellsCentre([f.cell], 0.9);
+    const fade = t > f.life - 0.5 ? (f.life - t) / 0.5 : 1;
+    if (t > 0.3 && f.slots) {
+      const el = (f.w ??= this.#token(f, `<b>+${f.slots}</b>${icon('workers')}`, 'solid workers'));
+      this.#at(el, cx - 46, cy - (calm ? 26 : 10 + 16 * ease(clamp01((t - 0.3) / 0.5))), 1, fade * clamp01((t - 0.3) / 0.15));
+    }
+    if (t > 1.0 && f.food) {
+      const el = (f.e ??= this.#token(f, `<b>${f.food}</b>${icon('food')}${CLOCK_GLYPH}`, 'ghost food neg'));
+      this.#at(el, cx + 56, cy - (calm ? 26 : 10 + 16 * ease(clamp01((t - 1.0) / 0.5))), 1, fade * clamp01((t - 1.0) / 0.15));
+    }
+    if (t > 0.5 && !f.rang) {
+      f.rang = true;
+      this.fx.push({ kind: 'ring', selector: '#panel .res.mp', age: 0, life: 1.1 });
+      this.fx.push({ kind: 'ring', selector: '#panel .res.food', age: -0.7, life: 1.1 });
+    }
   }
 
   /** The Magazine's missile: from the building up into the Missiles row (solid: it's real). */
