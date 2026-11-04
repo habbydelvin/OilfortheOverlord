@@ -2265,15 +2265,24 @@ async function backToHive() {
 }
 
 /**
- * A tile triggered twice (next to a Capital) hops twice, each time showing one trigger's output,
- * instead of once with the combined total. Upkeep is shown on the first trigger only.
+ * A tile triggered more than once (once more per Capital next to it) hops once per trigger, each showing one
+ * trigger's share, instead of once with the combined total. The shares add up exactly to the total.
  */
 function splitTriggers(p) {
-  if (p.triggers !== 2) return [p];
-  const half = (v) => Math.ceil(v / 2);
-  const first = { ...p, oil: half(p.oil), food: half(p.food) };
-  const second = { ...p, oil: p.oil - first.oil, food: p.food - first.food };
-  return [first, second];
+  const n = p.triggers ?? 1;
+  if (n < 2) return [p];
+  const out = [];
+  let oil = p.oil;
+  let food = p.food;
+  for (let i = 0; i < n; i++) {
+    const left = n - i;
+    const o = Math.ceil(oil / left);
+    const f = Math.ceil(food / left);
+    out.push({ ...p, oil: o, food: f });
+    oil -= o;
+    food -= f;
+  }
+  return out;
 }
 
 /** Tiles that hop even without a number of their own (they boost their neighbours). */

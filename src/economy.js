@@ -149,7 +149,9 @@ export function computeEconomy(grid, state = {}) {
       const pump = near.includes('pump');
       const oasis = near.includes('oasis');
       const water = (pump ? 2 : 0) + (oasis ? 3 : 0);
-      const twice = near.includes('capital') ? 2 : 1;
+      // Each Capital next door triggers the farm once more (1 Capital ×2, 2 Capitals ×3...).
+      const caps = near.filter((n) => n === 'capital').length;
+      const twice = 1 + caps;
       if (mods.drought) droughtFood += water * twice;
       else {
         if (pump) bonus.pumpFarms++;
@@ -158,22 +160,22 @@ export function computeEconomy(grid, state = {}) {
         if (oasis) credit(per, 'oasis', 'food', 3 * twice);
       }
       per.rawFood = 2 + (mods.drought ? 0 : water);
-      // A Capital next door triggers the farm twice: double output (doesn't stack with more Capitals).
-      if (near.includes('capital')) {
-        bonus.capitalFood += per.rawFood;
-        per.rawFood *= 2;
-        per.triggers = 2;
+      if (caps) {
+        bonus.capitalFood += per.rawFood * caps;
+        per.rawFood *= twice;
+        per.triggers = twice;
       }
       farmFood += per.rawFood;
     } else if (t === 'station') {
       const tarpit = near.includes('tarpit');
       if (tarpit) bonus.tarpitStations++;
-      if (tarpit) credit(per, 'tarpit', 'oil', 2 * (near.includes('capital') ? 2 : 1));
+      const caps = near.filter((n) => n === 'capital').length; // each one triggers it once more
+      if (tarpit) credit(per, 'tarpit', 'oil', 2 * (1 + caps));
       per.rawCrude = 2 + (tarpit ? 2 : 0);
-      if (near.includes('capital')) {
-        bonus.capitalCrude += per.rawCrude;
-        per.rawCrude *= 2;
-        per.triggers = 2;
+      if (caps) {
+        bonus.capitalCrude += per.rawCrude * caps;
+        per.rawCrude *= 1 + caps;
+        per.triggers = 1 + caps;
       }
       crude += per.rawCrude;
     } else if (t === 'refinery') {
