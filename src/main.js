@@ -3295,9 +3295,14 @@ function tickBlackMarket() {
 
 $('btnBlackMarket').querySelector('.bm-icon').innerHTML = MAP_ICONS.crate;
 
+/** The first season of each year the Smuggler stays away: there's no oil to spend yet. Opens on season 2. */
+const bmYearStart = () => turn.season === 0;
+/** Seasons until the Black Market can be visited (its cooldown, or the wait out of a year's first season). */
+const bmWait = () => Math.max(turn.bmCooldown, bmYearStart() ? 1 : 0);
+
 function updateBlackMarketButton() {
   const btn = $('btnBlackMarket');
-  const wait = turn.bmCooldown;
+  const wait = bmWait();
   btn.classList.toggle('cooling', wait > 0);
   btn.classList.toggle('ready', wait <= 0);
   $('bmWait').classList.toggle('hidden', wait <= 0);
@@ -3343,6 +3348,7 @@ const pickLine = (lines) => lines[Math.floor(Math.random() * lines.length)];
 
 async function openBlackMarket() {
   if (blackMarketOpen) return;
+  if (turn.bmCooldown <= 0 && bmYearStart()) return toast(L('The Smuggler arrives next season, once the oil is flowing.', '走私贩下一季才来，等石油流动起来再说。'), 'bad');
   if (turn.bmCooldown > 0) return toast(L(`The Smuggler is gone. Back in ${turn.bmCooldown} season${turn.bmCooldown === 1 ? '' : 's'}.`, `走私贩已离开，${turn.bmCooldown} 季后回来。`), 'bad');
   if (view !== 'board') return toast(L('Return to Hive City first', '请先返回蜂巢城'));
   if (screenBusy() || strikeOpen || warPending || previewing) return toast(L('Finish the current screen first', '请先完成当前界面'));
