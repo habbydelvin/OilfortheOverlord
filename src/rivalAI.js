@@ -1,3 +1,4 @@
+import { throughEstimate } from './interceptSim.js';
 import { DIRS, key, hexDistance } from './grid.js';
 import { TERRAINS, MILITARY } from './tiles.js';
 import { SHAPES, ROTATIONS, rotateCells } from './pieces.js';
@@ -377,10 +378,8 @@ export function fadeTension(rival) {
 }
 
 /** Odds a strike on (x, z) gets through: each live network next to it that the defender can pay for gets a shot. */
-function throughOdds(city, x, z, chance) {
-  const nets = interceptorsNear(city.grid, x, z).length;
-  const shots = Math.min(nets, Math.floor((city.oil ?? 0) / INTERCEPT.oil));
-  return (1 - chance) ** shots;
+function throughOdds(city, x, z) {
+  return throughEstimate(city.grid, x, z);
 }
 
 /**

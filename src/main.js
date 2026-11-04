@@ -2480,8 +2480,8 @@ function showGameOver() {
 }
 
 function settleTurn(e) {
-  // The year ends after Winter, or early as soon as this season's oil meets the quota.
-  let yearEnds = turn.season >= yearLength() - 1 || turn.stockpile + e.oil >= turn.quota;
+  // The year ends on its last season. Oil past the quota stays in the stockpile until then.
+  let yearEnds = turn.season >= yearLength() - 1;
   // Text below is built in the current language when shown (functions), so the toast follows a language switch.
   const season = turn.season;
   const round = turn.round;
@@ -2490,7 +2490,6 @@ function settleTurn(e) {
   turn.total += e.oil;
   turn.food = e.storeAfter;
   const factoryWork = e.factoryWork ?? [];
-  yearEnds = turn.season >= yearLength() - 1 || turn.stockpile >= turn.quota;
 
   const sgn = (n) => {
     const r = Math.round(n);
@@ -2555,7 +2554,7 @@ function settleTurn(e) {
   if (pendingScenes.length) {
     playPendingScenes(false).then((sceneLines) => {
       lines.push(...sceneLines);
-      yearEnds = turn.season >= yearLength() - 1 || turn.stockpile >= turn.quota;
+      yearEnds = turn.season >= yearLength() - 1;
       finishSettle();
     });
     return;
@@ -2563,15 +2562,9 @@ function settleTurn(e) {
   finishSettle();
 
   function finishSettle() {
-  // Tribute at the end of the year (after Winter, or early once the quota is met).
+  // Tribute at the end of the year, on its last season.
   let failure = null; // set when the tribute is missed: the Overlord comes to speak instead of the shop
   if (yearEnds) {
-    if (turn.season < yearLength() - 1) {
-      lines.push(
-        `<span class="good">${L(`Quota met in ${SEASONS[turn.season]}: the year ends early.`, `${SEASONS[turn.season]}季便已完成配额：本年提前结束。`)}</span>`,
-      );
-      msg.push(L(` · Quota met early: skipping to the next year.`, ` · 提前完成配额：直接进入下一年。`));
-    }
     const quota = turn.quota;
     const delivered = turn.stockpile;
     const met = delivered >= quota;
@@ -4434,27 +4427,31 @@ function craterRival(r, rec) {
 }
 
 /** Our missile into the rival city on screen: their interceptors' flak meets it (or misses) on the way down. */
-function playRivalStrike(r, rec, flight = missileCfg.followFlight) {
+function playRivalStrike(r, rec) {
   rivalMissiles ??= new MissileStrike(rivalView.scene, camera, missileCfg);
   const w = hexToWorld(rec.at[0], rec.at[1]);
-  const t = { x: w.x, z: w.z, rec, shots: rec.shots, flight, fired: 0 };
-  return rivalMissiles.fire([t], {
-    onMove: (_pos, tt, u) => {
-      while (tt.fired < tt.shots.length && u >= CIWS_START + CIWS_GAP * tt.fired) {
-        const shot = tt.shots[tt.fired++];
-        const pad = hexToWorld(shot.x, shot.z);
-        rivalMissiles.fireCIWS(null, new THREE.Vector3(pad.x, 0.35, pad.z), () => rivalMissiles.position(tt), {
-          success: shot.success,
-          onKill: () => rivalMissiles.destroy(tt) && boom(),
-        });
-      }
-    },
+  // Their networks' fire is the simulated defence (setDefence in frame()); the missile flies the simulated path.
+  return rivalMissiles.fire([{ x: w.x, z: w.z, ...simFlight(rec) }], {
+    onIntercept: () => boom(),
     onImpact: () => {
       boom();
       if (view === 'rival') camShake.add(missileCfg.shake);
     },
     onCover: () => craterRival(r, rec),
   });
+}
+
+/** The simulated flight of a strike (war.js / interceptSim.js), on the War Map clock. */
+let warSims = new Map(); // city id -> simulateDefence() result, for the phase in the air
+const warClock = () => globe?.warTime() ?? null;
+const simFlight = (rec) => ({ rec, path: rec.path, t0: rec.t0, flight: rec.flight, accel: rec.accel, killAt: rec.killed ? rec.killAt : null, clock: warClock });
+
+/** The city on screen shows its networks' simulated fire (turrets turning, the stream, the rounds). */
+function syncDefence() {
+  const board = attackLive && view === 'board' ? warSims.get('player') : null;
+  missiles.setDefence(board ?? null, warClock, (i) => findCiws(grid.get(board.turrets[i].x, board.turrets[i].z)?.mesh), (d) => ciws(d));
+  if (rivalMissiles) rivalMissiles.setDefence((attackLive && view === 'rival' && rivalShown && warSims.get(rivalShown.id)) || null, warClock);
+  else if (attackLive && view === 'rival' && rivalShown && warSims.get(rivalShown.id)) rivalMissiles = new MissileStrike(rivalView.scene, camera, missileCfg);
 }
 
 /** A flight's countdown ran out: play it in the city on screen, or settle it quietly if that city isn't shown. */
@@ -4465,7 +4462,7 @@ function approach(rec, flight = missileCfg.followFlight) {
   if (rec.to === 'player' && view === 'board') {
     played.add(rec);
     landing.push(
-      playMissileStrike([{ x: rec.at[0], z: rec.at[1], rec, shots: rec.shots, flight, mustStop: !rec.hit && rec.shots.some((q) => q.success) }], {
+      playMissileStrike([{ x: rec.at[0], z: rec.at[1], ...simFlight(rec) }], {
         free: true,
         onCover: (_cell, t) => {
           for (const c of t?.rec?.lost ?? []) craterAt(c.x, c.z);
@@ -4477,7 +4474,7 @@ function approach(rec, flight = missileCfg.followFlight) {
   const r = rivals.find((x) => x.id === rec.to);
   if (r && view === 'rival' && rivalShown === r) {
     played.add(rec);
-    landing.push(playRivalStrike(r, rec, flight));
+    landing.push(playRivalStrike(r, rec));
   }
 }
 
@@ -4495,7 +4492,7 @@ function arrive(rec) {
   if (rec.to === 'player') {
     if (view === 'board') {
       landing.push(
-        playMissileStrike([{ x: rec.at[0], z: rec.at[1], rec, shots: rec.shots, mustStop: !rec.hit && rec.shots.some((q) => q.success) }], {
+        playMissileStrike([{ x: rec.at[0], z: rec.at[1], ...simFlight(rec) }], {
           free: true,
           onCover: (_cell, t) => {
             for (const c of t?.rec?.lost ?? []) craterAt(c.x, c.z);
@@ -4582,7 +4579,8 @@ async function runAttackPhase() {
   const strikes = [...mine, ...theirs];
   if (!strikes.length) return false;
   setAiming(false);
-  const { strikes: res, results } = resolveWar(strikes, cities, Math.random);
+  const { strikes: res, results, sims } = resolveWar(strikes, cities, Math.random);
+  warSims = sims;
 
   // Every city's missiles leave at once. You stay where you are (no camera takeover): the countdown shows when
   // each lands, and a strike plays in whichever city you're looking at when its countdown runs out (arrive()).
@@ -5376,6 +5374,7 @@ function frame(now) {
     missiles.update(dt);
     dust.update(dt);
   }
+  syncDefence();
   rivalMissiles?.update(dt);
   updateWarTimer();
   if (view !== 'board') {

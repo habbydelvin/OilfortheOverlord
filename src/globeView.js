@@ -1596,10 +1596,11 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
         H: Math.min(RADIUS * 0.45, 0.8 + 0.28 * dist),
         // Slow enough to follow (or zoom in on) across the planet.
         start: 0.35 * i,
-        dur: 4 + 0.12 * dist,
+        // war.js fixes when each lands (the city views replay the same clock).
+        dur: s.land != null ? Math.max(1, s.land - 0.35 * i) : 4 + 0.12 * dist,
         head,
         trail: makeTrail(color),
-        shots: s.shots.map((shot, k) => ({ ...shot, at: 0.7 + 0.08 * k, line: null, done: false })),
+        shots: s.shots.map((shot, k) => ({ ...shot, at: s.killAt != null && s.land != null ? Math.min(0.995, 1 - (s.land - s.killAt) / Math.max(1, s.land - 0.35 * i)) : 0.7 + 0.08 * k, line: null, done: false })),
         stopAt: s.shots.findIndex((x) => x.success),
         ended: false,
       });
@@ -1796,6 +1797,10 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       return Boolean(anim) || visiting || Boolean(dive);
     },
     /** The countdown and arc progress of every flight still in the air (for a city view joining mid flight). */
+    /** The War Map clock (seconds into the attack phase), or null when no phase is playing. */
+    warTime() {
+      return war ? war.t : null;
+    },
     inFlight() {
       if (!war) return [];
       return war.items.filter((it) => !it.arrived).map((it) => ({ s: it.s, eta: Math.max(0, (it.start + it.dur - war.t) / war.speed), approached: Boolean(it.approached) }));

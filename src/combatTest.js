@@ -14,7 +14,7 @@ import { applyToRival, footprint, spreadFrom } from './war.js';
 import { PLAYER_NODE } from './rivals.js';
 import { TileFactory, TERRAINS, cardDef, cardText, hex, snapHTML, cardArtHTML } from './tiles.js';
 import { FogOfWar, loadFogConfig } from './fogOfWar.js';
-import { MissileStrike, MISSILE, loadMissileConfig, saveMissileConfig } from './missiles.js';
+import { MissileStrike, MISSILE, MISSILE_DEFAULTS, loadMissileConfig, saveMissileConfig, clearMissileConfig } from './missiles.js';
 import { Dust } from './dust.js';
 import { CameraShake, loadShakeConfig } from './cameraShake.js';
 import { loadGfxConfig, applyGfx } from './graphics.js';
@@ -80,7 +80,6 @@ const camShake = new CameraShake(camera, loadShakeConfig());
 window.addEventListener('pointerdown', () => unlockSfx?.(), { once: true });
 
 // CIWS feel (this page only): seconds of fire before a hit brings the missile down, etc.
-const CIWS_TUNE = { kill: 0.5, missDur: 0.9 };
 
 // War state (declared early: the tuning panel reads it on load).
 let view = 'home'; // 'home' | 'globe' | 'rival'
@@ -207,14 +206,19 @@ const blastN = () => Math.max(0, (MISSILE.blast ?? 1) - 1);
 const SLIDERS = [
   { label: 'Blast tiles', min: 1, max: 7, step: 1, get: () => MISSILE.blast ?? 1, set: (v) => (MISSILE.blast = v), saveMissile: true },
   { label: 'Damage to capital (HP)', min: 1, max: 5, step: 1, get: () => MISSILE.damage ?? 1, set: (v) => (MISSILE.damage = v), saveMissile: true },
-  { label: 'Intercept range (cells)', min: 1, max: 8, step: 1, get: () => INTERCEPT.range, set: (v) => (INTERCEPT.range = v), save: true },
-  { label: 'Hit chance per shot', min: 0, max: 1, step: 0.05, get: () => INTERCEPT.chance, set: (v) => (INTERCEPT.chance = v), save: true },
-  { label: 'Oil per shot', min: 0, max: 10, step: 1, get: () => INTERCEPT.oil, set: (v) => (INTERCEPT.oil = v), save: true },
-  { label: 'CIWS rounds / s', min: 5, max: 120, step: 1, get: () => MissileStrike.RATE, set: (v) => (MissileStrike.RATE = v) },
-  { label: 'Round speed', min: 6, max: 60, step: 1, get: () => MissileStrike.ROUND_SPEED, set: (v) => (MissileStrike.ROUND_SPEED = v) },
-  { label: 'Turret slew (s)', min: 0, max: 1, step: 0.02, get: () => MissileStrike.SLEW, set: (v) => (MissileStrike.SLEW = v) },
-  { label: 'Fire before kill (s)', min: 0.1, max: 2, step: 0.05, get: () => CIWS_TUNE.kill, set: (v) => (CIWS_TUNE.kill = v) },
-  { label: 'Miss burst length (s)', min: 0.2, max: 2.5, step: 0.05, get: () => CIWS_TUNE.missDur, set: (v) => (CIWS_TUNE.missDur = v) },
+  { label: 'Missile flight time (s)', min: 0.6, max: 8, step: 0.1, get: () => MISSILE.followFlight ?? 2.2, set: (v) => (MISSILE.followFlight = v), saveMissile: true },
+  { label: 'Missile acceleration', min: 0.5, max: 3, step: 0.05, get: () => MISSILE.accel ?? 1.4, set: (v) => (MISSILE.accel = v), saveMissile: true },
+  { label: 'Intercept range ring (cells)', min: 1, max: 8, step: 1, get: () => INTERCEPT.range, set: (v) => (INTERCEPT.range = v), save: true },
+  { label: 'Gun reach in the sky (units)', min: 4, max: 30, step: 1, get: () => INTERCEPT.reach, set: (v) => (INTERCEPT.reach = v), save: true },
+  { label: 'Upkeep (oil / season)', min: 0, max: 10, step: 1, get: () => INTERCEPT.upkeep, set: (v) => (INTERCEPT.upkeep = v), save: true },
+  { label: 'Turret turn speed (rad/s)', min: 0.5, max: 12, step: 0.25, get: () => INTERCEPT.turnSpeed, set: (v) => (INTERCEPT.turnSpeed = v), save: true },
+  { label: 'Rounds / s', min: 5, max: 120, step: 1, get: () => INTERCEPT.rate, set: (v) => (INTERCEPT.rate = v), save: true },
+  { label: 'Round speed', min: 6, max: 60, step: 1, get: () => INTERCEPT.roundSpeed, set: (v) => (INTERCEPT.roundSpeed = v), save: true },
+  { label: 'Spread (rad)', min: 0, max: 0.4, step: 0.01, get: () => INTERCEPT.spread, set: (v) => (INTERCEPT.spread = v), save: true },
+  { label: 'Hit radius', min: 0.02, max: 0.5, step: 0.01, get: () => INTERCEPT.hitRadius, set: (v) => (INTERCEPT.hitRadius = v), save: true },
+  { label: 'Damage per round', min: 1, max: 5, step: 1, get: () => INTERCEPT.damage, set: (v) => (INTERCEPT.damage = v), save: true },
+  { label: 'Missile HP', min: 1, max: 20, step: 1, get: () => INTERCEPT.hpMissile, set: (v) => (INTERCEPT.hpMissile = v), save: true },
+  { label: 'Warhead HP', min: 1, max: 30, step: 1, get: () => INTERCEPT.hpWarhead, set: (v) => (INTERCEPT.hpWarhead = v), save: true },
 ];
 
 function buildTuning() {
@@ -247,11 +251,41 @@ document.getElementById('showRings').addEventListener('change', (e) => {
 });
 document.getElementById('resetTune').addEventListener('click', () => {
   clearIntercept();
-  Object.assign(MissileStrike, { RATE: 40, ROUND_SPEED: 24, SLEW: 0.22 });
-  Object.assign(CIWS_TUNE, { kill: 0.5, missDur: 0.9 });
+  clearMissileConfig();
+  Object.assign(MISSILE, MISSILE_DEFAULTS);
   buildTuning();
   drawRings();
   paint();
+});
+// Tuning as JSON: copy it (to send, or to paste into the code defaults), or paste one back in.
+const tuneJson = () => JSON.stringify({ missile: { blast: MISSILE.blast, damage: MISSILE.damage, followFlight: MISSILE.followFlight, accel: MISSILE.accel }, intercept: { ...INTERCEPT } }, null, 2);
+document.getElementById('copyTune').addEventListener('click', async (e) => {
+  const json = tuneJson();
+  try {
+    await navigator.clipboard.writeText(json);
+    say('Tuning copied as JSON.');
+  } catch {
+    window.prompt('Copy the tuning JSON:', json);
+  }
+  e.currentTarget.blur();
+});
+document.getElementById('applyTune').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  const text = window.prompt('Paste tuning JSON:');
+  if (!text) return;
+  try {
+    const t = JSON.parse(text);
+    for (const [k, v] of Object.entries(t.missile ?? {})) if (typeof v === 'number') MISSILE[k] = v;
+    for (const [k, v] of Object.entries(t.intercept ?? {})) if (k in INTERCEPT && typeof v === 'number') INTERCEPT[k] = v;
+    saveMissileConfig(MISSILE);
+    saveIntercept();
+    buildTuning();
+    drawRings();
+    paint();
+    say('Tuning applied from JSON.');
+  } catch (err) {
+    say(`Bad tuning JSON: ${err.message}`);
+  }
 });
 document.getElementById('resetCity').addEventListener('click', () => {
   if (busy) return;
@@ -268,6 +302,8 @@ document.getElementById('resetCity').addEventListener('click', () => {
   rivals = createRivals((Math.random() * 0x100000000) >>> 0);
   queue = [];
   armRivals();
+  incoming.clear();
+  renderIncoming();
   buildCity();
   rearm();
   paint();
@@ -319,8 +355,15 @@ function pickStrikes() {
 const wait = (s) => new Promise((r) => setTimeout(r, s * 1000));
 
 // ---------- one attack phase ----------
-const SHOT_START = 0.22; // flight progress when the first CIWS turret opens up
-const SHOT_GAP = 0.14; // each further turret this much later
+// Intercept Networks are simulated (interceptSim.js via war.js); the city on screen replays that defence on the
+// War Map clock: turrets turning, one stream each, the rounds, the kills.
+let warSims = new Map();
+const warClock = () => globe.warTime();
+function syncDefence() {
+  const home = busy && view === 'home' ? warSims.get('player') : null;
+  missiles.setDefence(home ?? null, warClock, (i) => findCiws(meshes.get(key(home.turrets[i].x, home.turrets[i].z))), (d) => ciws(d));
+  rivalMissiles.setDefence((busy && view === 'rival' && shown && warSims.get(shown.id)) || null, warClock);
+}
 
 function applyHit(rec) {
   for (const cell of rec.lost) {
@@ -360,37 +403,23 @@ async function play(resolved) {
       cell: { x: rec.at[0], z: rec.at[1] },
       rec,
       aimName: nameAt(rec.at[0], rec.at[1]),
-      flight: missileCfg.followFlight, // tracked flight time: room for the defence to act
-      mustStop: !rec.hit && rec.shots.some((s) => s.success),
-      fired: 0,
+      // The simulated flight (war.js): its path, its time on the War Map clock, and when the rounds bring it down.
+      path: rec.path,
+      t0: rec.t0,
+      flight: rec.flight,
+      accel: rec.accel,
+      killAt: rec.killed ? rec.killAt : null,
+      clock: warClock,
     };
   });
   const flying = new Map();
   const pending = new Set(targets);
 
   await missiles.fire(targets, {
-    onMove: (pos, t, u) => {
-      flying.set(t, pos.clone());
-      // Interceptors leave their pads one after another while the missile comes down.
-      const shots = t.rec.shots;
-      while (t.fired < shots.length && u >= SHOT_START + SHOT_GAP * t.fired) {
-        const shot = shots[t.fired++];
-        const pad = hexToWorld(shot.x, shot.z);
-        missiles.fireCIWS(findCiws(meshes.get(key(shot.x, shot.z))), new THREE.Vector3(pad.x, 0.35, pad.z), () => missiles.position(t), {
-          success: shot.success,
-          kill: CIWS_TUNE.kill,
-          dur: CIWS_TUNE.missDur,
-          onFire: (dur) => ciws(dur),
-          onKill: () => {
-            if (missiles.destroy(t)) {
-              camShake.add(missileCfg.shake * 0.35);
-              boom();
-            }
-          },
-        });
-      }
-    },
+    onMove: (pos, t) => flying.set(t, pos.clone()),
     onIntercept: (t) => {
+      boom();
+      camShake.add(missileCfg.shake * 0.35);
       flying.delete(t);
       pending.delete(t);
       say(describe(t.rec, t.aimName));
@@ -463,22 +492,9 @@ function craterRival(r, rec) {
 
 function playRival(r, rec) {
   const w = hexToWorld(rec.at[0], rec.at[1]);
-  const t = { x: w.x, z: w.z, rec, flight: missileCfg.followFlight, fired: 0 };
+  const t = { x: w.x, z: w.z, rec, path: rec.path, t0: rec.t0, flight: rec.flight, accel: rec.accel, killAt: rec.killed ? rec.killAt : null, clock: warClock };
   return rivalMissiles.fire([t], {
-    onMove: (pos, tt, u) => {
-      // Their interceptors: a burst of flak that meets it (or misses) on the way down.
-      const shots = tt.rec.shots;
-      while (tt.fired < shots.length && u >= SHOT_START + SHOT_GAP * tt.fired) {
-        const shot = shots[tt.fired++];
-        const pad = hexToWorld(shot.x, shot.z);
-        rivalMissiles.fireCIWS(null, new THREE.Vector3(pad.x, 0.35, pad.z), () => rivalMissiles.position(tt), {
-          success: shot.success,
-          kill: CIWS_TUNE.kill,
-          dur: CIWS_TUNE.missDur,
-          onKill: () => rivalMissiles.destroy(tt) && boom(),
-        });
-      }
-    },
+    onIntercept: () => boom(),
     onImpact: () => {
       boom();
       if (view === 'rival') camShake.add(missileCfg.shake);
@@ -794,6 +810,71 @@ async function nextTurn() {
   }
 }
 
+// ---------- test setup: how many missiles each rival fires at you, and placing Intercept Networks ----------
+const incoming = new Map(); // rival id -> missiles at Hive City each End turn
+let placingNets = false;
+
+function renderIncoming() {
+  const el = document.getElementById('incoming');
+  const total = () => rivals.reduce((n, r) => n + (r.alive === false ? 0 : incoming.get(r.id) ?? 0), 0);
+  el.innerHTML = `<table class="inc-table"><thead><tr><th>Rival</th><th>Missiles at you</th></tr></thead><tbody></tbody>
+    <tfoot><tr><td>Total</td><td id="incTotal"></td></tr></tfoot></table>`;
+  const body = el.querySelector('tbody');
+  for (const r of rivals) {
+    if (!incoming.has(r.id)) incoming.set(r.id, RIVAL_MISSILES);
+    const tr = document.createElement('tr');
+    if (r.alive === false) tr.className = 'dead';
+    const input = Object.assign(document.createElement('input'), { type: 'number', min: 0, max: 30, step: 1, value: incoming.get(r.id) });
+    input.disabled = r.alive === false;
+    input.addEventListener('input', () => {
+      incoming.set(r.id, Math.max(0, Math.min(30, Math.floor(Number(input.value) || 0))));
+      el.querySelector('#incTotal').textContent = total();
+    });
+    const name = Object.assign(document.createElement('td'), { textContent: r.def.name + (r.alive === false ? ' (destroyed)' : '') });
+    name.style.color = r.def.color;
+    const cell = document.createElement('td');
+    cell.append(input);
+    tr.append(name, cell);
+    body.append(tr);
+  }
+  el.querySelector('#incTotal').textContent = total();
+}
+
+const netBtn = document.getElementById('placeNets');
+function setPlacingNets(on) {
+  placingNets = on;
+  netBtn.classList.toggle('on', on);
+  netBtn.textContent = on ? 'Placing Intercept Networks: ON (click tiles)' : 'Place Intercept Networks';
+}
+netBtn.addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  setPlacingNets(!placingNets);
+});
+
+// In Hive City with placing on: a click puts a network on a tile (or empty ground next to the land); clicking a
+// network takes it away again. The Capital stays.
+let netDown = null;
+renderer.domElement.addEventListener('pointerdown', (e) => (netDown = placingNets && view === 'home' && e.button === 0 ? { x: e.clientX, y: e.clientY } : null));
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!netDown || busy || view !== 'home' || Math.hypot(e.clientX - netDown.x, e.clientY - netDown.y) > 6) return;
+  netDown = null;
+  ndc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  if (!intersectGround(ray.ray, hitP)) return;
+  const [x, z] = worldToHex(hitP.x, hitP.z);
+  const cell = grid.get(x, z);
+  if (cell?.terrain === 'capital') return;
+  if (cell?.terrain === 'intercept') place(x, z, 'wasteland1');
+  else {
+    if (!cell && !grid.touchesIsland(x, z)) return;
+    place(x, z, 'intercept');
+    fog.openAround(x, z, fogCfg.openRadius ?? 1, true);
+  }
+  boom();
+  drawRings();
+  paint();
+});
+
 async function runTurn() {
   const cities = [
     { id: 'player', grid, oil: Infinity, hp, alive: true, buildings: playerBuildings() }, // the test city never runs dry
@@ -803,18 +884,23 @@ async function runTurn() {
     ...queue.map((q) => ({ from: 'player', ...q })),
     ...rivals.filter((r) => r.alive !== false).flatMap((r) => chooseStrikes(r, cities, { round: 99, chance: INTERCEPT.chance })),
   ];
-  // Testing: every End Turn is a real attack. A rival that held back (its AI keeps a reserve) still fires at you.
-  if (!strikes.some((s) => s.to === 'player')) {
-    const shooter = rivals.find((r) => r.alive !== false);
-    const pool = [...grid.cells.values()].filter((c) => TERRAINS[c.terrain]?.category === 'building' && c.terrain !== 'capital');
-    pool.sort(() => Math.random() - 0.5);
-    if (shooter) for (const c of pool.slice(0, RIVAL_MISSILES)) strikes.push({ from: shooter.id, to: 'player', at: [c.x, c.z], kind: 'missile' });
+  // Testing: what comes at Hive City is set in the Incoming table (per rival), not by their AI.
+  for (let i = strikes.length - 1; i >= 0; i--) if (strikes[i].to === 'player') strikes.splice(i, 1);
+  const land = [...grid.cells.values()].filter((c) => c.terrain !== 'crater' && c.terrain !== 'capital');
+  const pool = land.length ? land : [...grid.cells.values()];
+  for (const r of rivals) {
+    if (r.alive === false) continue;
+    for (let n = 0; n < (incoming.get(r.id) ?? 0); n++) {
+      const c = pool[Math.floor(Math.random() * pool.length)];
+      if (c) strikes.push({ from: r.id, to: 'player', at: [c.x, c.z], kind: 'missile' });
+    }
   }
   queue = [];
   if (!strikes.length) {
     say('Nobody fired this turn.');
   } else {
-    const { strikes: res, results } = resolve(strikes, cities, rng);
+    const { strikes: res, results, sims } = resolve(strikes, cities, rng);
+    warSims = sims;
     // Every flight leaves at once; you stay where you are. Each lands when its countdown runs out (arrive()).
     globe.setQueued([]);
     drawAims();
@@ -848,6 +934,7 @@ nextBtn.addEventListener('click', (e) => {
 
 // Models: the core set first, then the extras swap in for their stand-ins.
 factory.ready.then(() => {
+  renderIncoming();
   buildCity();
   rearm();
   paint();
@@ -902,6 +989,7 @@ function frame(now) {
     missiles.update(dt);
     dust.update(dt);
   }
+  syncDefence();
   rivalMissiles.update(dt);
   updateTimer();
   if (view === 'globe') {

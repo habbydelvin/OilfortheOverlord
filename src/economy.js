@@ -2,7 +2,7 @@ import { DIRS } from './grid.js';
 import { TERRAINS } from './tiles.js';
 import { SCALE, scaled } from './scalingConfig.js';
 import { L } from './i18n.js';
-import { FACTORY_OIL } from './arsenal.js';
+import { FACTORY_OIL, INTERCEPT } from './arsenal.js';
 
 /** Workers each building needs to run. */
 export const WORKERS = { farm: 1, station: 1, refinery: 1, missilelab: 2, warhead: 2, magazine: 2 };
@@ -247,7 +247,10 @@ export function computeEconomy(grid, state = {}) {
   const oilStolen = Math.min(oilMade, banditOil);
   const factoryOil = (counts.milfactory ?? 0) * FACTORY_OIL;
   for (const per of perCell) if (per.terrain === 'milfactory') per.oil -= FACTORY_OIL;
-  const oil = oilMade - oilStolen;
+  // Intercept Networks are kept manned out of the season's oil (they never run out of rounds in a fight).
+  const interceptOil = (counts.intercept ?? 0) * (INTERCEPT.upkeep ?? 0);
+  for (const per of perCell) if (per.terrain === 'intercept') per.oil -= INTERCEPT.upkeep ?? 0;
+  const oil = oilMade - oilStolen - interceptOil;
 
   // Per-tile: farms grow at the staffing rate; final oil is shared out over stations by their crude
   // (largest remainder, so the per-tile numbers add up exactly to the total).
@@ -307,6 +310,7 @@ export function computeEconomy(grid, state = {}) {
     taxSlots,
     oilMade,
     factoryOil,
+    interceptOil,
     mods,
     foodGrown,
     foodEaten: totalEaten,

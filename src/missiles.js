@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { BILLOW_SHADE } from './fogOfWar.js';
+import { SIM_DT as SIM_STEP } from './interceptSim.js';
 
 /**
  * The Overlord's missile strike (a missed tribute). Missiles streak in from his side of the
@@ -65,7 +66,7 @@ export const MISSILE = {
   camLower: 0.08, // Capital this far below screen centre (share of screen height), room for the clouds
   holdAfter: 2, // seconds to watch the clouds after the last impact
   camFollowRate: 14, // ease speed while the camera tracks the missiles in flight (high: stays centred on it)
-  followFlight: 2.2, // the Overlord's missiles fly this long (s) while tracked, so the camera can keep up
+  followFlight: 3.5, // the Overlord's missiles fly this long (s) while tracked, so the camera can keep up
   damage: 1, // HP taken from a Capital on a direct hit
   blast: 1, // tiles hit: 1 = aimed cell only; each step adds one neighbour
   // preview (M)
@@ -708,8 +709,30 @@ export class MissileStrike {
    * firing onKill() runs (the caller shoots it down); a miss streams past behind it until `dur` runs out.
    */
   fireCIWS(gun, from, aim, { dur = 0.9, kill = 0.5, success = true, onKill, onFire } = {}) {
+    const g = { gun, from: from.clone(), aim, dur, kill, success, onKill, onFire, age: 0, acc: 0, barrel: 0, last: null, vel: new THREE.Vector3(), killed: false, firing: false, next: [] };
+    // One stream per turret: already engaging a missile, it takes the next one only once this one is done.
+    const busy = this.#guns.find((o) => o.from.distanceToSquared(g.from) < 1e-4);
+    if (busy) {
+      busy.next.push(g);
+      return;
+    }
     gun?.begin?.();
-    this.#guns.push({ gun, from: from.clone(), aim, dur, kill, success, onKill, onFire, age: 0, acc: 0, barrel: 0, last: null, vel: new THREE.Vector3(), killed: false, firing: false });
+    this.#guns.push(g);
+  }
+
+  /** An engagement ended: the turret swings onto the next queued missile still in the air (if any). */
+  #release(i) {
+    const g = this.#guns[i];
+    this.#guns.splice(i, 1);
+    g.gun?.end?.();
+    while (g.next.length) {
+      const n = g.next.shift();
+      if (!n.aim()) continue; // that one already landed or fell
+      n.next = g.next;
+      n.gun?.begin?.();
+      this.#guns.push(n);
+      return;
+    }
   }
 
   #guns = [];
@@ -768,8 +791,7 @@ export class MissileStrike {
       }
       const t = g.last;
       if (!t) {
-        this.#guns.splice(i, 1);
-        g.gun?.end?.();
+        this.#release(i);
         continue;
       }
       // Lead the target: aim where it will be when a round gets there.
@@ -781,8 +803,7 @@ export class MissileStrike {
       const stopAt = g.success ? g.kill + 0.12 : g.dur;
       if (fireT < 0) continue;
       if (fireT > stopAt || (g.killed && fireT > g.kill + 0.12) || (!target && fireT > 0.1)) {
-        this.#guns.splice(i, 1);
-        g.gun?.end?.();
+        this.#release(i);
         continue;
       }
       if (!g.firing) {
@@ -832,8 +853,13 @@ export class MissileStrike {
       const r = this.#rounds[i];
       r.age += dt;
       r.pos.addScaledVector(r.vel, dt);
-      r.vel.y -= 1.2 * dt; // a touch of drop
+      if (!r.sim) r.vel.y -= 1.2 * dt; // a touch of drop (simulated rounds fly straight, as they did in the sim)
       if (r.age >= r.life || n >= max) {
+        // A simulated round that found its missile: a flak flash where it struck.
+        if (r.hit && r.age >= r.life) {
+          this.flames.spawn({ pos: r.pos.clone(), size0: 0.05, size1: rand(0.2, 0.32), life: 0.1, color0: '#ffffff', color1: '#ffb040', opacity: 1, fadeIn: 0.005 });
+          this.smoke.spawn({ pos: r.pos.clone(), vel: new THREE.Vector3(rand(-0.2, 0.2), rand(-0.1, 0.2), rand(-0.2, 0.2)), drag: 2, lift: 0.05, size0: 0.06, size1: rand(0.22, 0.34), life: rand(0.8, 1.2), color0: '#3a3632', color1: '#6a645c', opacity: 0.7, fadeIn: 0.02, fadeStart: 0.2 });
+        }
         this.#rounds.splice(i, 1);
         continue;
       }
@@ -902,6 +928,14 @@ export class MissileStrike {
    */
   #launchPath(m) {
     const c = this.cfg;
+    // A simulated flight (interceptSim.js): fly exactly the path the defence was decided on.
+    if (m.target.path) {
+      const { p0, p1, p2 } = m.target.path;
+      m.p0 = new THREE.Vector3(...p0);
+      m.p1 = new THREE.Vector3(...p1);
+      m.p2 = new THREE.Vector3(...p2);
+      return;
+    }
     // Fired off the board (a Missile Magazine's salvo at a rival city): straight up and out of view, leaning by
     // target.lean ({ x, z }); it never lands.
     if (m.target.away) {
@@ -997,17 +1031,25 @@ export class MissileStrike {
 
     this.#updateUpright(dt);
     this.#updateGuns(dt);
+    this.#updateReplay(dt);
     this.#updateRounds(dt);
 
     // Missiles in flight.
     for (let i = this.#missiles.length - 1; i >= 0; i--) {
       const m = this.#missiles[i];
-      m.age += dt;
+      // On the attack phase's clock (target.clock / t0): in step with the War Map and the simulated defence.
+      const now = m.target.clock?.();
+      if (now != null) m.age = now - m.target.t0;
+      else m.age += dt;
       if (m.age < 0) continue;
       if (!m.mesh) this.#spawnMissile(m);
+      // Its simulated kill time came: the rounds wore it down, it bursts in the air.
+      if (now != null && m.target.killAt != null && now >= m.target.killAt) {
+        this.destroy(m.target);
+        continue;
+      }
       // A ground launch can fly slower (target.flight / target.accel) so the camera can follow it.
-      // mustStop: an interceptor is on its way; it never reaches the ground (a guard, should the shot run late).
-      const u = Math.min(m.target.mustStop ? 0.97 : 1, Math.pow(m.age / (m.target.flight ?? c.flightTime), m.target.accel ?? c.accel));
+      const u = Math.min(1, Math.pow(m.age / (m.target.flight ?? c.flightTime), m.target.accel ?? c.accel));
       const prev = this.#tmp.copy(m.mesh.position);
       bezier(m.mesh.position, m.p0, m.p1, m.p2, u);
       bezierTangent(this.#dir, m.p0, m.p1, m.p2, Math.min(u, 0.999));
@@ -1231,8 +1273,76 @@ export class MissileStrike {
     job.resolve();
   }
 
+  // ---------- simulated defence replay (interceptSim.js): turrets, rounds and kills exactly as decided ----------
+  #replay = null;
+  /**
+   * Show a city's simulated defence on the shared clock. sim: simulateDefence() output (null stops). clock(): phase
+   * time (s) or null. gunFor(i): the turret model rig of network i ({ turret, pivot, muzzles, begin, fire, end }) or
+   * null. onFire(seconds): a stream starts (sound).
+   */
+  setDefence(sim, clock, gunFor = () => null, onFire = null) {
+    if (this.#replay?.sim === sim) return;
+    this.#endReplay();
+    this.#replay = sim ? { sim, clock, gunFor, onFire, next: -1, lastT: null, firing: sim.turrets.map(() => false), beat: sim.turrets.map(() => 0) } : null;
+  }
+  #endReplay() {
+    const rp = this.#replay;
+    if (!rp) return;
+    rp.sim.turrets.forEach((_, i) => rp.firing[i] && rp.gunFor(i)?.end?.());
+    this.#replay = null;
+  }
+  #updateReplay(dt) {
+    const rp = this.#replay;
+    if (!rp) return;
+    const t = rp.clock();
+    if (t == null) return this.#endReplay();
+    const { sim } = rp;
+    // Joined mid phase (or the clock jumped back): pick up the rounds still in the air.
+    if (rp.lastT == null || t < rp.lastT) {
+      rp.next = sim.rounds.findIndex((r) => r.t + r.life > t);
+      if (rp.next < 0) rp.next = sim.rounds.length;
+    }
+    rp.lastT = t;
+    for (; rp.next < sim.rounds.length && sim.rounds[rp.next].t <= t; rp.next++) {
+      const r = sim.rounds[rp.next];
+      const late = t - r.t;
+      if (late >= r.life) continue;
+      const pos = new THREE.Vector3(...r.pos);
+      const vel = new THREE.Vector3(...r.vel);
+      if (late < 0.03 && Math.random() < 0.6)
+        this.flames.spawn({ pos: pos.clone(), size0: rand(0.12, 0.2), size1: 0.03, life: 0.05, color0: '#fff4c0', color1: '#ff8a20', opacity: 1, fadeIn: 0.005 });
+      pos.addScaledVector(vel, late);
+      this.#rounds.push({ pos, vel, age: late, life: r.life, sim: true, hit: r.hit });
+    }
+    // Turrets: aim as the sim had them; streams start and stop with it.
+    const pt = new THREE.Vector3();
+    sim.turrets.forEach((tr, i) => {
+      const s = Math.max(0, Math.min(sim.steps - 1, Math.floor((t - sim.t0) / SIM_STEP)));
+      const yaw = tr.aim[s * 2];
+      const pitch = tr.aim[s * 2 + 1];
+      const firing = t >= sim.t0 && s < sim.steps - 1 && tr.fire[s] === 1;
+      const gun = rp.gunFor(i);
+      if (gun) {
+        const cp = Math.cos(pitch);
+        pt.set(tr.pos[0] + Math.sin(yaw) * cp * 5, tr.pos[1] + Math.sin(pitch) * 5, tr.pos[2] + Math.cos(yaw) * cp * 5);
+        this.#slew({ gun }, pt, dt, 40);
+      }
+      if (firing && !rp.firing[i]) {
+        gun?.begin?.();
+        rp.onFire?.(0.3);
+      }
+      if (firing && (rp.beat[i] -= dt) <= 0) {
+        rp.beat[i] = 0.25;
+        gun?.fire?.(0.3);
+      }
+      if (!firing && rp.firing[i]) gun?.end?.();
+      rp.firing[i] = firing;
+    });
+  }
+
   /** Remove everything at once (island reset). Pending fire() promises resolve. */
   clear() {
+    this.#endReplay();
     for (const m of this.#missiles) if (m.mesh) this.group.remove(m.mesh);
     this.#missiles.length = 0;
     for (const u of this.#upright) this.group.remove(u.mesh);

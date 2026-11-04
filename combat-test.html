@@ -117,6 +117,12 @@
         gap: 6px;
         margin: 8px 0;
       }
+      .inc-table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 12px; }
+      .inc-table th, .inc-table td { text-align: left; padding: 3px 4px; border-bottom: 1px solid rgba(255,255,255,0.12); }
+      .inc-table input { width: 56px; }
+      .inc-table tr.dead { opacity: 0.4; }
+      .inc-table tfoot td { font-weight: bold; border-bottom: 0; }
+      #placeNets.on { background: #2f6a54; color: #dfffee; }
       #panel {
         max-height: calc(100vh - 24px);
         overflow: auto;
@@ -139,6 +145,9 @@
       <p>Zoom out past max (or press War Map) to see the planet. Click a rival city to enter it, drag a missile card from your hand onto one of its tiles to aim it (click an aimed tile to take it back). Your hand holds one missile per armed silo slot, refilled every turn, then End turn: every city fires, the flights cross the planet, then strikes on Hive City play here. Next turn sends missiles in, filmed with the game's strike camera. Each Intercept Network is a CIWS bunker: its turret swings onto the missile and fills the sky with rounds. A hit brings it down in mid-air; a miss streams past behind it. Drag / scroll / WASD to move the camera.</p>
       <button id="next" type="button" disabled>End turn</button>
       <button id="viewBtn" type="button">War Map</button>
+      <div class="tune-head"><b>Incoming attack</b></div>
+      <div id="incoming"></div>
+      <button id="placeNets" type="button">Place Intercept Networks</button>
       <div id="status">Loading the city…</div>
       <div id="log"></div>
       <div class="tune-head">
@@ -149,6 +158,8 @@
       <div class="tune-btns">
         <button id="resetCity" type="button">Reset city</button>
         <button id="resetTune" type="button">Default tuning</button>
+        <button id="copyTune" type="button">Copy JSON</button>
+        <button id="applyTune" type="button">Paste JSON</button>
       </div>
       <p><a href="/">← Back to the table</a></p>
     </div>

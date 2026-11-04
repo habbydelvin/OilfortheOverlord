@@ -1,6 +1,6 @@
-import { DIRS, key, hexesAround } from './grid.js';
+import { DIRS, key, hexesAround, hexToWorld } from './grid.js';
+import { simulateDefence, missilePath, missileHp, mulberry } from './interceptSim.js';
 import { TERRAINS, isBuilding } from './tiles.js';
-import { INTERCEPT, interceptorsNear } from './arsenal.js';
 import { MISSILE } from './missiles.js';
 
 /**
@@ -10,13 +10,16 @@ import { MISSILE } from './missiles.js';
  *
  * Rules, the same for every city:
  *  - Blast is the aimed tile plus `size` extra neighbouring tiles (debug blast + Warhead Institutes).
- *  - Each Intercept Network within INTERCEPT_RANGE (2) of the footprint gets one shot per attack phase: INTERCEPT_OIL from the
- *    defender's stockpile, INTERCEPT_CHANCE to stop the whole strike. A miss lets the next unused network try.
+ *  - Intercept Networks are simulated (interceptSim.js): turrets turn, fire one stream each, and missiles with hidden
+ *    HP burst when the rounds wear them down. Upkeep is paid in the season's oil (economy.js), not per shot.
  *  - A hit turns the tiles into Toxic Craters. A hit on the Capital costs it HP (1, or 2 for a warhead) instead;
  *    at 0 the city is eliminated.
  */
 
 export const CAPITAL_HP = 5;
+/** War Map clock: the first missile lands this many seconds in, then one every LAUNCH_GAP. */
+export const LAND_BASE = 6;
+export const LAUNCH_GAP = 0.35;
 /** Rivals hold their fire at the player before this year (the tutorial and first year stay calm). */
 export const GRACE_ROUNDS = 1;
 
@@ -63,7 +66,7 @@ export function spreadFrom(grid, origin, n) {
 export function resolve(strikes, cities, rng = Math.random) {
   const byId = new Map(cities.map((c) => [c.id, c]));
   const state = new Map(
-    cities.map((c) => [c.id, { oil: c.oil, hp: c.hp, alive: c.alive, used: new Set(), dead: new Set(), result: { oilSpent: 0, hpLost: 0, craters: [], eliminated: false } }]),
+    cities.map((c) => [c.id, { oil: c.oil, hp: c.hp, alive: c.alive, used: new Map(), dead: new Set(), result: { oilSpent: 0, hpLost: 0, craters: [], eliminated: false } }]),
   );
   // Launch order: round robin over the attackers, so no one city's whole salvo lands first.
   const queues = new Map();
@@ -81,46 +84,53 @@ export function resolve(strikes, cities, rng = Math.random) {
     }
   }
 
-  const out = [];
-  for (const s of order) {
-    const def = byId.get(s.to);
+  // Every missile's real flight: launch, path, landing time on the War Map clock (globeView plays the same times).
+  const flight = MISSILE.followFlight ?? 2.2;
+  const accel = MISSILE.accel ?? 1.4;
+  const out = order.map((s, i) => {
     const st = state.get(s.to);
-    const rec = { ...s, cells: s.cells ?? footprint(s.kind, s.at, s.size, st.grid), shots: [], hit: false, lost: [], capital: null, eliminated: false };
-    out.push(rec);
+    const def = byId.get(s.to);
+    const cells = s.cells ?? footprint(s.kind, s.at, s.size, def?.grid);
+    const w = hexToWorld(s.at[0], s.at[1]);
+    const land = LAND_BASE + LAUNCH_GAP * i;
+    return { ...s, cells, shots: [], hit: false, lost: [], capital: null, eliminated: false, land, t0: land - flight, flight, accel, path: missilePath(w.x, w.z, MISSILE, rng), hp: missileHp(s.kind), id: i, _st: st };
+  });
+
+  // Each city's Intercept Networks fight the missiles coming at it, for real (interceptSim.js).
+  const sims = new Map();
+  for (const c of cities) {
+    const incoming = out.filter((r) => r.to === c.id);
+    if (!incoming.length || !c.alive) continue;
+    const nets = [...c.grid.cells.values()].filter((t) => t.terrain === 'intercept').map((t) => ({ x: t.x, z: t.z }));
+    const sim = simulateDefence(incoming, nets, mulberry(Math.floor(rng() * 4294967296)));
+    sims.set(c.id, sim);
+    for (const r of incoming) {
+      const o = sim.missiles.get(r.id);
+      if (!o?.killed) continue;
+      r.killed = true;
+      r.killAt = o.tKill;
+      r.killPos = o.pos;
+      if (o.by) r.shots.push({ x: o.by.x, z: o.by.z, success: true });
+    }
+  }
+
+  // Then the landings, in the order they touch down.
+  for (const rec of [...out].sort((a, b) => a.land - b.land)) {
+    const st = rec._st;
+    delete rec._st;
+    const def = byId.get(rec.to);
     // Every missile is already in the air: one whose own city falls this phase still lands.
     if (!def || !st || !st.alive) {
       rec.fizzled = true; // the target already fell this phase
       continue;
     }
+    const s = rec;
     const grid = def.grid;
     const tileAt = (x, z) => {
       if (st.dead.has(key(x, z))) return 'crater';
       return grid.get(x, z)?.terrain;
     };
-
-    // Interception: every unused live network next to the footprint, in turn, while the oil lasts.
-    const nets = [];
-    for (const [x, z] of rec.cells) {
-      for (const n of interceptorsNear(grid, x, z)) {
-        const k = key(n.x, n.z);
-        if (st.used.has(k) || st.dead.has(k) || nets.some((m) => m.k === k)) continue;
-        nets.push({ k, x: n.x, z: n.z });
-      }
-    }
-    let stopped = false;
-    for (const n of nets) {
-      if (st.oil < INTERCEPT.oil) break;
-      st.oil -= INTERCEPT.oil;
-      st.result.oilSpent += INTERCEPT.oil;
-      st.used.add(n.k);
-      const success = rng() < INTERCEPT.chance;
-      rec.shots.push({ x: n.x, z: n.z, success });
-      if (success) {
-        stopped = true;
-        break;
-      }
-    }
-    if (stopped) continue;
+    if (rec.killed) continue;
 
     rec.hit = true;
     let capitalHit = false;
@@ -149,7 +159,7 @@ export function resolve(strikes, cities, rng = Math.random) {
   }
 
   const results = new Map([...state].map(([id, s]) => [id, s.result]));
-  return { strikes: out, results };
+  return { strikes: out, results, sims };
 }
 
 /** Write a resolved phase back onto a rival: craters on its grid, oil spent, HP, elimination. */

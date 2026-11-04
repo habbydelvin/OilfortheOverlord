@@ -7,6 +7,7 @@ import { buildLabourCamp } from './labourCampMesh.js';
 import { buildInterceptBunker } from './interceptMesh.js';
 import { copySeam } from './seamlessGround.js';
 import { MISSILE } from './missiles.js';
+import { INTERCEPT } from './arsenal.js';
 import { SCALE } from './scalingConfig.js';
 import { L } from './i18n.js';
 import { hexToWorld, hexRound, hexDistance, hexesAround, cellSeed, cellsCentre } from './grid.js';
@@ -132,7 +133,9 @@ export const TERRAINS = {
     category: 'building',
     buildable: false,
     weight: 0.5,
-    rule: 'Spend 3 oil to stop one hit on an adjacent building',
+    get rule() {
+      return `-${INTERCEPT.upkeep} oil each season · Its gun shoots down missiles aimed within ${INTERCEPT.range} tiles`;
+    },
     stats: {},
   },
   magazine: {
@@ -470,7 +473,7 @@ const ZH = {
   milfactory: { name: '军事工厂', rule: '每季 -3 石油 · 一年后生产 1 枚导弹' },
   missilelab: { name: '导弹配方改良所', rule: '相邻军事工厂生产导弹数量 +1' },
   warhead: { name: '弹头研究所', rule: '每座开工的研究所使导弹爆炸再多打相邻 1 格' },
-  intercept: { name: '拦截网络', rule: '花费 3 石油，阻止相邻建筑被攻击一次' },
+  intercept: { name: '拦截网络', rule: () => `每季 -${INTERCEPT.upkeep} 石油 · 炮塔击落瞄准 ${INTERCEPT.range} 格内的导弹` },
   magazine: { name: '储弹仓', rule: '导弹容量 +1' },
   missile: { name: '导弹', rule: () => `摧毁 ${MISSILE.blast ?? 1} 格 · 首都 −${MISSILE.damage ?? 1}` },
   salvo: { name: '齐射', rule: '拖到一格上：手中每枚导弹从该处铺开瞄准' },
