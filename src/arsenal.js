@@ -55,8 +55,8 @@ const idleAt = (idleKeys, cell) => idleKeys?.has(`${cell.x},${cell.z}`);
 /** What one staffed Military Factory produces when a year of work completes. */
 export function factoryYield(grid, cell, idleKeys) {
   const nbs = near(grid, cell.x, cell.z);
-  const recipe = nbs.some((n) => n.terrain === 'missilelab' && !idleAt(idleKeys, n));
-  return { count: 1 + (recipe ? 1 : 0), kind: 'missile' };
+  const labs = nbs.filter((n) => n.terrain === 'missilelab' && !idleAt(idleKeys, n)).length;
+  return { count: 1 + labs, kind: 'missile' };
 }
 
 /** Staffed Warhead Institutes: each grows blast by 1×1 (0 labs = 1×1, 1 lab = 2×2). */

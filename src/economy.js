@@ -61,7 +61,7 @@ export function computeEconomy(grid, state = {}) {
   const perCell = [];
   // What each booster (Water Pump, Oasis, Tar Pit) adds to the building next to it: worked out as a share of that
   // building's output, then turned into whole food / oil once the final numbers are known (see `shares` below).
-  // A bonus doesn't stack, so a building next to two of the same booster credits only the first one found.
+  // Each adjacent booster counts on its own.
   const credits = []; // { from: building's perCell entry, to: booster cell key, res: 'food' | 'oil', amount (raw) }
   // The same bonus, kept on the booster so a hovered pump/oasis/tar pit can list what it adds this season.
   const grants = []; // { to: booster cell key, terrain: building it boosts, res, amount (raw, scaled later) }
@@ -72,7 +72,6 @@ export function computeEconomy(grid, state = {}) {
       const to = `${n.x},${n.z}`;
       credits.push({ from, to, res, amount });
       grants.push({ to, terrain: from.terrain, res, amount });
-      return;
     }
   };
 
@@ -152,23 +151,23 @@ export function computeEconomy(grid, state = {}) {
 
     if (t === 'farm') {
       // Drought: pumps and oases give nothing (what they would have given is kept for the event text).
-      const pump = near.includes('pump');
-      const oasis = near.includes('oasis');
-      const water = (pump ? 2 : 0) + (oasis ? 3 : 0);
+      const pumps = near.filter((n) => n === 'pump').length;
+      const oases = near.filter((n) => n === 'oasis').length;
+      const water = pumps * 2 + oases * 3;
       // Each Capital next door triggers the farm once more (1 Capital ×2, 2 Capitals ×3...).
       const caps = near.filter((n) => n === 'capital').length;
       const twice = 1 + caps;
       if (mods.drought) droughtFood += water * twice;
       else {
-        if (pump) bonus.pumpFarms++;
-        if (oasis) bonus.oasisFarms++;
-        if (pump) credit(per, 'pump', 'food', 2 * twice);
-        if (oasis) credit(per, 'oasis', 'food', 3 * twice);
+        bonus.pumpFarms += pumps;
+        bonus.oasisFarms += oases;
+        if (pumps) credit(per, 'pump', 'food', 2 * twice);
+        if (oases) credit(per, 'oasis', 'food', 3 * twice);
       }
-      if (mods.drought && (pump || oasis)) per.mods.push({ id: 'drought' });
+      if (mods.drought && (pumps || oases)) per.mods.push({ id: 'drought' });
       else {
-        if (pump) per.mods.push({ id: 'pump' });
-        if (oasis) per.mods.push({ id: 'oasis' });
+        for (let i = 0; i < pumps; i++) per.mods.push({ id: 'pump' });
+        for (let i = 0; i < oases; i++) per.mods.push({ id: 'oasis' });
       }
       for (let i = 0; i < caps; i++) per.mods.push({ id: 'twice' });
       per.rawFood = 2 + (mods.drought ? 0 : water);
@@ -179,13 +178,13 @@ export function computeEconomy(grid, state = {}) {
       }
       farmFood += per.rawFood;
     } else if (t === 'station') {
-      const tarpit = near.includes('tarpit');
-      if (tarpit) bonus.tarpitStations++;
+      const tarpits = near.filter((n) => n === 'tarpit').length;
+      bonus.tarpitStations += tarpits;
       const caps = near.filter((n) => n === 'capital').length; // each one triggers it once more
-      if (tarpit) credit(per, 'tarpit', 'oil', 2 * (1 + caps));
-      if (tarpit) per.mods.push({ id: 'tarpit' });
+      if (tarpits) credit(per, 'tarpit', 'oil', 2 * (1 + caps));
+      for (let i = 0; i < tarpits; i++) per.mods.push({ id: 'tarpit' });
       for (let i = 0; i < caps; i++) per.mods.push({ id: 'twice' });
-      per.rawCrude = 2 + (tarpit ? 2 : 0);
+      per.rawCrude = 2 + tarpits * 2;
       if (caps) {
         bonus.capitalCrude += per.rawCrude * caps;
         per.rawCrude *= 1 + caps;
@@ -203,10 +202,7 @@ export function computeEconomy(grid, state = {}) {
     } else if (t === 'milfactory') {
       for (const [dx, dz] of DIRS) {
         const n = grid.get(cell.x + dx, cell.z + dz);
-        if (n?.terrain === 'missilelab' && !isIdle(n.x, n.z)) {
-          per.mods.push({ id: 'missilelab' });
-          break; // one staffed lab is enough: a second one does not add another missile
-        }
+        if (n?.terrain === 'missilelab' && !isIdle(n.x, n.z)) per.mods.push({ id: 'missilelab' });
       }
     } else if (t === 'labourcamp') {
       const n = near.filter((x) => x === 'settlement').length;
@@ -214,6 +210,8 @@ export function computeEconomy(grid, state = {}) {
       else if (n > 0) per.mods.push({ id: 'labour' });
       per.outManpower = n >= 6 ? 4 : n > 0 ? 2 : 0;
     }
+    // Drought turns Water Pumps and Oases off. The hover card says so on those tiles.
+    if (mods.drought && (t === 'pump' || t === 'oasis')) per.mods.push({ id: 'disabled' });
   }
 
   // Each credit as a share of its building's output (events, hunger and rounding scale both alike).

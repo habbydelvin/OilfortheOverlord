@@ -1983,6 +1983,8 @@ function effectText(mod) {
       return { en: 'Capital: trigger +1', zh: '首都：触发+1' };
     case 'drought':
       return { en: 'Drought: Water Pumps and Oases give nothing', zh: '干旱：水泵站和绿洲没有产出' };
+    case 'disabled':
+      return { en: 'Inactive', zh: '失效' };
     case 'missilelab':
       return { en: 'Missile Recipe Lab +1 Missile', zh: '导弹配方改良所 +1 导弹' };
     case 'labour':
