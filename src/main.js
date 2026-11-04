@@ -322,10 +322,25 @@ const tutorial = new Tutorial({
     aimedHere: () => Boolean(rivalShown && queuedStrikes(rivalShown.id).length),
     /** In a rival city: the building of theirs a missile card is shown going to, or null. */
     rivalTarget: () => rivalTarget(),
+    /** From Next turn until every missile has landed (the attack phase). */
+    attacking: () => warPending || attackLive,
     /** A season is settling (from Next turn until the new hand: payout, attack phase, scenes). */
     settling: () => turnRunning || warPending || attackLive || eventOpen || payout.active,
     /** The Smuggler is at the gates, and there's oil for something in the Crawler. */
     marketReady: () => bmWait() <= 0 && !turn.over && turn.stockpile >= bmCheapest(),
+    /**
+     * The Smuggler's hold while it's on screen (not his dialogue), else null: the aisle open (null: the two crates),
+     * the cards you can afford in each aisle (their indexes), and whether anything was bought this visit.
+     */
+    market: () => {
+      if (!blackMarketOpen || $('blackMarket').classList.contains('hidden') || document.body.classList.contains('dialogue')) return null;
+      const affordable = (id) => bmStock[id].flatMap(([, price, sold], i) => (!sold && turn.stockpile >= price ? [i] : []));
+      return {
+        aisle: bmCategory,
+        affordable: { military: affordable('military'), resource: affordable('resource') },
+        bought: Object.values(bmStock).some((items) => items.some((it) => it[2])),
+      };
+    },
   },
 });
 // While it runs, only the card, cells and buttons the advisor asks for respond.
@@ -2040,10 +2055,16 @@ function endTurn() {
   const run = runId;
   warPending = true;
   setTurnRunning(true);
-  runAttackPhase().then((over) => {
+  runAttackPhase().then(async (over) => {
     warPending = false;
     if (run !== runId) return;
     if (over) return setTurnRunning(false);
+    // The guided Spring watched its missile land in a rival city: the season's first oil waits until you've come home
+    // (the hand shows the way), so it's paid out where it can be seen. Skipping the tutorial lets it go on anywhere.
+    while (tutorial.active && (view !== 'board' || switching)) {
+      await wait(0.1);
+      if (run !== runId) return;
+    }
     const e = economyNow();
     runPayout(e, () => finishSeasonFx(e));
   });
@@ -4127,7 +4148,9 @@ function playerBuildingCount() {
 // ---------- war: aiming at a rival city, then the attack phase ----------
 // Visiting a rival with missiles in the silo swaps the season hand for missile cards (as the strike screen did):
 // pick a card and click (or drag it onto) one of their tiles to aim it. Leaving the city puts unplayed cards back.
+// Aiming only marks the target (a reticle and flight path stay on it): everything aimed fires after End Turn.
 let rivalHand = null; // the season hand, saved while the missile cards are out
+let cardsPlayed = 0; // names each card aimed, so its tiles (a salvo's together) share one reticle
 let aimHover = null;
 let aimAt = null; // a salvo's cell under the cursor: its reticle centres there
 
@@ -4163,6 +4186,14 @@ function updateAimBar() {
   const aimedCells = aimed.map((s) => s.cells ?? footprint(s.kind, s.at, s.size, rival.grid));
   rivalView.setMarkers(aimedCells, aimHover, aimAt);
   rivalView.setArcs(aimHover ? [aimHover] : [], rival ? homeBearing(rival) : null, aimedCells.flat(), aimAt);
+  // What's aimed keeps its reticle and path until End Turn fires it: one per card played (a salvo's tiles together).
+  const groups = new Map();
+  aimed.forEach((q, i) => {
+    const k = q.card ?? plotKey(q.at[0], q.at[1]);
+    if (!groups.has(k)) groups.set(k, { key: k, cells: [], at: q.centre ?? q.at });
+    groups.get(k).cells.push(...aimedCells[i]);
+  });
+  rivalView.setAimed([...groups.values()], rival ? homeBearing(rival) : null);
   globe?.setQueued(queuedStrikes().map((s) => ({ from: 'player', to: s.to })));
 }
 
@@ -4214,9 +4245,8 @@ function aimAtPointer() {
         for (const [x, z] of s.cells ?? footprint(s.kind, s.at, s.size, rival.grid)) taken.add(plotKey(x, z));
       }
       const cells = footprint(piece.terrain, at, size, rival.grid, taken);
-      queueDrawn(rival.id, at, piece.terrain, size, { vis: true, cells });
+      queueDrawn(rival.id, at, piece.terrain, size, { cells, card: `card${++cardsPlayed}` });
       hand.consume();
-      playOutgoingRival(rival, cells, piece.terrain);
     }
     confirm();
     if (queuedStrikes(rival.id).length > before) tutorial.notify(piece.terrain === 'salvo' ? 'salvo' : 'aimed');
@@ -4247,7 +4277,8 @@ function rivalTarget() {
     const x = (targetV.x * 0.5 + 0.5) * W;
     const y = (-targetV.y * 0.5 + 0.5) * H;
     const reachable = targetV.z < 1 && x > 0 && y > 0 && x < W && y < H && overBoard(x, y);
-    const kind = isBuilding(c.terrain) ? (c.terrain === 'capital' ? 250 : 0) : 500;
+    // Each rank outweighs any distance on screen: a building in reach always beats the rest.
+    const kind = isBuilding(c.terrain) ? (c.terrain === 'capital' ? 2000 : 0) : 4000;
     const score = (reachable ? 0 : 10000) + kind + Math.hypot(x - W / 2, y - H * 0.42);
     if (score < bestScore) {
       bestScore = score;
@@ -4294,14 +4325,12 @@ function aimSalvo(rival, at) {
   if (!cells.length) return toast(L('Aim at one of their tiles', '请瞄准对方的地块'), 'bad');
   const size = blastExtra(grid, idleKeySet());
   const taken = new Set();
-  const vis = [];
+  const card = `card${++cardsPlayed}`;
   for (let i = 0; i < cells.length; i++) {
     const blast = footprint(ammo[i].terrain, cells[i], size, rival.grid, taken);
     for (const [x, z] of blast) taken.add(plotKey(x, z));
-    queueDrawn(rival.id, cells[i], ammo[i].terrain, size, { vis: true, cells: blast });
-    vis.push(...blast);
+    queueDrawn(rival.id, cells[i], ammo[i].terrain, size, { cells: blast, card, centre: [at[0], at[1]] });
   }
-  playOutgoingRival(rival, vis, 'missile');
   const used = new Set(ammo.slice(0, cells.length));
   hand.cards = hand.cards.filter((p) => p.terrain !== 'salvo' && !used.has(p));
   hand.selected = -1;
@@ -4395,41 +4424,6 @@ function craterRival(r, rec) {
   if (rivalShown === r) rivalView.refresh();
 }
 
-/** Dropping a card: missiles dive onto the aimed tiles right now (the attack phase still resolves them later). */
-function playOutgoingRival(r, cells, kind = 'missile') {
-  rivalMissiles ??= new MissileStrike(rivalView.scene, camera, missileCfg);
-  const d = homeBearing(r);
-  const targets = cells.map((at) => {
-    const w = hexToWorld(at[0], at[1]);
-    const cell = r.grid.get(at[0], at[1]);
-    const rec = {
-      at,
-      kind,
-      shots: [],
-      lost:
-        cell && cell.terrain !== 'crater' && cell.terrain !== 'capital'
-          ? [{ x: at[0], z: at[1], terrain: cell.terrain, name: TERRAINS[cell.terrain]?.name ?? cell.terrain }]
-          : [],
-    };
-    rec.hit = rec.lost.length > 0 || cell?.terrain === 'capital';
-    return {
-      x: w.x,
-      z: w.z,
-      rec,
-      from: { x: w.x + d.x * 16, y: 9, z: w.z + d.z * 16 },
-      flight: 1.55,
-      accel: 1.2,
-    };
-  });
-  rivalMissiles.fire(targets, {
-    onImpact: () => {
-      boom();
-      camShake.add(missileCfg.shake);
-    },
-    onCover: (_t) => craterRival(r, _t.rec),
-  });
-}
-
 /** Our missile into the rival city on screen: their interceptors' flak meets it (or misses) on the way down. */
 function playRivalStrike(r, rec, flight = missileCfg.followFlight) {
   rivalMissiles ??= new MissileStrike(rivalView.scene, camera, missileCfg);
@@ -4512,7 +4506,7 @@ function arrive(rec) {
   }
   const r = rivals.find((x) => x.id === rec.to);
   if (!r) return;
-  if (view === 'rival' && rivalShown === r && !rec.vis) landing.push(playRivalStrike(r, rec));
+  if (view === 'rival' && rivalShown === r) landing.push(playRivalStrike(r, rec));
   else craterRival(r, rec);
 }
 
@@ -4574,7 +4568,7 @@ async function runAttackPhase() {
   globe.setQueued([]); // the aimed arcs become real flights now
   const mine = takeQueue()
     .filter((q) => rivals.find((r) => r.id === q.to)?.alive !== false)
-    .map((q) => ({ from: 'player', to: q.to, at: q.at, kind: q.kind, vis: q.vis, size: q.size, cells: q.cells }));
+    .map((q) => ({ from: 'player', to: q.to, at: q.at, kind: q.kind, size: q.size, cells: q.cells }));
   const theirs = rivals.filter((r) => r.alive !== false).flatMap((r) => chooseStrikes(r, cities, { round: turn.round, chance: INTERCEPT.chance, playerArmed: [...MILITARY].some((k) => turn.unlocked.has(k)) }));
   const strikes = [...mine, ...theirs];
   if (!strikes.length) return false;

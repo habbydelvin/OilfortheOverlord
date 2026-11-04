@@ -1461,6 +1461,11 @@ body.shopping #hand {
 #blackMarket .coins {
   font-size: 36px;
 }
+/* Only as wide as its text, still centred (the tutorial's walkthrough rings it). */
+#blackMarket .coins {
+  width: fit-content;
+  margin-inline: auto;
+}
 #shop .shop-band,
 #blackMarket .shop-band {
   gap: 12px;

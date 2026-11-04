@@ -12,11 +12,13 @@ import { NEON } from './neonGlow.js';
  * and food, the Wasteland is laid as a path to the nearest "?" site (which uncovers it). Then a free missile lands in
  * the silo (the Missiles row lights up), a mouse wheel asks you to zoom out past the limit until the War Map's planet
  * opens (a gold ring sweeps over it), and the hand taps a rival city to visit it. There the hand holds the missile
- * card: it drags it onto one of their buildings to aim it (it flies after Next turn). Then "◀ War Map" and "Return to
- * Hive" bring you home, and the hand taps Next turn: the aimed missile flies in the attack phase. From then on the
- * game is free, and a few things get a one-time wordless hint the first time they come up (HINTS): rotating a piece,
+ * card: it drags it onto one of their buildings to aim it, then taps Next turn right there, and you watch the missile
+ * come down on it when its countdown runs out. Then "◀ War Map" and "Return to Hive" bring you home, where the season's
+ * first oil is paid out (main.js holds the payout until you're back). Leave the city before Next turn, and the hand
+ * taps Next turn on the board instead. From then on the game is free, and a few things get a one-time wordless hint the first time they come up (HINTS): rotating a piece,
  * "?" sites, food running out, rerolling, zooming out to the planet (for whoever skipped the guided Spring), missiles
- * waiting in the silo, aiming missile cards and the Salvo card in a rival city, the Black Market, and Next turn.
+ * waiting in the silo, aiming missile cards and the Salvo card in a rival city, the Black Market (its button, then the
+ * first time inside a walkthrough: your oil, an aisle crate, a card you can afford, Leave), and Next turn.
  *
  * main.js owns the game; it calls allows() before every player action, notify() when something happens,
  * and update() every frame. The tutorial calls back into main.js only through the `api` object.
@@ -38,7 +40,8 @@ const BOOST = { farm: css(NEON.farm), station: css(NEON.station) };
  * The guided Spring. Each step:
  *   wait     what moves it on: place, endTurn, time (a spotlight that moves on by itself after `ms`), end; on the
  *            trip to the planet: zoom (the War Map opened), rival (a rival city visited), aim (a missile card aimed at
- *            one of its tiles), map (back on the War Map), home (back on the board)
+ *            one of its tiles), endTurn there too, landed (every missile has come down), map (back on the War Map),
+ *            home (back on the board)
  *   away     part of the trip: the War Map may open, and coming home early skips the rest of it
  *   enter    (api, tutorial) => void, run when the step starts
  *   target   spotlight: CSS selector(s) for the HUD, 'capital' (the free cells next to the Capital glow) or 'site'
@@ -66,9 +69,11 @@ const STEPS = [
   { wait: 'rival', away: true },
   { wait: 'time', ms: 2200, target: '#rivalBar', away: true }, // a look at the rival's city
   { wait: 'aim', away: true }, // the missile card onto one of their buildings
+  { wait: 'endTurn', target: '#btnNext', away: true }, // right there, to watch it come down on them
+  { wait: 'landed', away: true }, // the strike (the payout waits until you're home)
   { wait: 'map', away: true },
   { wait: 'home', away: true },
-  { wait: 'endTurn', target: '#btnNext' }, // the aimed missile flies in the attack phase
+  { wait: 'endTurn', target: '#btnNext' }, // only if the season wasn't ended in the rival city
   { wait: 'end' },
 ];
 
@@ -203,6 +208,7 @@ export class Tutorial {
   /** The opening scene is over: the guiding starts. */
   begin() {
     if (!this.active) return;
+    this.turnEnded = false;
     this.#go(0);
   }
 
@@ -251,6 +257,7 @@ export class Tutorial {
     if (event === 'market') this.#markSeen('market');
     const s = this.step;
     if (!this.active || !s) return;
+    if (event === 'endTurn') this.turnEnded = true;
     const done = (s.wait === 'place' && event === 'placed') || s.wait === event;
     if (!done) return;
     if (s.pop && cells) this.#pop(cells, s.pop);
@@ -279,6 +286,7 @@ export class Tutorial {
       this.stop();
       return;
     }
+    if (s.wait === 'endTurn' && !s.away && this.turnEnded) return this.#go(this.index + 1); // ended in the rival city
     s.enter?.(this.api, this);
     this.aimAt = null;
     this.cells = s.cells === 'capital' ? this.#aroundCapital() : null;
@@ -433,8 +441,19 @@ export class Tutorial {
       if (this.api.aimedHere()) return void this.#go(this.index + 1); // aimed already (during the look around)
       const i = this.hand.cards.findIndex((p) => MISSILE_CARDS.has(p.terrain));
       this.aimAt ??= this.api.rivalTarget();
-      if (i < 0 || !this.aimAt) return void this.#go(this.index + 1); // no missile card out, or nothing to aim at
+      // No missile card out, or nothing to aim at: straight on with the trip home (Next turn on the board).
+      if (i < 0 || !this.aimAt) return void this.#go(STEPS.findIndex((st) => st.wait === 'map'));
       return this.aimView(i, this.aimAt);
+    }
+    if (s.wait === 'endTurn') {
+      // Left for the War Map with the missile aimed: home, then Next turn there (it lands out of sight).
+      if (v === 'globe') return void this.#go(STEPS.findIndex((st) => st.wait === 'home'));
+      return { hand: { tapOn: '#btnNext' }, ring: { selector: '#btnNext' } };
+    }
+    if (s.wait === 'landed') {
+      // Nothing to point at while the missile comes down on the building; then the trip home.
+      if (this.elapsed > 0.5 && !this.api.attacking()) this.#go(this.index + 1);
+      return null;
     }
     if (s.wait === 'map') {
       if (v === 'globe') return void this.#go(this.index + 1);
@@ -497,7 +516,8 @@ export class Tutorial {
     const dt = this.last === null ? 0 : Math.min(0.1, time - this.last);
     this.last = time;
     this.#updatePops(dt);
-    const blocked = document.body.matches(BOARD_BLOCKED);
+    // The Smuggler's hold is a screen of its own, but its walkthrough plays over it (see #hints).
+    const blocked = document.body.matches(BOARD_BLOCKED) && !this.api.market();
     this.skipBtn.classList.toggle('hidden', !(this.active && this.step && !blocked));
     this.flash = Math.max(0, this.flash - dt);
     if (this.api.view() !== 'board') this.sawPlanet = true;
@@ -553,6 +573,9 @@ export class Tutorial {
   /** One-time hints in free play: the first that comes up is shown for a while, then never again. */
   #hints(dt) {
     if (!tutorialDone()) return null;
+    // In the Smuggler's hold only its walkthrough runs: the board's hints wait until you've left.
+    const inMarket = Boolean(this.api.market());
+    if (inMarket && this.hint && this.hint.id !== 'marketTour') this.hint = null;
     const h = this.hint;
     if (h) {
       h.until -= dt;
@@ -562,12 +585,12 @@ export class Tutorial {
     }
     // The season settling (payout, missiles in the air): nothing to do yet, so no new hint (Next turn would be wrong).
     const settling = this.api.settling();
-    this.idle = this.hand.isEmpty && !settling ? this.idle + dt : 0;
+    this.idle = this.hand.isEmpty && !settling && !inMarket ? this.idle + dt : 0;
     this.check = (this.check ?? 0) - dt;
     if (this.check > 0 || settling) return null;
     this.check = 0.25;
     for (const [id, make] of Object.entries(HINTS)) {
-      if (this.seen.has(id)) continue;
+      if (this.seen.has(id) || (inMarket && id !== 'marketTour')) continue;
       const hint = make(this);
       if (!hint) continue;
       this.seen.add(id);
@@ -807,6 +830,36 @@ const HINTS = {
       until: 4.4,
       view: () => ({ hand: { tapOn: '#btnBlackMarket' }, ring: { selector: '#btnBlackMarket' } }),
       over: () => !onBoard(t) || !t.api.marketReady() || Boolean(t.hand.piece),
+    };
+  },
+  // Inside the Smuggler's hold, the first time it's open with something you can afford: your oil lights up (what he
+  // takes), then the hand taps an aisle crate with a card you can afford, then that card, and once you've bought
+  // something, Leave. It only points: buy or not, browse as you like. It ends when you leave.
+  marketTour(t) {
+    const m = t.api.market();
+    if (!m || !(m.affordable.military.length || m.affordable.resource.length)) return null;
+    let start = null;
+    let boughtAt = null;
+    const tap = (selector) => ({ hand: { tapOn: selector }, ring: { selector } });
+    return {
+      until: 90,
+      view: () => {
+        const m = t.api.market();
+        if (!m) return {};
+        start ??= t.last;
+        if (t.last - start < 2) return { ring: { selector: '#bmOil', dim: true } };
+        if (m.bought) {
+          boughtAt ??= t.last;
+          return tap('#btnBmLeave');
+        }
+        const aisle = ['military', 'resource'].find((id) => m.affordable[id].length);
+        if (!aisle) return tap('#btnBmLeave'); // nothing left you can afford
+        if (!m.aisle) return tap(`#bmCards .bm-aisle[data-cat="${aisle}"]`);
+        const i = m.affordable[m.aisle][0];
+        if (i === undefined) return tap('#btnBmBack'); // nothing for your oil in this aisle: back to the other one
+        return { hand: { tapOn: `#bmCards .card[data-i="${i}"]` }, ring: { selector: `#bmCards .shop-item:nth-child(${i + 1})` } };
+      },
+      over: () => !t.api.market() || (boughtAt !== null && t.last - boughtAt > 4.4),
     };
   },
   // Every card played and nothing happening for a while: the hand taps Next turn.
