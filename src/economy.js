@@ -83,11 +83,17 @@ export function computeEconomy(grid, state = {}) {
       bonus.ruins += ruins;
     }
     if (stats.drain) camps[stats.drain]++;
-    // Labour Camp: +2 slots if any Settlement is next to it (doesn't stack with more Settlements).
-    if (stats.adjacentManpower) {
+    // Labour Camp: +2 slots if any Settlement is next to it (doesn't stack with more Settlements), and +2 more once
+    // all six of its neighbours are Settlements.
+    if (stats.adjacentManpower || stats.surroundedManpower) {
       const near = neighbours(cell.x, cell.z);
-      for (const [n, v] of Object.entries(stats.adjacentManpower)) {
+      for (const [n, v] of Object.entries(stats.adjacentManpower ?? {})) {
         if (!near.includes(n)) continue;
+        capBase += v;
+        bonus.labourCamps += v;
+      }
+      for (const [n, v] of Object.entries(stats.surroundedManpower ?? {})) {
+        if (!near.every((t) => t === n)) continue;
         capBase += v;
         bonus.labourCamps += v;
       }

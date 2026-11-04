@@ -165,6 +165,10 @@ function statLines(stats) {
   if (stats.adjacentManpower) {
     for (const [n, v] of Object.entries(stats.adjacentManpower)) lines.push(L(`Next to ${tileName(n)}: Worker slots +${v}`, `紧邻${tileName(n)}：人力 +${v}`));
   }
+  if (stats.surroundedManpower) {
+    for (const [n, v] of Object.entries(stats.surroundedManpower))
+      lines.push(L(`All 6 sides ${tileName(n)}: Worker slots +${v} more`, `六面皆为${tileName(n)}：人力再 +${v}`));
+  }
   if (stats.drain === 'slots')
     lines.push(
       L(

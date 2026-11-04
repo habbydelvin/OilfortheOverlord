@@ -224,8 +224,9 @@ export const TERRAINS = {
     category: 'land',
     buildable: false,
     weight: 0.5,
-    rule: '+2 worker slots if next to a Settlement',
-    stats: { adjacentManpower: { settlement: 2 } }, // +2 total, not per settlement
+    rule: '+2 worker slots next to a Settlement · +4 worker slots if all 6 sides are Settlements',
+    // Flat, not per Settlement: +2 with any Settlement next to it, +2 more once all six neighbours are Settlements.
+    stats: { adjacentManpower: { settlement: 2 }, surroundedManpower: { settlement: 2 } },
   },
   cliffs: {
     name: 'Cliffs',
@@ -451,7 +452,7 @@ const ZH = {
   wasteland4: WASTELAND_ZH,
   oasis: { name: '绿洲', rule: '相邻农场 +3 食物' },
   tarpit: { name: '焦油坑', rule: '相邻采油站 +2 石油' },
-  labourcamp: { name: '劳工营', rule: '紧邻定居点时 +2 人力' },
+  labourcamp: { name: '劳工营', rule: '紧邻定居点时 +2 人力 · 六面皆为定居点时 +4 人力' },
   cliffs: { name: '悬崖', rule: '无法在其上建造' },
   ruins: { name: '战前遗迹', rule: '在旁边建造即可清除 · 清除后手牌补至 5 张' },
   crater: { name: '毒坑', rule: '每个相邻农场/定居点 -1 人力，-1 食物' },
