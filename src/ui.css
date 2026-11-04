@@ -3427,16 +3427,25 @@ body:not(.rival-view) #warTimer { top: 148px; }
 
 /* A rival city clears the side panel, but End Turn stays on screen (bottom right) so a turn can be ended from
    anywhere; greyed and blurred while the hand still has to be cleared. */
-body.rival-view #btnNext {
+body.rival-view #btnNext,
+body.rival-view #btnHive {
   position: fixed;
   right: 20px;
-  bottom: 20px;
   width: 300px;
   z-index: 30;
   opacity: 1;
   pointer-events: auto;
   translate: none;
   visibility: visible;
+  display: block;
+  margin-bottom: 0;
+}
+body.rival-view #btnNext {
+  bottom: 20px;
+}
+body.rival-view #btnHive {
+  /* Next turn height (padding + type + shadow) plus the same 4px the War Map stack uses. */
+  bottom: calc(20px + 18px + 18px + 1.2em + 4px + 4px);
 }
 body.rival-view #panel {
   opacity: 1;
@@ -3446,7 +3455,7 @@ body.rival-view #panel {
   box-shadow: none;
   border: 0;
 }
-body.rival-view #panel > *:not(#btnNext) {
+body.rival-view #panel > *:not(#btnNext):not(#btnHive) {
   visibility: hidden;
 }
 #btnNext.disabled {
@@ -4028,9 +4037,15 @@ body.paying .float-btn {
   .coach-skip {
     bottom: 168px;
   }
-  body.rival-view #btnNext {
+  body.rival-view #btnNext,
+  body.rival-view #btnHive {
     width: 150px;
     right: 8px;
+  }
+  body.rival-view #btnNext {
     bottom: 8px;
+  }
+  body.rival-view #btnHive {
+    bottom: calc(8px + 18px + 18px + 1.2em + 4px + 4px);
   }
 }

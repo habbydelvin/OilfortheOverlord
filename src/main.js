@@ -5698,6 +5698,25 @@ function leaveRival() {
   if (view === 'rival') openGlobe();
 }
 
+/** Rival city or War Map → Hive City. */
+function returnToHive() {
+  if (view === 'globe') return closeGlobe();
+  if (view !== 'rival' || switching) return Promise.resolve();
+  return swapView(() => {
+    setAiming(false);
+    rivalView.exit();
+    rivalShown = null;
+    document.body.classList.remove('rival-view');
+    setBoardFraming(true);
+    view = 'board';
+    rig.release();
+    rig.distance = rig.maxDistance;
+    rig.resetOverscroll();
+    rig.goalDistance = Math.min(boardReturnDistance ?? rig.maxDistance, rig.maxDistance * 0.5);
+    joinFlights();
+  });
+}
+
 /** From the globe, the Esc / G way home: fly onto Hive City first. */
 function globeHome() {
   if (view === 'globe' && !switching && !globe.flying) globe.visit('player'); // also mid attack phase
@@ -5848,7 +5867,8 @@ $('btnReroll').addEventListener('click', (e) => {
 });
 $('btnHive').addEventListener('click', (e) => {
   e.currentTarget.blur();
-  closeGlobe();
+  if (view === 'rival') returnToHive();
+  else closeGlobe();
 });
 $('btnNext').addEventListener('click', (e) => {
   e.currentTarget.blur(); // so Space doesn't re-click it
