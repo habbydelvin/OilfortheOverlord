@@ -1478,9 +1478,11 @@ function updateInterceptCover(time) {
   const h = rig.isDragging ? null : hoveredCell();
   let ox = null;
   let oz = null;
+  let invalid = false;
   if (hand.piece?.terrain === 'intercept' && h) {
     ox = h[0];
     oz = h[1];
+    invalid = placement.result && !placement.result.ok;
   } else if (!hand.piece && h) {
     const cell = grid.get(h[0], h[1]);
     if (cell?.terrain === 'intercept') {
@@ -1488,14 +1490,14 @@ function updateInterceptCover(time) {
       oz = cell.z;
     }
   }
-  const k = ox == null ? '' : `${ox},${oz},${INTERCEPT.range}`;
+  const k = ox == null ? '' : `${ox},${oz},${INTERCEPT.range},${invalid ? 'bad' : 'ok'}`;
   if (k !== interceptCoverKey) {
     interceptCoverKey = k;
     for (const g of interceptCoverGlows) g.dispose();
     interceptCoverGlows = [];
     if (ox != null) {
       for (const [x, z] of hexesAround(ox, oz, INTERCEPT.range)) {
-        const glow = createGlow(INTERCEPT_GLOW, 'intercept cover');
+        const glow = createGlow(invalid ? 0xff4a4a : INTERCEPT_GLOW, 'intercept cover');
         glow.setLevel(1);
         const w = hexToWorld(x, z);
         glow.group.position.set(w.x, LIFT, w.z);
@@ -5494,7 +5496,7 @@ function frame(now) {
   neonTiles.update(dt, time);
   // Outlines where the card being placed (or hovered) would be boosted.
   const placing = hand.piece;
-  boostHints.update(dt, time, grid, (placing ?? hand.hoveredPiece)?.terrain ?? null, Boolean(placing), placing && !rig.isDragging ? hoveredCell() : null);
+  boostHints.update(dt, time, grid, (placing ?? hand.hoveredPiece)?.terrain ?? null, Boolean(placing), placing && !rig.isDragging ? hoveredCell() : null, placing && placement.result && !placement.result.ok);
   perf.end('ships');
   perf.begin('frontier+mysteries');
   frontier.update(dt, time);
