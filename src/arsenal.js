@@ -3,7 +3,7 @@ import { MISSILE } from './missiles.js';
 
 /** Oil a Military Factory spends each season it works. */
 export const FACTORY_OIL = 3;
-/** Oil Work Overtime spends to add one season of progress. */
+/** Rush Order used to spend oil on play; it is free to play now (shop price is 2 barrels). */
 export const OVERTIME_OIL = 2;
 /** Oil an Intercept Network spends to stop one incoming hit. */
 /**

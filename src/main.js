@@ -28,7 +28,7 @@ import { Mysteries } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
 import { computeEconomy, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS } from './economy.js';
-import { FACTORY_OIL, OVERTIME_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, blastExtra } from './arsenal.js';
+import { FACTORY_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, blastExtra } from './arsenal.js';
 import { pieceOf } from './pieces.js';
 import { findCiws } from './interceptMesh.js';
 import { queueDrawn, addMissile, missileCount, missileKinds, trimMissiles, resetMissiles, openCityStrike, drawStrikeHand, returnStrikeHand, bindCityStrikeUi, queueStrike, unqueueStrike, queuedStrikes, takeQueue, clearQueue } from './cityStrike.js';
@@ -1481,7 +1481,7 @@ function updateInterceptCover(time) {
   if (hand.piece?.terrain === 'intercept' && h) {
     ox = h[0];
     oz = h[1];
-  } else if (h) {
+  } else if (!hand.piece && h) {
     const cell = grid.get(h[0], h[1]);
     if (cell?.terrain === 'intercept') {
       ox = cell.x;
@@ -3816,12 +3816,7 @@ function tryPlace() {
     return;
   }
   if (ACTIONS[piece.terrain]) {
-    if (piece.terrain === 'overtime' && turn.stockpile < OVERTIME_OIL) {
-      placement.reject();
-      buzz();
-      toast(L(`Need ${OVERTIME_OIL} oil to work overtime`, `熬夜加班需要 ${OVERTIME_OIL} 石油`), 'bad', 1600);
-      return;
-    }
+
     const played = piece.terrain;
     const fromHand = isPlayerMissile(played) ? worldFromHandCard() : null;
     hand.consume();
@@ -4109,17 +4104,15 @@ async function firePlayerMissile(cells, fromHand = null) {
 
 function workOvertime(x, z) {
   const cell = grid.get(x, z);
-  turn.stockpile -= OVERTIME_OIL;
   const need = yearLength();
   const idle = idleKeySet();
   if ((cell.missileProgress ?? 0) < need) cell.missileProgress = (cell.missileProgress ?? 0) + 1;
   if (cell.missileProgress >= need) {
     const y = deliverFactory(cell, idle);
-    if (!y.stuck) toast(L(y.count > 1 ? 'Overtime finished missiles' : 'Overtime finished a missile', '加班赶出了导弹'), 'good');
+    if (!y.stuck) toast(L(y.count > 1 ? 'Rush order finished missiles' : 'Rush order finished a missile', '赶工令造出了导弹'), 'good');
   } else {
     toast(L(`Factory progress ${cell.missileProgress} / ${need}`, `工厂进度 ${cell.missileProgress} / ${need}`), 'good');
   }
-  showOil(turn.stockpile, true);
   updateHUD();
 }
 

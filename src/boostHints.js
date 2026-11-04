@@ -23,6 +23,10 @@ const HINTS = {
   warhead: { near: ['milfactory'], colour: NEON.milfactory },
 };
 /** Booster card -> the colour of the buildings it boosts, for its area around the pointer while placing it. */
+/** Action card -> glow every tile of this terrain (where the card is played). */
+const TARGETS = {
+  overtime: { terrain: 'milfactory', colour: NEON.milfactory },
+};
 const AREA = {
   pump: NEON.farm,
   oasis: NEON.farm,
@@ -51,10 +55,11 @@ export class BoostHints {
    */
   update(dt, time, grid, terrain, placing, cursor = null) {
     const hint = HINTS[terrain];
-    const key = hint ? `${terrain}|${grid.cells.size}|${this.#boardStamp(grid)}` : '';
+    const target = TARGETS[terrain];
+    const key = hint || target ? `${terrain}|${grid.cells.size}|${this.#boardStamp(grid)}` : '';
     if (key !== this.#key) {
       this.#key = key;
-      this.#retarget(grid, hint);
+      this.#retarget(grid, hint, target);
     }
     const strength = placing ? PLACING : HOVER;
     const k = Math.min(1, dt * FADE);
@@ -107,9 +112,13 @@ export class BoostHints {
   }
 
   /** Glows for the spots of this card (new ones fade in), the others fade out. */
-  #retarget(grid, hint) {
+  #retarget(grid, hint, target) {
     const spots = new Set();
-    if (hint) {
+    if (target) {
+      for (const cell of grid.cells.values()) {
+        if (cell.terrain === target.terrain) spots.add(`${cell.x},${cell.z}|${target.colour}`);
+      }
+    } else if (hint) {
       for (const cell of grid.cells.values()) {
         if (!hint.near.includes(cell.terrain) || cell.mesh?.userData.idle) continue; // an idle booster boosts nothing
         for (const [dx, dz] of DIRS) {
@@ -123,7 +132,7 @@ export class BoostHints {
     for (const spot of spots) {
       if (this.#glows.has(spot)) continue;
       const [x, z] = spot.split('|')[0].split(',').map(Number);
-      const glow = createGlow(hint.colour, 'boost hint');
+      const glow = createGlow((target || hint).colour, 'boost hint');
       glow.setLevel(1);
       const w = hexToWorld(x, z);
       glow.group.position.set(w.x, LIFT, w.z);

@@ -208,7 +208,7 @@ function badgeHTML(key) {
   if (workers) return `<div class="badge">-${workers}${ICONS.manpower}</div>`;
   if (food) return `<div class="badge">-${food}${ICONS.food}</div>`;
   if (oil) return `<div class="badge">-${oil}${ICONS.oil}</div>`;
-  if (key === 'overtime') return `<div class="badge">-2${ICONS.oil}</div>`;
+
   return `<div class="badge free">0${ICONS.manpower}</div>`;
 }
 
