@@ -441,7 +441,7 @@ const WASTELAND_ZH = { name: '荒地', rule: '7 格荒地群（一格及其周�
 /** Chinese name and rule for each card; a function rule reads the live SCALE values like the English getter. */
 const ZH = {
   capital: { name: '首都', rule: '+4 人力 · 相邻建筑触发两次' },
-  settlement: { name: '定居点', rule: '+2 人力' },
+  settlement: { name: '定居点', rule: '+2 人力', trigger: '被动（不能重复结算）' },
   farm: { name: '水培农场', rule: '+2 食物' },
   pump: { name: '水泵站', rule: '相邻农场 +2 食物' },
   station: { name: '采油站', rule: '+2 石油' },
@@ -480,7 +480,7 @@ const ZH = {
 
 // name, trigger and rule become getters that answer in the current language (the English stays above).
 for (const [key, def] of Object.entries({ ...TERRAINS, ...ACTIONS })) {
-  const zh = { ...ZH[key], trigger: TRIGGER_ZH[def.trigger] };
+  const zh = { trigger: TRIGGER_ZH[def.trigger], ...ZH[key] };
   for (const field of ['name', 'trigger', 'rule']) {
     const d = Object.getOwnPropertyDescriptor(def, field);
     if (!d) continue;

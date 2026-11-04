@@ -1946,15 +1946,146 @@ for (const row of document.querySelectorAll('#panel .res[data-tip]')) {
 
 // ---------- hovered tile info ----------
 let inspected = null; // cell object currently shown
+let inspectKey = '';
+
+const AMOUNT_WORD = { food: ['food', '食物'], oil: ['oil', '石油'], manpower: ['manpower', '人力'] };
+const GRANT_NAME = { farm: ['Hydro-farm', '水培农场'], station: ['Oil Station', '采油站'] };
+/** "+8 food" / "+8 食物", already split for L(). */
+function amountWords(n, res) {
+  const sign = n > 0 ? '+' : '';
+  const [en, zh] = AMOUNT_WORD[res];
+  return { en: `${sign}${n} ${en}`, zh: `${sign}${n} ${zh}` };
+}
+function effectText(mod) {
+  switch (mod.id) {
+    case 'pump':
+      return { en: 'Water Pump +2 food', zh: '水泵站 +2 食物' };
+    case 'oasis':
+      return { en: 'Oasis +3 food', zh: '绿洲 +3 食物' };
+    case 'tarpit':
+      return { en: 'Tar Pit +2 oil', zh: '焦油坑 +2 石油' };
+    case 'twice':
+      return { en: 'Capital: trigger +1', zh: '首都：触发+1' };
+    case 'drought':
+      return { en: 'Drought: Water Pumps and Oases give nothing', zh: '干旱：水泵站和绿洲没有产出' };
+    case 'missilelab':
+      return { en: 'Missile Recipe Lab +1 Missile', zh: '导弹配方改良所 +1 导弹' };
+    case 'labour':
+      return { en: 'Settlement +2 manpower', zh: '定居点 +2 人力' };
+    case 'labourFull':
+      return { en: 'All 6 sides Settlements +4 manpower', zh: '六面皆为定居点 +4 人力' };
+    case 'crater':
+      return { en: `${mod.n} adjacent Farms or Settlements`, zh: `相邻农场或定居点 ×${mod.n}` };
+    case 'event': {
+      const pct = `${mod.pct > 0 ? '+' : ''}${Math.round(mod.pct * 100)}%`;
+      const [en, zh] = AMOUNT_WORD[mod.res];
+      return { en: `Year event ${pct} ${en}`, zh: `年事件 ${pct} ${zh}` };
+    }
+    case 'hunger':
+      return { en: `Hunger ×${Math.round(mod.fed * 100)}%`, zh: `饥饿 ×${Math.round(mod.fed * 100)}%` };
+    case 'station':
+      return { en: `Oil Station +${mod.oil} oil`, zh: `采油站 +${mod.oil} 石油` };
+    default:
+      return null;
+  }
+}
+function grantText(g) {
+  const names = GRANT_NAME[g.terrain];
+  if (!names) return null;
+  const res = g.food ? 'food' : g.oil ? 'oil' : null;
+  if (!res) return null;
+  const a = amountWords(g[res], res);
+  return { en: `${names[0]} ${a.en}`, zh: `${names[1]} ${a.zh}` };
+}
+/** Final line: what this placed tile yields or spends if Next turn settled right now. */
+function seasonText(per) {
+  const t = per.terrain;
+  if (per.idle && (t === 'farm' || t === 'station' || t === 'refinery')) return { en: 'This season: idle', zh: '本季结算：闲置' };
+  if (t === 'pump' || t === 'oasis' || t === 'tarpit') {
+    const res = t === 'tarpit' ? 'oil' : 'food';
+    const n = (per.grants ?? []).reduce((s, g) => s + (g[res] || 0), 0);
+    const a = amountWords(n, res);
+    return { en: `Adds ${a.en} this season`, zh: `本季加成 ${a.zh}` };
+  }
+  const parts = [];
+  if (per.outFood > 0) parts.push(amountWords(per.outFood, 'food'));
+  if (per.food < 0) parts.push(amountWords(per.food, 'food'));
+  if (per.outOil > 0) parts.push(amountWords(per.outOil, 'oil'));
+  if (per.oil < 0) parts.push(amountWords(per.oil, 'oil'));
+  if (per.outManpower) parts.push(amountWords(per.outManpower, 'manpower'));
+  if (t === 'labourcamp' && !per.outManpower) parts.push(amountWords(0, 'manpower'));
+  if ((t === 'farm' || t === 'station' || t === 'refinery') && !parts.length) parts.push(amountWords(0, t === 'farm' ? 'food' : 'oil'));
+  if (!parts.length) return null;
+  return { en: `This season ${parts.map((p) => p.en).join(', ')}`, zh: `本季结算 ${parts.map((p) => p.zh).join('，')}` };
+}
+/** Neighbour effects under the card's own rule, then this season's settled yield. Empty when nothing changes by place. */
+function placedCardExtra(per) {
+  if (!per) return '';
+  const rows = [];
+  for (const mod of per.mods ?? []) {
+    const text = effectText(mod);
+    if (text) rows.push(`<div class="fx">${iconize(L(text.en, text.zh))}</div>`);
+  }
+  for (const g of per.grants ?? []) {
+    const text = grantText(g);
+    if (text) rows.push(`<div class="fx">${iconize(L(text.en, text.zh))}</div>`);
+  }
+  const total = seasonText(per);
+  if (total) rows.push(`<div class="total">${iconize(L(total.en, total.zh))}</div>`);
+  return rows.join('');
+}
+function inspectKeyOf(c, per) {
+  const mods = (per?.mods ?? []).map((m) => `${m.id}:${m.oil ?? ''}:${m.n ?? ''}:${m.pct ?? ''}:${m.fed ?? ''}`).join(',');
+  const grants = (per?.grants ?? []).map((g) => `${g.terrain}:${g.food ?? 0}:${g.oil ?? 0}`).join(',');
+  return `${c.x},${c.z},${c.terrain},${isZh() ? 1 : 0},${c.onRuins ? 1 : 0},${c.missileProgress ?? ''}|${mods}|${grants}|${per?.outFood}|${per?.outOil}|${per?.outManpower}|${per?.food}|${per?.oil}|${per?.idle ? 1 : 0}`;
+}
+/** Shrink the rules until they sit under the picture. The name keeps its size unless it overflows the header. */
+function fitInspectCard(root) {
+  const card = root.querySelector('.card-big');
+  const copy = root.querySelector('.copy');
+  const rule = root.querySelector('.rule');
+  const name = root.querySelector('.name');
+  if (!card || !copy || !rule) return;
+  const w = card.getBoundingClientRect().width;
+  if (w < 8 || copy.clientHeight < 8) return;
+  const apply = (s) => {
+    rule.style.fontSize = `${w * 0.064 * s}px`;
+  };
+  let scale = 1;
+  apply(scale);
+  const overflows = () => copy.scrollHeight > copy.clientHeight + 1 || rule.scrollWidth > rule.clientWidth + 1;
+  while (overflows() && scale > 0.46) {
+    scale *= 0.92;
+    apply(scale);
+  }
+  if (!name) return;
+  name.style.fontSize = '';
+  let ns = 1;
+  const nameOverflow = () => name.scrollHeight > name.clientHeight + 1 || name.scrollWidth > name.clientWidth + 1;
+  while (nameOverflow() && ns > 0.55) {
+    ns *= 0.92;
+    name.style.fontSize = `${w * 0.088 * ns}px`;
+  }
+}
+new ResizeObserver(() => {
+  const el = $('inspect');
+  if (!el.classList.contains('hidden')) fitInspectCard(el);
+}).observe($('inspect'));
+
 function updateInspect(cell) {
   const c = cell ? grid.get(cell[0], cell[1]) : null;
-  if (c === inspected && c?.terrain === inspected?.terrain) return;
-  inspected = c;
   const el = $('inspect');
   if (!c) {
+    inspectKey = '';
+    inspected = null;
     el.classList.add('hidden');
     return;
   }
+  const per = economyNow().perCell.find((p) => p.x === c.x && p.z === c.z);
+  const key = inspectKeyOf(c, per);
+  if (key === inspectKey) return;
+  inspectKey = key;
+  inspected = c;
   const t = TERRAINS[c.terrain];
   el.style.setProperty('--top', hex(t.top));
   el.style.setProperty('--edge', hex(t.edge));
@@ -1966,8 +2097,7 @@ function updateInspect(cell) {
         `建在${TERRAINS.ruins.name}上：+${c.terrain === 'settlement' ? 2 : 1} 人力`,
       ),
     );
-  if (economyNow().perCell.find((p) => p.x === c.x && p.z === c.z)?.idle)
-    notes.push(L('Idle: no free workers. Build housing to staff it.', '闲置：没有空闲人力。建造住房来为它配备人手。'));
+  if (per?.idle) notes.push(L('Idle: no free workers. Build housing to staff it.', '闲置：没有空闲人力。建造住房来为它配备人手。'));
   if (c.terrain === 'raider')
     notes.push(
       L(
@@ -1993,17 +2123,18 @@ function updateInspect(cell) {
     notes.push(L(`Silo ${missileHandCount()} / ${cap}`, `弹库 ${missileHandCount()} / ${cap}`));
   }
   if (t.buildable) notes.push(L('A building can be placed on top of this tile', '可以在这个地块上放置建筑'));
-  const KINDS = { building: L('building', '建筑'), land: L('land', '地形'), junk: L('junk', '废料') };
   el.innerHTML = `
     <div class="card-slot"><div class="card-big">
+      <div class="name">${t.name}</div>
       <div class="art">${cardArtHTML(c.terrain)}</div>
       ${snapHTML(t)}
-      <div class="name">${t.name}</div>
-      <div class="rule">${cardText(t)}</div>
-      <div class="kind">${KINDS[t.category] ?? t.category}</div>
+      <div class="copy">
+        <div class="rule">${cardText(t)}${placedCardExtra(per)}</div>
+      </div>
     </div></div>
     ${notes.map((n) => `<div class="note">${n}</div>`).join('')}`;
   el.classList.remove('hidden');
+  fitInspectCard(el);
 }
 
 // ---------- turns ----------
@@ -2239,11 +2370,22 @@ async function backToHive() {
  * instead of once with the combined total. Upkeep is shown on the first trigger only.
  */
 function splitTriggers(p) {
-  if (p.triggers !== 2) return [p];
-  const half = (v) => Math.ceil(v / 2);
-  const first = { ...p, oil: half(p.oil), food: half(p.food) };
-  const second = { ...p, oil: p.oil - first.oil, food: p.food - first.food };
-  return [first, second];
+  const n = p.triggers ?? 1;
+  if (n < 2) return [p];
+  // Same split as before for two triggers: the first hop takes the odd remainder.
+  const share = (total) => {
+    const out = [];
+    let left = total || 0;
+    for (let i = 0; i < n; i++) {
+      const part = Math.ceil(left / (n - i));
+      out.push(part);
+      left -= part;
+    }
+    return out;
+  };
+  const oils = share(p.oil);
+  const foods = share(p.food);
+  return oils.map((oil, i) => ({ ...p, oil, food: foods[i] }));
 }
 
 /** Tiles that hop even without a number of their own (they boost their neighbours). */

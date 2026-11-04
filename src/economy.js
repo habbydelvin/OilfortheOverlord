@@ -6,6 +6,18 @@ import { FACTORY_OIL } from './arsenal.js';
 
 /** Workers each building needs to run. */
 export const WORKERS = { farm: 1, station: 1, refinery: 1, missilelab: 2, warhead: 2, magazine: 2 };
+/**
+ * Neighbouring Capitals that add an extra trigger on one building. 1 is the current rule: a second Capital
+ * beside it does nothing. Each Capital that applies adds one "trigger +1" line on the hover card, so raising
+ * this is enough for the card to list them. The card does not count Capitals on its own.
+ */
+export const CAPITALS_APPLIED = 1;
+
+/** How many adjacent Capitals actually fire, capped by CAPITALS_APPLIED. */
+function capitalsApplied(near) {
+  const beside = near.filter((t) => t === 'capital').length;
+  return Math.min(beside, CAPITALS_APPLIED);
+}
 
 /**
  * Calculates one season of the economy from the current grid.
@@ -63,11 +75,15 @@ export function computeEconomy(grid, state = {}) {
   // building's output, then turned into whole food / oil once the final numbers are known (see `shares` below).
   // A bonus doesn't stack, so a building next to two of the same booster credits only the first one found.
   const credits = []; // { from: building's perCell entry, to: booster cell key, res: 'food' | 'oil', amount (raw) }
+  // The same bonus, kept on the booster so a hovered pump/oasis/tar pit can list what it adds this season.
+  const grants = []; // { to: booster cell key, terrain: building it boosts, res, amount (raw, scaled later) }
   const credit = (from, booster, res, amount) => {
     for (const [dx, dz] of DIRS) {
       const n = grid.get(from.x + dx, from.z + dz);
       if (n?.terrain !== booster) continue;
-      credits.push({ from, to: `${n.x},${n.z}`, res, amount });
+      const to = `${n.x},${n.z}`;
+      credits.push({ from, to, res, amount });
+      grants.push({ to, terrain: from.terrain, res, amount });
       return;
     }
   };
@@ -131,7 +147,9 @@ export function computeEconomy(grid, state = {}) {
     const stats = TERRAINS[t].stats;
     const near = neighbours(cell.x, cell.z);
     counts[t] = (counts[t] ?? 0) + 1;
-    const per = { x: cell.x, z: cell.z, terrain: t, food: 0, oil: 0, rawFood: 0, rawCrude: 0 };
+    // mods: neighbour effects on this tile (inspect card). outFood / outOil: its own yield this season,
+    // after those effects, year events and hunger — not the payout's net-balance split.
+    const per = { x: cell.x, z: cell.z, terrain: t, food: 0, oil: 0, rawFood: 0, rawCrude: 0, mods: [], outFood: 0, outOil: 0 };
     perCell.push(per);
 
     if (stats.food < 0) {
@@ -149,31 +167,42 @@ export function computeEconomy(grid, state = {}) {
       const pump = near.includes('pump');
       const oasis = near.includes('oasis');
       const water = (pump ? 2 : 0) + (oasis ? 3 : 0);
-      const twice = near.includes('capital') ? 2 : 1;
-      if (mods.drought) droughtFood += water * twice;
+      const applied = capitalsApplied(near);
+      const times = 1 + applied;
+      if (mods.drought) droughtFood += water * times;
       else {
         if (pump) bonus.pumpFarms++;
         if (oasis) bonus.oasisFarms++;
-        if (pump) credit(per, 'pump', 'food', 2 * twice);
-        if (oasis) credit(per, 'oasis', 'food', 3 * twice);
+        if (pump) credit(per, 'pump', 'food', 2 * times);
+        if (oasis) credit(per, 'oasis', 'food', 3 * times);
       }
+      if (mods.drought && (pump || oasis)) per.mods.push({ id: 'drought' });
+      else {
+        if (pump) per.mods.push({ id: 'pump' });
+        if (oasis) per.mods.push({ id: 'oasis' });
+      }
+      for (let i = 0; i < applied; i++) per.mods.push({ id: 'twice' });
       per.rawFood = 2 + (mods.drought ? 0 : water);
-      // A Capital next door triggers the farm twice: double output (doesn't stack with more Capitals).
-      if (near.includes('capital')) {
-        bonus.capitalFood += per.rawFood;
-        per.rawFood *= 2;
-        per.triggers = 2;
+      // Each applied Capital adds one more trigger. CAPITALS_APPLIED is 1, so a second Capital adds nothing.
+      if (applied) {
+        bonus.capitalFood += per.rawFood * applied;
+        per.rawFood *= times;
+        per.triggers = times;
       }
       farmFood += per.rawFood;
     } else if (t === 'station') {
       const tarpit = near.includes('tarpit');
+      const applied = capitalsApplied(near);
+      const times = 1 + applied;
       if (tarpit) bonus.tarpitStations++;
-      if (tarpit) credit(per, 'tarpit', 'oil', 2 * (near.includes('capital') ? 2 : 1));
+      if (tarpit) credit(per, 'tarpit', 'oil', 2 * times);
+      if (tarpit) per.mods.push({ id: 'tarpit' });
+      for (let i = 0; i < applied; i++) per.mods.push({ id: 'twice' });
       per.rawCrude = 2 + (tarpit ? 2 : 0);
-      if (near.includes('capital')) {
-        bonus.capitalCrude += per.rawCrude;
-        per.rawCrude *= 2;
-        per.triggers = 2;
+      if (applied) {
+        bonus.capitalCrude += per.rawCrude * applied;
+        per.rawCrude *= times;
+        per.triggers = times;
       }
       crude += per.rawCrude;
     } else if (t === 'refinery') {
@@ -182,6 +211,21 @@ export function computeEconomy(grid, state = {}) {
       const victims = near.filter((n) => n === 'farm' || n === 'settlement').length;
       craterFood += victims;
       per.food -= victims;
+      if (victims) per.mods.push({ id: 'crater', n: victims });
+      per.outManpower = -victims;
+    } else if (t === 'milfactory') {
+      for (const [dx, dz] of DIRS) {
+        const n = grid.get(cell.x + dx, cell.z + dz);
+        if (n?.terrain === 'missilelab' && !isIdle(n.x, n.z)) {
+          per.mods.push({ id: 'missilelab' });
+          break; // one staffed lab is enough: a second one does not add another missile
+        }
+      }
+    } else if (t === 'labourcamp') {
+      const n = near.filter((x) => x === 'settlement').length;
+      if (n >= 6) per.mods.push({ id: 'labourFull' });
+      else if (n > 0) per.mods.push({ id: 'labour' });
+      per.outManpower = n >= 6 ? 4 : n > 0 ? 2 : 0;
     }
   }
 
@@ -194,9 +238,17 @@ export function computeEconomy(grid, state = {}) {
   // Year events: a share of all farm food / station crude, spread over the tiles in proportion.
   const eventFood = Math.max(-farmFood, farmFood > 0 ? scaled(farmFood, mods.farmPct) : 0);
   const eventCrude = Math.max(-crude, crude > 0 ? scaled(crude, mods.stationPct) : 0);
+  const foodScale = farmFood > 0 ? (farmFood + eventFood) / farmFood : 1;
+  const oilScale = crude > 0 ? (crude + eventCrude) / crude : 1;
   for (const per of perCell) {
-    if (eventFood && per.rawFood) per.rawFood *= (farmFood + eventFood) / farmFood;
-    if (eventCrude && per.rawCrude) per.rawCrude *= (crude + eventCrude) / crude;
+    if (eventFood && per.rawFood) {
+      per.rawFood *= foodScale;
+      per.mods.push({ id: 'event', pct: eventFood / farmFood, res: 'food' });
+    }
+    if (eventCrude && per.rawCrude) {
+      per.rawCrude *= oilScale;
+      per.mods.push({ id: 'event', pct: eventCrude / crude, res: 'oil' });
+    }
   }
   farmFood += eventFood;
   crude += eventCrude;
@@ -207,10 +259,12 @@ export function computeEconomy(grid, state = {}) {
   const crudeAt = new Map(perCell.filter((p) => p.terrain === 'station' && p.rawCrude).map((p) => [`${p.x},${p.z}`, p.rawCrude]));
   for (const per of refineries) {
     let fromStations = 0;
+    per.links = []; // each adjacent station's crude, so the card can list them
     for (const [dx, dz] of DIRS) {
       const c = crudeAt.get(`${per.x + dx},${per.z + dz}`);
       if (c) {
         fromStations += c;
+        per.links.push(c);
         refineryLinks++;
       }
     }
@@ -275,9 +329,45 @@ export function computeEconomy(grid, state = {}) {
   }
   for (const per of refineries) if (per.oil > 0) boosts.set(`${per.x},${per.z}`, per.oil);
 
+  // Own yield (whole numbers that add up): food grown, and oil after hunger, before tax and theft
+  // are spread across the city. The payout below still uses `food` / `oil` for the hop numbers.
+  shareOut(perCell, 'rawFood', 'outFood', Math.max(0, foodGrown));
+  shareOut(perCell, 'rawCrude', 'outOil', Math.round(Math.max(0, crude) * fed));
+  for (const per of refineries) {
+    if (!per.links?.length) continue;
+    for (const oil of apportion(per.links, per.outOil || 0)) {
+      if (oil > 0) per.mods.push({ id: 'station', oil });
+    }
+  }
+  if (fed < 0.999) {
+    for (const per of perCell) if (per.terrain === 'station' && per.rawCrude > 0) per.mods.push({ id: 'hunger', fed });
+  }
+  for (const g of grants) {
+    if (g.res === 'food') g.amount *= foodScale;
+    if (g.res === 'oil') g.amount *= oilScale * fed;
+  }
+  const grantsAt = new Map();
+  for (const g of grants) {
+    const list = grantsAt.get(g.to) ?? [];
+    list.push(g);
+    grantsAt.set(g.to, list);
+  }
+  for (const per of perCell) {
+    const list = grantsAt.get(`${per.x},${per.z}`);
+    if (!list) continue;
+    per.grants = list
+      .map((g) => ({
+        terrain: g.terrain,
+        food: g.res === 'food' ? Math.round(g.amount) : 0,
+        oil: g.res === 'oil' ? Math.round(g.amount) : 0,
+      }))
+      .filter((g) => g.food || g.oil);
+  }
+
   for (const per of perCell) {
     delete per.rawFood;
     delete per.rawCrude;
+    delete per.links;
   }
 
   return {
@@ -341,6 +431,22 @@ function splitOver(cells, drain, outKey, amount) {
   const sign = Math.sign(amount);
   const n = Math.abs(amount);
   items.forEach((c, i) => (c[outKey] += sign * (Math.floor(n / items.length) + (i < n % items.length ? 1 : 0))));
+}
+
+/** Whole parts of `total` in proportion to `weights`, summing to `total` (0 when there is nothing to split). */
+function apportion(weights, total) {
+  const sum = weights.reduce((s, w) => s + w, 0);
+  if (sum <= 0 || total <= 0) return weights.map(() => 0);
+  let given = 0;
+  const parts = weights.map((w) => {
+    const exact = (total * w) / sum;
+    const base = Math.floor(exact);
+    given += base;
+    return { base, rem: exact - base };
+  });
+  const order = parts.map((p, i) => i).sort((a, b) => parts[b].rem - parts[a].rem);
+  for (let n = 0; given < total; n++, given++) parts[order[n % order.length]].base++;
+  return parts.map((p) => p.base);
 }
 
 /**
