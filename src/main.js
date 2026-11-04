@@ -6,7 +6,7 @@ import './themeShine.js';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
-import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws } from './sfx.js';
+import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws, silo } from './sfx.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed, hexesAround } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
@@ -1355,8 +1355,6 @@ async function chargeOneFactory(cell) {
   const need = yearLength();
   const run = runId;
   if ((cell.missileProgress ?? 0) >= need) {
-    spawnMissileFloater(cell, factoryYield(grid, cell, idle).count);
-    await hopFactory(cell);
     if (run !== runId) return { count: 0 };
     return finishFactoryMissile(cell, idle);
   }
@@ -1370,7 +1368,6 @@ async function chargeOneFactory(cell) {
   if (run !== runId) return { count: 0 };
   thud();
   const completing = (cell.missileProgress ?? 0) + 1 >= need;
-  if (completing) spawnMissileFloater(cell, factoryYield(grid, cell, idle).count);
   await hopFactory(cell);
   if (run !== runId) return { count: 0 };
   factoryPaid.push(cell);
@@ -1381,16 +1378,61 @@ async function chargeOneFactory(cell) {
   return { count: 0 };
 }
 
-function finishFactoryMissile(cell, idle) {
-  const out = deliverFactory(cell, idle);
+async function finishFactoryMissile(cell, idle) {
+  const run = runId;
+  const y = factoryYield(grid, cell, idle);
+  const room = Math.max(0, currentMissileCap(idle) - missileCount());
+  const n = Math.min(y.count, room);
+  if (n <= 0) return { ...y, count: 0, stuck: true };
+  await playMissileMade(cell, n, y.kind);
+  if (run !== runId) return { count: 0 };
+  cell.missileProgress = 0;
+  const rec = factoryBars.get(`${cell.x},${cell.z}`);
+  if (rec) rec.preview = null;
   updateHUD();
-  const el = $('resMissile');
-  if (el && out.count) pop(el);
-  return out;
+  return { ...y, count: n };
 }
 
-function spawnMissileFloater(cell, n) {
-  spawnFactoryFloater(cell, `<div class="row" style="--c:#f0c060"><b>+${n}</b></div>`);
+function dockMissile(kind) {
+  if (!tryStoreMissile(kind)) return;
+  updateHUD();
+  const el = $('resMissile');
+  if (el) pop(el);
+  const row = el?.closest('.res');
+  if (row) {
+    row.classList.remove('made');
+    void row.offsetWidth;
+    row.classList.add('made');
+  }
+  latch();
+}
+
+/** The missile rises from the factory. Each rise banks one. */
+async function playMissileMade(cell, n, kind) {
+  const run = runId;
+  silo();
+  dust.burst(cell.x, cell.z, 0.7);
+  camShake.add(0.18);
+  if (view !== 'board') {
+    for (let i = 0; i < n; i++) {
+      if (run !== runId) return;
+      dockMissile(kind);
+      await wait(0.12);
+    }
+    return;
+  }
+  const w = hexToWorld(cell.x, cell.z);
+  await Promise.all(
+    Array.from({ length: n }, (_, i) =>
+      missiles.rollOut(w.x, w.z, {
+        delay: i * 0.18,
+        onArrive: () => {
+          if (run !== runId) return;
+          dockMissile(kind);
+        },
+      }),
+    ),
+  );
 }
 
 function spawnFactoryFloater(cell, html) {
@@ -1711,7 +1753,8 @@ function shadeIdle(e = economyNow()) {
   const need = yearLength();
   for (const cell of grid.cells.values()) {
     if (!cell.mesh) continue;
-    const blocked = cell.terrain === 'milfactory' && (cell.missileProgress ?? 0) >= need;
+    const blocked =
+      cell.terrain === 'milfactory' && (cell.missileProgress ?? 0) >= need && missileHandCount() >= currentMissileCap();
     setGrey(cell.mesh, idle.has(`${cell.x},${cell.z}`) || blocked);
   }
   neonTiles.refresh(grid); // boosted buildings' tiles glow (not idle ones)
@@ -3688,9 +3731,9 @@ window.addEventListener('contextmenu', (e) => hand.dragging && e.preventDefault(
 hand.onDrop = (x, y) => {
   if (!overBoard(x, y)) return;
   if (view === 'rival') {
-    // A missile card dragged onto a rival tile aims it there.
+    // A missile card dragged onto a rival tile: the rocket flies out of the card onto it.
     hand.onDragMove(x, y);
-    aimAtPointer();
+    dropMissileOnRival();
     return;
   } // dropped back on the hand or a panel: nothing placed, the card stays picked
   hand.onDragMove(x, y);
@@ -4104,13 +4147,13 @@ async function firePlayerMissile(cells, fromHand = null) {
   updateHUD();
 }
 
-function workOvertime(x, z) {
+async function workOvertime(x, z) {
   const cell = grid.get(x, z);
   const need = yearLength();
   const idle = idleKeySet();
   if ((cell.missileProgress ?? 0) < need) cell.missileProgress = (cell.missileProgress ?? 0) + 1;
   if (cell.missileProgress >= need) {
-    const y = deliverFactory(cell, idle);
+    const y = await finishFactoryMissile(cell, idle);
     if (!y.stuck) toast(L(y.count > 1 ? 'Rush order finished missiles' : 'Rush order finished a missile', '赶工令造出了导弹'), 'good');
   } else {
     toast(L(`Factory progress ${cell.missileProgress} / ${need}`, `工厂进度 ${cell.missileProgress} / ${need}`), 'good');
@@ -4256,6 +4299,13 @@ function updateAimBar() {
   const aimedCells = aimed.map((s) => s.cells ?? footprint(s.kind, s.at, s.size, rival.grid));
   rivalView.setMarkers(aimedCells, aimHover, aimAt);
   rivalView.setArcs(aimHover ? [aimHover] : [], rival ? homeBearing(rival) : null, aimedCells.flat(), aimAt);
+  const groups = new Map();
+  for (const q of aimed) {
+    const k = q.card ?? `${q.at[0]},${q.at[1]}`;
+    if (!groups.has(k)) groups.set(k, { key: k, cells: [], at: q.centre ?? q.at });
+    groups.get(k).cells.push(...(q.cells ?? footprint(q.kind, q.at, q.size, rival.grid)));
+  }
+  rivalView.setAimed([...groups.values()], rival ? homeBearing(rival) : null);
   globe?.setQueued(queuedStrikes().map((s) => ({ from: 'player', to: s.to })));
 }
 
@@ -4281,37 +4331,45 @@ function rivalCell() {
   return worldToHex(hit.x, hit.z);
 }
 
-/** Click on a rival tile: aim the selected missile card there, or take back a missile already aimed there. */
-function aimAtPointer() {
+/** Click an already-aimed tile to take that missile back. Aiming is drop-the-card only. */
+function takeBackAim() {
   const rival = rivalShown;
   const c = rivalCell();
   if (!rival || !c || view !== 'rival' || rival.alive === false) return;
-  const at = [c[0], c[1]];
-  const back = unqueueStrike(rival.id, at, !rivalHand);
-  if (back) {
-    if (rivalHand) {
-      hand.cards.push(pieceOf(back));
-      hand.render();
-    }
-    tick();
-  } else {
-    const piece = aimPiece();
-    if (!piece) return;
-    if (!rival.grid.has(at[0], at[1])) return toast(L('Aim at one of their tiles', '请瞄准对方的地块'), 'bad');
-    if (piece.terrain === 'salvo') aimSalvo(rival, at);
-    else {
-      const size = blastExtra(grid, idleKeySet());
-      const taken = new Set();
-      for (const s of queuedStrikes(rival.id)) {
-        for (const [x, z] of s.cells ?? footprint(s.kind, s.at, s.size, rival.grid)) taken.add(plotKey(x, z));
-      }
-      const cells = footprint(piece.terrain, at, size, rival.grid, taken);
-      queueDrawn(rival.id, at, piece.terrain, size, { vis: true, cells });
-      hand.consume();
-      playOutgoingRival(rival, cells, piece.terrain);
-    }
-    confirm();
+  const back = unqueueStrike(rival.id, [c[0], c[1]], !rivalHand);
+  if (!back) return;
+  if (rivalHand) {
+    hand.cards.push(pieceOf(back));
+    hand.render();
   }
+  tick();
+  updateAimBar();
+  updateHUD();
+}
+
+let aimCardSeq = 0;
+
+/** Drag a missile card onto a rival tile: lock the aim (red tiles + path). It fires after End Turn. */
+function dropMissileOnRival() {
+  const rival = rivalShown;
+  const c = rivalCell();
+  if (!rival || !c || view !== 'rival' || rival.alive === false) return;
+  const piece = aimPiece();
+  if (!piece) return;
+  const at = [c[0], c[1]];
+  if (!rival.grid.has(at[0], at[1])) return toast(L('Aim at one of their tiles', '请瞄准对方的地块'), 'bad');
+  if (piece.terrain === 'salvo') aimSalvo(rival, at);
+  else {
+    const size = blastExtra(grid, idleKeySet());
+    const taken = new Set();
+    for (const s of queuedStrikes(rival.id)) {
+      for (const [x, z] of s.cells ?? footprint(s.kind, s.at, s.size, rival.grid)) taken.add(plotKey(x, z));
+    }
+    const cells = footprint(piece.terrain, at, size, rival.grid, taken);
+    queueDrawn(rival.id, at, piece.terrain, size, { cells, card: `card${++aimCardSeq}`, centre: at });
+    hand.consume();
+  }
+  confirm();
   updateAimBar();
   updateHUD();
 }
@@ -4330,7 +4388,7 @@ $('btnRivalClear').addEventListener('click', (e) => {
   updateHUD();
 });
 
-// A click aims (a drag still turns the camera).
+// A click on an aimed tile takes that missile back (a drag still turns the camera). Aiming is a card drop.
 let aimDown = null;
 renderer.domElement.addEventListener('pointerdown', (e) => {
   aimDown = view === 'rival' && e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
@@ -4338,7 +4396,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
 renderer.domElement.addEventListener('pointerup', (e) => {
   if (!aimDown || e.button !== 0 || Math.hypot(e.clientX - aimDown.x, e.clientY - aimDown.y) > 6) return;
   aimDown = null;
-  aimAtPointer();
+  takeBackAim();
 });
 
 function missileAmmoInHand() {
@@ -4353,14 +4411,12 @@ function aimSalvo(rival, at) {
   if (!cells.length) return toast(L('Aim at one of their tiles', '请瞄准对方的地块'), 'bad');
   const size = blastExtra(grid, idleKeySet());
   const taken = new Set();
-  const vis = [];
+  const card = `card${++aimCardSeq}`;
   for (let i = 0; i < cells.length; i++) {
     const blast = footprint(ammo[i].terrain, cells[i], size, rival.grid, taken);
     for (const [x, z] of blast) taken.add(plotKey(x, z));
-    queueDrawn(rival.id, cells[i], ammo[i].terrain, size, { vis: true, cells: blast });
-    vis.push(...blast);
+    queueDrawn(rival.id, cells[i], ammo[i].terrain, size, { cells: blast, card, centre: at });
   }
-  playOutgoingRival(rival, vis, 'missile');
   const used = new Set(ammo.slice(0, cells.length));
   hand.cards = hand.cards.filter((p) => p.terrain !== 'salvo' && !used.has(p));
   hand.selected = -1;
@@ -4455,7 +4511,7 @@ function craterRival(r, rec) {
 }
 
 /** Dropping a card: missiles dive onto the aimed tiles right now (the attack phase still resolves them later). */
-function playOutgoingRival(r, cells, kind = 'missile') {
+function playOutgoingRival(r, cells, kind = 'missile', fromHand = null) {
   rivalMissiles ??= new MissileStrike(rivalView.scene, camera, missileCfg);
   const d = homeBearing(r);
   const targets = cells.map((at) => {
@@ -4475,7 +4531,7 @@ function playOutgoingRival(r, cells, kind = 'missile') {
       x: w.x,
       z: w.z,
       rec,
-      from: { x: w.x + d.x * 16, y: 9, z: w.z + d.z * 16 },
+      from: fromHand ?? { x: w.x + d.x * 16, y: 9, z: w.z + d.z * 16 },
       flight: 1.55,
       accel: 1.2,
     };
@@ -4493,7 +4549,7 @@ function playOutgoingRival(r, cells, kind = 'missile') {
 function playRivalStrike(r, rec, flight = missileCfg.followFlight) {
   rivalMissiles ??= new MissileStrike(rivalView.scene, camera, missileCfg);
   const w = hexToWorld(rec.at[0], rec.at[1]);
-  const t = { x: w.x, z: w.z, rec, shots: rec.shots, flight, fired: 0 };
+  const t = { x: w.x, z: w.z, rec, shots: rec.shots, flight, fired: 0, dir: homeBearing(r) };
   return rivalMissiles.fire([t], {
     onMove: (_pos, tt, u) => {
       while (tt.fired < tt.shots.length && u >= CIWS_START + CIWS_GAP * tt.fired) {

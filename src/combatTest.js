@@ -470,7 +470,7 @@ function craterRival(r, rec) {
 
 function playRival(r, rec) {
   const w = hexToWorld(rec.at[0], rec.at[1]);
-  const t = { x: w.x, z: w.z, rec, flight: missileCfg.followFlight, fired: 0 };
+  const t = { x: w.x, z: w.z, rec, flight: missileCfg.followFlight, fired: 0, dir: homeBearing(r) };
   return rivalMissiles.fire([t], {
     onMove: (pos, tt, u) => {
       // Their interceptors: a burst of flak that meets it (or misses) on the way down.

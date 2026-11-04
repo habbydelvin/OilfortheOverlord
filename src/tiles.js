@@ -388,7 +388,7 @@ export const ACTIONS = {
     range: 0,
     weight: 0, // produced by a Military Factory
     get rule() {
-      return `Destroy ${MISSILE.blast ?? 1} tile${(MISSILE.blast ?? 1) === 1 ? '' : 's'} · −${MISSILE.damage ?? 1} capital HP`;
+      return `Destroy 1 tile · +1 per Warhead Institute · −${MISSILE.damage ?? 1} capital HP`;
     },
   },
   missile2: {
@@ -471,7 +471,7 @@ const ZH = {
   warhead: { name: '弹头研究所', rule: '每座开工的研究所使导弹爆炸再多打相邻 1 格' },
   intercept: { name: '拦截网络', rule: '花费 3 石油，阻止相邻建筑被攻击一次' },
   magazine: { name: '储弹仓', rule: '导弹容量 +1' },
-  missile: { name: '导弹', rule: () => `摧毁 ${MISSILE.blast ?? 1} 格 · 首都 −${MISSILE.damage ?? 1}` },
+  missile: { name: '导弹', rule: () => `摧毁 1 格 · 弹头研究所每座 +1 格 · 首都 −${MISSILE.damage ?? 1}` },
   salvo: { name: '齐射', rule: '拖到一格上：手中每枚导弹从该处铺开瞄准' },
   missile2: { name: '导弹', rule: () => `摧毁 2×2 · 首都 −${MISSILE.damage ?? 1}` },
   overtime: { name: '赶工令', rule: '一座军事工厂生产进度 +1 季' },

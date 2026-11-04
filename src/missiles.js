@@ -77,7 +77,7 @@ export const MISSILE = {
 export const MISSILE_PARAMS = [
   { group: 'Missiles · strike' },
   { key: 'damage', label: 'Damage to capital (HP)', min: 1, max: 5, step: 1, hint: 'HP taken from a Capital' },
-  { key: 'blast', label: 'Blast tiles', min: 1, max: 7, step: 1, hint: '1 = the aimed tile; +1 adds one neighbour, not a full ring' },
+  { key: 'blast', label: 'Blast tiles (combat-test)', min: 1, max: 7, step: 1, hint: 'combat-test.html only; the main game is 1 tile +1 per Warhead Institute' },
   { key: 'count1', label: '1st miss: missiles', min: 1, max: 12, step: 1 },
   { key: 'count2', label: '2nd miss: missiles', min: 1, max: 12, step: 1 },
   { key: 'count3', label: '3rd miss: missiles', min: 1, max: 12, step: 1, hint: 'one always hits the Capital' },
@@ -658,6 +658,131 @@ export class MissileStrike {
     };
   }
 
+  #rollouts = [];
+
+  /**
+   * A finished missile stands up from world (x, z), lights the engine, then launches straight up out of view.
+   */
+  rollOut(x, z, { delay = 0, onArrive } = {}) {
+    return new Promise((resolve) => {
+      const s = this.cfg.missileScale * 1.7;
+      const mesh = this.template.clone();
+      mesh.scale.setScalar(s);
+      const glow = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: this.glow, color: this.cfg.exhaustColor, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false }),
+      );
+      glow.position.y = -0.45;
+      glow.scale.setScalar(0.08);
+      glow.visible = false;
+      glow.renderOrder = 10;
+      mesh.add(glow);
+      mesh.position.set(x, 0.15, z);
+      mesh.visible = false;
+      this.group.add(mesh);
+      this.#rollouts.push({ mesh, glow, x, z, s, stand: 1.15, onArrive, age: -delay, lit: false, arrived: false, done: resolve });
+    });
+  }
+
+  #updateRollouts(dt) {
+    const RISE = 0.45;
+    const BURN = 0.28;
+    const FLY = 1.25;
+    const HEIGHT = 22;
+    const c = this.cfg;
+    for (let i = this.#rollouts.length - 1; i >= 0; i--) {
+      const r = this.#rollouts[i];
+      r.age += dt;
+      if (r.age < 0) continue;
+      r.mesh.visible = true;
+      r.mesh.scale.setScalar(r.s);
+      if (r.age < RISE) {
+        const t = r.age / RISE;
+        const e = 1 - (1 - t) ** 3;
+        r.mesh.position.set(r.x, 0.15 + (r.stand - 0.15) * e, r.z);
+        r.mesh.rotation.set(0, t * 0.5, 0);
+        if (Math.random() < 0.5) {
+          this.smoke.spawn({
+            pos: new THREE.Vector3(r.x + rand(-0.14, 0.14), 0.06, r.z + rand(-0.14, 0.14)),
+            vel: new THREE.Vector3(rand(-0.3, 0.3), rand(0.4, 1.1), rand(-0.3, 0.3)),
+            drag: 1.6,
+            lift: 0.35,
+            size0: 0.12,
+            size1: rand(0.4, 0.7),
+            life: rand(0.45, 0.8),
+            color0: '#efe4d0',
+            color1: '#8a7a64',
+            opacity: 0.5,
+            fadeIn: 0.04,
+            fadeStart: 0.2,
+          });
+        }
+        continue;
+      }
+      if (!r.lit) {
+        r.lit = true;
+        r.glow.visible = true;
+        this.#lightLevel = Math.max(this.#lightLevel, 0.45);
+        this.light.position.set(r.x, r.stand, r.z);
+      }
+      if (r.age < RISE + BURN) {
+        r.mesh.position.set(r.x, r.stand + rand(-0.02, 0.02), r.z);
+        r.glow.scale.setScalar((0.4 + Math.random() * 0.15) * c.exhaustSize);
+        this.flames.spawn({
+          pos: new THREE.Vector3(r.x + rand(-0.04, 0.04), r.stand - 0.45 * r.s, r.z + rand(-0.04, 0.04)),
+          vel: new THREE.Vector3(rand(-0.3, 0.3), rand(-1.8, -0.5), rand(-0.3, 0.3)),
+          size0: 0.28 * r.s,
+          size1: 0.04,
+          life: 0.16,
+          color0: c.exhaustColor,
+          color1: '#ff4010',
+          opacity: 0.95,
+          fadeIn: 0.01,
+        });
+        continue;
+      }
+      const u = Math.min(1, (r.age - RISE - BURN) / FLY);
+      const y = r.stand + HEIGHT * u * u;
+      r.mesh.position.set(r.x, y, r.z);
+      r.mesh.rotation.set(0, 0, 0);
+      r.glow.scale.setScalar((0.45 + Math.random() * 0.18) * c.exhaustSize);
+      this.#tail.set(r.x, y - 0.5 * r.s, r.z);
+      this.smoke.spawn({
+        pos: this.#tail.clone(),
+        vel: new THREE.Vector3(rand(-0.3, 0.3), rand(-0.4, 0.1), rand(-0.3, 0.3)),
+        drag: 1.4,
+        lift: 0.2,
+        size0: c.trailStartSize,
+        size1: c.trailSize * rand(0.8, 1.2),
+        life: c.trailLife * 0.85,
+        color0: '#fff1d0',
+        color1: c.trailColor,
+        colorTime: 0.12,
+        opacity: 0.7,
+        fadeIn: 0.03,
+        fadeStart: 0.1,
+      });
+      this.flames.spawn({
+        pos: this.#tail.clone(),
+        size0: 0.38 * r.s * c.exhaustSize,
+        size1: 0.08 * r.s * c.exhaustSize,
+        life: 0.14,
+        color0: c.exhaustColor,
+        color1: '#ff4010',
+        opacity: 0.95,
+        fadeIn: 0.01,
+      });
+      if (u > 0.18 && !r.arrived) {
+        r.arrived = true;
+        r.onArrive?.();
+      }
+      if (u < 1) continue;
+      this.group.remove(r.mesh);
+      r.glow.material.dispose();
+      this.#rollouts.splice(i, 1);
+      r.done();
+    }
+  }
+
   #updateUpright(dt) {
     for (const u of this.#upright) {
       u.age += dt;
@@ -690,7 +815,7 @@ export class MissileStrike {
 
   /** True while missiles are flying or clouds are still up. */
   get busy() {
-    return this.#missiles.length > 0 || this.#blasts.length > 0 || this.#timers.length > 0 || this.#guns.length > 0 || this.#rounds.length > 0;
+    return this.#missiles.length > 0 || this.#blasts.length > 0 || this.#timers.length > 0 || this.#guns.length > 0 || this.#rounds.length > 0 || this.#rollouts.length > 0;
   }
 
   // ---------- interception (attack phase): CIWS turrets shoot incoming missiles down ----------
@@ -925,6 +1050,15 @@ export class MissileStrike {
       m.p2 = end;
       return;
     }
+    // Player missile on a rival city: same bezier as the aiming dashed line (homeBearing, rivalView.arcPoints).
+    if (m.target.dir) {
+      const d = m.target.dir;
+      const end = new THREE.Vector3(m.target.x, 0, m.target.z);
+      m.p0 = new THREE.Vector3(end.x + d.x * 22, 9, end.z + d.z * 22);
+      m.p2 = end;
+      m.p1 = m.p0.clone().lerp(m.p2, 0.55).addScaledVector(UP, 6);
+      return;
+    }
     const b = THREE.MathUtils.degToRad(c.bearing);
     const dir = new THREE.Vector3(Math.sin(b), 0, -Math.cos(b));
     const side = new THREE.Vector3(-dir.z, 0, dir.x);
@@ -996,6 +1130,7 @@ export class MissileStrike {
     }
 
     this.#updateUpright(dt);
+    this.#updateRollouts(dt);
     this.#updateGuns(dt);
     this.#updateRounds(dt);
 
@@ -1237,6 +1372,12 @@ export class MissileStrike {
     this.#missiles.length = 0;
     for (const u of this.#upright) this.group.remove(u.mesh);
     this.#upright.length = 0;
+    for (const r of this.#rollouts) {
+      this.group.remove(r.mesh);
+      r.glow?.material.dispose();
+      r.done();
+    }
+    this.#rollouts.length = 0;
     for (const g of this.#guns) g.gun?.end?.();
     this.#guns.length = 0;
     this.#rounds.length = 0;

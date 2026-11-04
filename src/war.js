@@ -9,7 +9,7 @@ import { MISSILE } from './missiles.js';
  * for the board (main.js applies the player's craters with its own cinematic).
  *
  * Rules, the same for every city:
- *  - Blast is the aimed tile plus `size` extra neighbouring tiles (debug blast + Warhead Institutes).
+ *  - Blast is the aimed tile plus `size` extra neighbouring tiles (`size` = staffed Warhead Institutes).
  *  - Each Intercept Network within INTERCEPT.range (default 1, adjacent) of the footprint gets one shot per attack phase: INTERCEPT_OIL from the
  *    defender's stockpile, INTERCEPT_CHANCE to stop the whole strike. A miss lets the next unused network try.
  *  - A hit turns the tiles into Toxic Craters. A hit on the Capital costs it HP (1, or 2 for a warhead) instead;
@@ -22,7 +22,7 @@ export const GRACE_ROUNDS = 1;
 
 export function footprint(kind, [x, z], size, grid, taken) {
   const extra = size ?? (kind === 'missile2' ? 1 : 0);
-  const n = Math.max(1, 1 + extra);
+  const n = 1 + Math.max(0, extra);
   const around = hexesAround(x, z, 5);
   if (!grid || n <= 1) return around.slice(0, n);
   const origin = around[0];
