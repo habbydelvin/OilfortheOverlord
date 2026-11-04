@@ -9,13 +9,14 @@ import { NEON } from './neonGlow.js';
  * The tutorial, without any text. On a first game, Year 1's first Spring is guided once the Overlord's opening scene
  * is over: a spotlight on the tribute, then a ghost hand drags each card of the opening hand onto the board (the
  * Farm and the Station onto the glowing cells next to the Capital, where "×2" pops), short spotlights show workers
- * and food, the Wasteland is laid as a path to the nearest "?" site (which uncovers it). Then a mouse wheel asks you to
- * zoom out past the limit until the War Map's planet opens (a gold ring sweeps over it), the hand taps a rival city to
- * visit it, then "◀ War Map" and Hive City to come home. Then the strike: a free missile lights up the Missiles row, a
- * K key opens the air strike, the hand drags the missile card onto a decoy enemy outpost, and K closes it again.
- * Finally the hand taps Next turn. From then on the game is free, and a few things get a one-time wordless hint the
- * first time they come up (HINTS): rotating a piece, "?" sites, food running out, rerolling, Next turn, and zooming
- * out to the planet (for whoever skipped the guided Spring).
+ * and food, the Wasteland is laid as a path to the nearest "?" site (which uncovers it). Then a free missile lands in
+ * the silo (the Missiles row lights up), a mouse wheel asks you to zoom out past the limit until the War Map's planet
+ * opens (a gold ring sweeps over it), and the hand taps a rival city to visit it. There the hand holds the missile
+ * card: it drags it onto one of their buildings to aim it (it flies after Next turn). Then "◀ War Map" and "Return to
+ * Hive" bring you home, and the hand taps Next turn: the aimed missile flies in the attack phase. From then on the
+ * game is free, and a few things get a one-time wordless hint the first time they come up (HINTS): rotating a piece,
+ * "?" sites, food running out, rerolling, zooming out to the planet (for whoever skipped the guided Spring), missiles
+ * waiting in the silo, aiming missile cards and the Salvo card in a rival city, the Black Market, and Next turn.
  *
  * main.js owns the game; it calls allows() before every player action, notify() when something happens,
  * and update() every frame. The tutorial calls back into main.js only through the `api` object.
@@ -36,16 +37,16 @@ const BOOST = { farm: css(NEON.farm), station: css(NEON.station) };
 /**
  * The guided Spring. Each step:
  *   wait     what moves it on: place, endTurn, time (a spotlight that moves on by itself after `ms`), end; on the
- *            trip to the planet: zoom (the War Map opened), rival (a rival city visited), map (back on the War Map),
- *            home (back on the board); and the strike: strikeOpen / strikeClose (K opened / closed the air strike)
+ *            trip to the planet: zoom (the War Map opened), rival (a rival city visited), aim (a missile card aimed at
+ *            one of its tiles), map (back on the War Map), home (back on the board)
  *   away     part of the trip: the War Map may open, and coming home early skips the rest of it
  *   enter    (api, tutorial) => void, run when the step starts
  *   target   spotlight: CSS selector(s) for the HUD, 'capital' (the free cells next to the Capital glow) or 'site'
  *            (the nearest "?" site; the step is skipped when there's none to lead to)
  *   dim      darken everything but the target; alarm: (api) => true makes the spotlight pulse red
  *   terrain  place steps: the card to play ('wasteland' matches any Wasteland)
- *   cells    place steps: 'decoy' (the strike lesson's target), 'capital' (only the free cells next to the Capital), 'site' (the Wasteland card laid
- *            toward the "?" site: touching it if it can reach, otherwise as close as it gets), or none (anywhere)
+ *   cells    place steps: 'capital' (only the free cells next to the Capital), 'site' (the Wasteland card laid toward
+ *            the "?" site: touching it if it can reach, otherwise as close as it gets), or none (anywhere)
  *   pop      place steps: a badge that pops over the tile once placed ({ text, colour })
  */
 const STEPS = [
@@ -59,19 +60,20 @@ const STEPS = [
   { wait: 'time', ms: 3400, target: 'site' }, // longer: the camera pans over to it first
   { wait: 'place', terrain: 'wasteland', cells: 'site' },
   { wait: 'place', terrain: 'wasteland', cells: 'site' },
+  // A free missile for the trip: it lands in the silo as the Missiles row lights up.
+  { wait: 'time', ms: 2200, dim: true, target: '#panel .res.missile', enter: (api) => api.giveMissile() },
   { wait: 'zoom', away: true },
   { wait: 'rival', away: true },
-  { wait: 'time', ms: 2600, target: '#rivalBar', away: true }, // a look at the rival's city
+  { wait: 'time', ms: 2200, target: '#rivalBar', away: true }, // a look at the rival's city
+  { wait: 'aim', away: true }, // the missile card onto one of their buildings
   { wait: 'map', away: true },
   { wait: 'home', away: true },
-  // The strike: a free missile, a decoy outpost, K, the guided shot, K again.
-  { wait: 'time', ms: 2200, dim: true, target: '#panel .res.missile', enter: (api, t) => t.armStrike() },
-  { wait: 'strikeOpen' },
-  { wait: 'place', terrain: 'missile', cells: 'decoy' },
-  { wait: 'strikeClose' },
-  { wait: 'endTurn', target: '#btnNext' },
+  { wait: 'endTurn', target: '#btnNext' }, // the aimed missile flies in the attack phase
   { wait: 'end' },
 ];
+
+/** The missile cards a rival city's hand holds (main.js openRivalHand). (The Salvo card, which fans them, is apart.) */
+const MISSILE_CARDS = new Set(['missile', 'missile2']);
 
 const matches = (step, terrain) =>
   step.terrain === 'wasteland' ? terrain?.startsWith('wasteland') : terrain === step.terrain;
@@ -133,19 +135,18 @@ export class Tutorial {
     this.api = api;
     root.innerHTML = `
       <div class="coach-ring hidden"></div>
-      <div class="coach-hand hidden"><img class="coach-hand-card" alt="" />${GLOVE}<span class="coach-tap"></span></div>
+      <div class="coach-hand hidden"><img class="coach-hand-card" alt="" /><span class="coach-hand-glyph"></span>${GLOVE}<span class="coach-tap"></span></div>
       <div class="coach-rotate hidden">${ROTATE_ICONS}</div>
       <div class="coach-zoom hidden">${ZOOM_ICON}</div>
-      <div class="coach-keyhint hidden"><span class="coach-key">K</span></div>
       <div class="coach-reveal"></div>
       <button type="button" class="coach-skip hidden">${SKIP_ICON}</button>`;
     this.ring = root.querySelector('.coach-ring');
     this.handEl = root.querySelector('.coach-hand');
     this.cardEl = root.querySelector('.coach-hand-card');
+    this.glyphEl = root.querySelector('.coach-hand-glyph');
     this.tapEl = root.querySelector('.coach-tap');
     this.rotateEl = root.querySelector('.coach-rotate');
     this.zoomEl = root.querySelector('.coach-zoom');
-    this.keyEl = root.querySelector('.coach-keyhint');
     this.revealEl = root.querySelector('.coach-reveal');
     this.skipBtn = root.querySelector('.coach-skip');
     this.skipBtn.addEventListener('click', () => this.api.skip());
@@ -174,7 +175,7 @@ export class Tutorial {
     this.idle = 0; // seconds with an empty hand (the Next turn hint)
     this.played = 0; // seconds of free play on the board (the zoom hint waits a while)
     this.sawPlanet = false; // the War Map has been opened this session
-    this.decoy = null; // the strike lesson's target cell
+    this.aimAt = null; // the aim step's target in the rival city (kept, so the hand doesn't jump as the camera eases)
     try {
       this.seen = new Set(JSON.parse(localStorage.getItem(HINTS_KEY) ?? '[]'));
     } catch {
@@ -224,7 +225,6 @@ export class Tutorial {
       return s.wait === 'place' && matches(s, payload.piece?.terrain) && (!this.cells || payload.cells.every(([x, z]) => this.cells.some((c) => c[0] === x && c[1] === z)));
     if (action === 'endTurn') return s.wait === 'endTurn';
     if (action === 'globe') return Boolean(s.away);
-    if (action === 'strike') return s.wait === 'strikeOpen' || s.wait === 'strikeClose' || s.terrain === 'missile';
     return false;
   }
 
@@ -236,9 +236,19 @@ export class Tutorial {
     return { ok: false, reason: '' };
   }
 
-  /** Something happened in the game: placed (with the cells it covers) | endTurn. */
+  /**
+   * Something happened in the game: placed (with the cells it covers) | endTurn | aimed (a missile card aimed at a
+   * rival tile) | salvo (the Salvo card played there) | market (the Black Market opened). Doing it yourself counts as
+   * having learnt it: its one-time hint won't show.
+   */
   notify(event, cells = null) {
     if (event === 'placed' && this.hint?.endsOnPlace) this.hint.until = 0;
+    if (event === 'salvo') {
+      this.#markSeen('salvo');
+      event = 'aimed';
+    }
+    if (event === 'aimed') this.#markSeen('aim', 'missiles');
+    if (event === 'market') this.#markSeen('market');
     const s = this.step;
     if (!this.active || !s) return;
     const done = (s.wait === 'place' && event === 'placed') || s.wait === event;
@@ -270,9 +280,8 @@ export class Tutorial {
       return;
     }
     s.enter?.(this.api, this);
-    // The strike lesson needs its decoy: without one (no room for it), skip to Next turn.
-    if ((s.cells === 'decoy' || s.wait === 'strikeOpen') && !this.decoy) return this.#go(STEPS.findIndex((st) => st.wait === 'endTurn'));
-    this.cells = s.cells === 'capital' ? this.#aroundCapital() : s.cells === 'decoy' ? [this.decoy] : null;
+    this.aimAt = null;
+    this.cells = s.cells === 'capital' ? this.#aroundCapital() : null;
     if (s.cells === 'capital' && !this.cells.length) this.cells = null; // nowhere next to it: anywhere will do
     this.plan = null;
     if (s.target === 'site' || s.cells === 'site') {
@@ -356,20 +365,15 @@ export class Tutorial {
     return best;
   }
 
-  /** The strike lesson: a free missile and a decoy outpost to fire it at (the camera shows both). */
-  armStrike() {
-    this.api.giveMissile();
-    this.decoy = this.api.placeDecoy();
-    if (this.decoy) {
-      const w = hexToWorld(...this.decoy);
-      this.api.focus(w.x / 2, w.z / 2); // between the Capital and the outpost
-    }
+  /** These one-time hints won't be needed: what they show has been done. */
+  #markSeen(...ids) {
+    for (const id of ids) this.seen.add(id);
+    localStorage.setItem(HINTS_KEY, JSON.stringify([...this.seen]));
   }
 
   /** The planet is in view: a gold ring sweeps out over it, with the season clock's latch. */
   #reveal() {
-    this.seen.add('zoom'); // no need for the zoom hint later
-    localStorage.setItem(HINTS_KEY, JSON.stringify([...this.seen]));
+    this.#markSeen('zoom'); // no need for the zoom hint later
     this.revealEl.classList.remove('on');
     void this.revealEl.offsetWidth;
     this.revealEl.classList.add('on');
@@ -423,18 +427,35 @@ export class Tutorial {
       this.unseen = 0;
       return { hand: { tapOn: node } };
     }
+    if (s.wait === 'aim') {
+      // Back on the War Map without aiming: on with the trip home (the missile waits in the silo).
+      if (v === 'globe') return void this.#go(STEPS.findIndex((st) => st.wait === 'home'));
+      if (this.api.aimedHere()) return void this.#go(this.index + 1); // aimed already (during the look around)
+      const i = this.hand.cards.findIndex((p) => MISSILE_CARDS.has(p.terrain));
+      this.aimAt ??= this.api.rivalTarget();
+      if (i < 0 || !this.aimAt) return void this.#go(this.index + 1); // no missile card out, or nothing to aim at
+      return this.aimView(i, this.aimAt);
+    }
     if (s.wait === 'map') {
       if (v === 'globe') return void this.#go(this.index + 1);
       return { hand: { tapOn: '#btnRivalBack' }, ring: { selector: '#btnRivalBack' } };
     }
     if (s.wait === 'home') {
       if (v === 'rival') return { hand: { tapOn: '#btnRivalBack' }, ring: { selector: '#btnRivalBack' } }; // went to another city
-      const home = '.globe-node[data-globe-node="player"]:not(.off)';
-      if (!document.querySelector(home)) return fly('player');
-      this.unseen = 0;
-      return { hand: { tapOn: home } };
+      return { hand: { tapOn: '#btnHive' }, ring: { selector: '#btnHive' } };
     }
     return null;
+  }
+
+  /**
+   * A card of the hand onto a rival tile: the hand drags card i there; once it's picked (clicked) the hand taps the
+   * tile instead; while it's being dragged the hand stays out of the way.
+   */
+  aimView(i, to) {
+    const held = this.hand.piece === this.hand.cards[i];
+    if (this.hand.dragging) return {};
+    if (held) return { hand: { tap: this.#cellsCentre([to]), key: `aim${to}` } };
+    return { hand: { drag: i, to } };
   }
 
   /** A badge ("×2") that rises over the cells and fades. */
@@ -481,6 +502,7 @@ export class Tutorial {
     this.flash = Math.max(0, this.flash - dt);
     if (this.api.view() !== 'board') this.sawPlanet = true;
     else if (!this.active && !blocked) this.played += dt;
+    this.inRival = this.api.view() === 'rival' ? (this.inRival ?? 0) + dt : 0; // (the camera settles on arrival)
     let view = null;
     if (!blocked) view = this.active ? this.#guide(dt) : this.#hints(dt);
     this.#draw(view ?? {}, time, dt);
@@ -499,14 +521,6 @@ export class Tutorial {
     if (s.away && this.api.view() === 'board') {
       this.#go(STEPS.findIndex((st) => st.wait === 'home') + 1); // came home early
       return null;
-    }
-    // K opens the air strike, and closes it again after the shot.
-    if (s.wait === 'strikeOpen' || s.wait === 'strikeClose') {
-      if (this.api.strikeOpen() === (s.wait === 'strikeOpen')) {
-        this.#go(this.index + 1);
-        return null;
-      }
-      return { key: true, marks: this.decoy ? [this.decoy] : null };
     }
     if (s.wait === 'place') {
       // The card isn't in the hand (or the Wasteland fits nowhere): nothing to guide, move on.
@@ -546,9 +560,11 @@ export class Tutorial {
       this.hint = null;
       return null;
     }
-    this.idle = this.hand.isEmpty ? this.idle + dt : 0;
+    // The season settling (payout, missiles in the air): nothing to do yet, so no new hint (Next turn would be wrong).
+    const settling = this.api.settling();
+    this.idle = this.hand.isEmpty && !settling ? this.idle + dt : 0;
     this.check = (this.check ?? 0) - dt;
-    if (this.check > 0) return null;
+    if (this.check > 0 || settling) return null;
     this.check = 0.25;
     for (const [id, make] of Object.entries(HINTS)) {
       if (this.seen.has(id)) continue;
@@ -563,7 +579,7 @@ export class Tutorial {
     return null;
   }
 
-  /** Draws a view: { marks: cells, ring: { selector, dim, alarm }, hand: { drag: cardIndex, to } | { tap: [x, y] } | { tapOn: selector }, rotate: [x, z], zoom: true, key: true }. */
+  /** Draws a view: { marks: cells, ring: { selector, dim, alarm }, hand: { drag: cardIndex, to } | { tap: [x, y] } | { tapOn: selector }, rotate: [x, z], zoom: true }. */
   #draw(view, time, dt) {
     // Glowing cells
     const key = view.marks ? keyOf(view.marks) : '';
@@ -621,8 +637,12 @@ export class Tutorial {
           const cr = card.getBoundingClientRect();
           const from = [cr.left + cr.width / 2, cr.top + Math.min(cr.height * 0.45, (window.innerHeight - cr.top) * 0.5)];
           pose = this.#dragPose(from, this.#cellsCentre([h.to]));
-          const img = card.querySelector('img');
+          // It carries the card's picture, or its symbol for action cards (a missile's ▲).
+          const img = card.querySelector('.snap img');
+          const glyph = img ? '' : (card.querySelector('.symbol')?.textContent ?? '');
           if (img && this.cardEl.getAttribute('src') !== img.getAttribute('src')) this.cardEl.src = img.src;
+          this.cardEl.hidden = !img;
+          if (this.glyphEl.textContent !== glyph) this.glyphEl.textContent = glyph;
         }
       } else if (h.tap) pose = this.#tapPose(h.tap);
       else if (h.tapOn) {
@@ -636,14 +656,13 @@ export class Tutorial {
       const tf = `translate(${(pose.x - HAND_TIP[0]).toFixed(1)}px, ${(pose.y - HAND_TIP[1]).toFixed(1)}px) scale(${pose.scale.toFixed(3)})`;
       if (el._tf !== tf) el.style.transform = el._tf = tf;
       el.style.opacity = pose.opacity.toFixed(3);
-      this.cardEl.style.opacity = (pose.card ?? 0).toFixed(3);
+      this.cardEl.style.opacity = this.glyphEl.style.opacity = (pose.card ?? 0).toFixed(3);
       this.tapEl.style.opacity = (pose.tap ?? 0).toFixed(3);
       this.tapEl.style.transform = `scale(${(0.4 + (1 - (pose.tap ?? 0)) * 1.2).toFixed(3)})`;
     }
 
-    // Zoom-out mouse and the K key, over the board
+    // Zoom-out mouse, over the board
     this.zoomEl.classList.toggle('hidden', !view.zoom);
-    this.keyEl.classList.toggle('hidden', !view.key);
 
     // Rotate icons over a cell
     this.rotateEl.classList.toggle('hidden', !view.rotate);
@@ -704,18 +723,36 @@ export class Tutorial {
  * The one-time hints, checked in this order a few times a second during free play. Each returns null (not now) or
  * { until: seconds on screen, view(): what to draw (see #draw), over(): true to end it early, endsOnPlace }.
  */
+const onBoard = (t) => t.api.view() === 'board';
+
+/**
+ * A card of the rival city's hand (`find(piece)`) onto one of their buildings: the hand drags it there until it's
+ * played, or picked up (then the player has got it). The target is kept, so the hand doesn't jump as the camera eases.
+ */
+function aimHint(t, find, played) {
+  const card = () => t.hand.cards.findIndex(find);
+  if (t.api.view() !== 'rival' || t.inRival < 1.5 || t.hand.piece || card() < 0) return null;
+  const to = t.api.rivalTarget();
+  if (!to) return null;
+  return {
+    until: 6,
+    view: () => (card() >= 0 ? t.aimView(card(), to) : {}),
+    over: () => t.api.view() !== 'rival' || card() < 0 || played() || t.hand.dragging || Boolean(t.hand.piece),
+  };
+}
+
 const HINTS = {
   // Holding a piece of 2+ cells: R / right-click turns it (over the cell under the pointer).
   rotate(t) {
     const piece = t.hand.piece;
-    if (!piece || (SHAPES[piece.shape]?.cells.length ?? 1) < 2 || !t.api.cursor()) return null;
+    if (!onBoard(t) || !piece || (SHAPES[piece.shape]?.cells.length ?? 1) < 2 || !t.api.cursor()) return null;
     const rot = piece.rot;
     return { until: 4, view: () => ({ rotate: t.api.cursor() ?? [0, 0] }), over: () => t.hand.piece !== piece || piece.rot !== rot };
   },
   // A "?" site you can reach: the free cells next to it that touch your land glow while you hold a card.
   mystery(t) {
     const { grid, mysteries } = t.api;
-    if (!t.hand.piece || grid.expansionMode) return null;
+    if (!onBoard(t) || !t.hand.piece || grid.expansionMode) return null;
     const cells = [];
     for (const s of mysteries.sites.values()) {
       for (const [dx, dz] of DIRS) {
@@ -730,6 +767,7 @@ const HINTS = {
   },
   // The stores will run dry this season: the food row pulses red.
   food(t) {
+    if (!onBoard(t)) return null;
     const e = t.api.economy();
     if (!(e.foodBalance < 0 && t.api.stores() + e.foodBalance < 0)) return null;
     return { until: 2.6, view: () => ({ ring: { selector: '#panel .res.food', alarm: true } }) };
@@ -738,7 +776,7 @@ const HINTS = {
   reroll(t) {
     const btn = document.getElementById('btnReroll');
     const cards = t.hand.cards;
-    if (cards.length < 3 || t.hand.piece || cards.some((p) => p.terrain === 'station') || !btn || btn.disabled || btn.classList.contains('disabled'))
+    if (!onBoard(t) || cards.length < 3 || t.hand.piece || cards.some((p) => p.terrain === 'station') || !btn || btn.disabled || btn.classList.contains('disabled'))
       return null;
     return { until: 4.4, view: () => ({ hand: { tapOn: '#btnReroll' }, ring: { selector: '#btnReroll' } }), over: () => t.hand.piece };
   },
@@ -748,9 +786,32 @@ const HINTS = {
     if (t.sawPlanet || t.played < 45 || t.hand.piece || t.api.view() !== 'board') return null;
     return { until: 9, view: () => ({ zoom: true }), over: () => t.sawPlanet };
   },
+  // Missiles waiting in the silo (a Military Factory made them) and none aimed yet: the Missiles row lights up, and
+  // the mouse wheel shows the way out to the War Map, where they're aimed at a rival city.
+  missiles(t) {
+    if (!onBoard(t) || t.hand.piece || !t.api.missiles() || t.api.aimed()) return null;
+    return {
+      until: 6,
+      view: () => ({ ring: { selector: '#panel .res.missile' }, zoom: true }),
+      over: () => !onBoard(t) || t.api.aimed() > 0 || !t.api.missiles(),
+    };
+  },
+  // In a rival city with the missile cards out and nothing aimed there yet: the hand drags one onto a building.
+  aim: (t) => (t.api.aimedHere() ? null : aimHint(t, (p) => MISSILE_CARDS.has(p.terrain), () => t.api.aimedHere())),
+  // The Salvo card dealt among them: the hand drags it onto a building (it fans every missile around it).
+  salvo: (t) => aimHint(t, (p) => p.terrain === 'salvo', () => !t.hand.cards.some((p) => p.terrain === 'salvo')),
+  // The Smuggler's Crawler is at the gates and there's oil for something in it: the hand taps the Black Market.
+  market(t) {
+    if (!onBoard(t) || t.hand.piece || !t.api.marketReady()) return null;
+    return {
+      until: 4.4,
+      view: () => ({ hand: { tapOn: '#btnBlackMarket' }, ring: { selector: '#btnBlackMarket' } }),
+      over: () => !onBoard(t) || !t.api.marketReady() || Boolean(t.hand.piece),
+    };
+  },
   // Every card played and nothing happening for a while: the hand taps Next turn.
   next(t) {
-    if (t.idle < 6) return null;
+    if (!onBoard(t) || t.idle < 6) return null;
     return { until: 4.4, view: () => ({ hand: { tapOn: '#btnNext' }, ring: { selector: '#btnNext' } }), over: () => !t.hand.isEmpty };
   },
 };

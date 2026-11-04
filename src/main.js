@@ -311,13 +311,21 @@ const tutorial = new Tutorial({
     rivalIds: () => rivals.map((r) => r.id),
     /** The planet is in view (the guided zoom-out): the season clock's latch. */
     reveal: () => latch(),
-    /** The strike lesson: a free missile, a decoy outpost to fire at (returns its cell), whether the strike screen is up. */
+    /** The guided Spring's free missile: into the silo. */
     giveMissile: () => {
       tryStoreMissile('missile');
       updateHUD();
     },
-    placeDecoy: () => placeDecoy(),
-    strikeOpen: () => strikeOpen,
+    /** Missiles in the silo; strikes aimed this season (anywhere, or at the rival city on screen). */
+    missiles: () => missileCount(),
+    aimed: () => queuedStrikes().length,
+    aimedHere: () => Boolean(rivalShown && queuedStrikes(rivalShown.id).length),
+    /** In a rival city: the building of theirs a missile card is shown going to, or null. */
+    rivalTarget: () => rivalTarget(),
+    /** A season is settling (from Next turn until the new hand: payout, attack phase, scenes). */
+    settling: () => turnRunning || warPending || attackLive || eventOpen || payout.active,
+    /** The Smuggler is at the gates, and there's oil for something in the Crawler. */
+    marketReady: () => turn.bmCooldown <= 0 && !turn.over && turn.stockpile >= bmCheapest(),
   },
 });
 // While it runs, only the card, cells and buttons the advisor asks for respond.
@@ -3275,6 +3283,9 @@ let pickOptions = [];
 // ---------- the Black Market: the Smuggler sells military cards for oil from the stockpile, once a year ----------
 const BM_MARKUP = 2; // oil per barrel of the market price
 const BM_SLOTS = 3;
+/** Oil for the cheapest card the Smuggler might bring (what the tutorial's Black Market hint waits for). */
+const bmCheapest = () =>
+  Math.min(...SHOP_ITEMS.filter(([k]) => (BLACK_MARKET.has(k) || BLACK_MARKET_RESOURCE.has(k)) && shopReady(k, turn.unlocked)).map(([, p]) => p * BM_MARKUP));
 const BM_SPEAKER = 'The Smuggler';
 
 /** Seasons until the Smuggler comes back (one full year from a visit). */
@@ -3338,6 +3349,7 @@ async function openBlackMarket() {
   if (tutorial.active) return toast(L('Finish the tutorial first', '请先完成教程'));
   const run = runId;
   blackMarketOpen = true;
+  tutorial.notify('market');
   hand.select(-1);
   dialogue.open({ kind: 'choice', kindLabel: () => L('Black Market', '黑市'), title: () => L('A Dune Crawler at the gates', '城门外的沙丘爬行车') });
   // The field report first (the Dune Crawler at the gates), then the Smuggler himself.
@@ -3754,10 +3766,7 @@ function tryPlace() {
     hand.consume();
     if (played === 'spark') spark(cells);
     else if (played === 'militia') militia(...cells[0]);
-    else if (played === 'missile' || played === 'missile2') {
-      firePlayerMissile(cells, fromHand);
-      tutorial.notify('placed', cells); // the strike lesson's guided shot
-    }
+    else if (played === 'missile' || played === 'missile2') firePlayerMissile(cells, fromHand);
     else if (played === 'salvo') {
       const ammo = missileAmmoInHand();
       const fan = spreadFrom(grid, cells[0], ammo.length);
@@ -3950,42 +3959,6 @@ async function launchSalvo(count) {
   await Promise.all(flights);
 }
 
-/**
- * The tutorial's strike lesson: a ruined enemy outpost to fire the free missile at. Only a model on the board, never a
- * tile (it doesn't touch the economy); missiles may target it (placement.decoyAt), and a hit removes it.
- */
-let decoy = null; // { x, z, mesh }
-function placeDecoy() {
-  removeDecoy();
-  // A free cell two steps from your land, not on a "?" site.
-  let best = null;
-  for (const c of grid.cells.values()) {
-    for (const [dx, dz] of DIRS) {
-      for (const [ex, ez] of DIRS) {
-        const x = c.x + dx + ex;
-        const z = c.z + dz + ez;
-        if (grid.has(x, z) || grid.touchesIsland(x, z) || mysteries.has(x, z) || !inWorld(x, z)) continue;
-        const d = hexDistance(0, 0, x, z);
-        if (!best || d < best.d) best = { x, z, d };
-      }
-    }
-  }
-  if (!best) return null;
-  const mesh = factory.create('raider');
-  const w = hexToWorld(best.x, best.z);
-  mesh.position.set(w.x, 0, w.z);
-  tiles.add(mesh);
-  decoy = { x: best.x, z: best.z, mesh };
-  return [best.x, best.z];
-}
-function removeDecoy() {
-  if (!decoy) return;
-  decoy.mesh.removeFromParent();
-  dust.burst(decoy.x, decoy.z, 1.2);
-  decoy = null;
-}
-placement.decoyAt = (x, z) => Boolean(decoy && decoy.x === x && decoy.z === z);
-
 async function firePlayerMissile(cells, fromHand = null) {
   const size = blastExtra(grid, idleKeySet());
   const origin = cells[0];
@@ -4015,10 +3988,6 @@ async function firePlayerMissile(cells, fromHand = null) {
     onCover: () => {
       const size = blastExtra(grid, idleKeySet());
       for (const [x, z] of footprint('missile', origin, size, grid)) {
-        if (decoy && decoy.x === x && decoy.z === z) {
-          removeDecoy();
-          continue;
-        }
         const t = grid.get(x, z)?.terrain;
         if (t === 'capital') continue;
         if (t) craterAt(x, z);
@@ -4230,6 +4199,7 @@ function aimAtPointer() {
     const piece = aimPiece();
     if (!piece) return;
     if (!rival.grid.has(at[0], at[1])) return toast(L('Aim at one of their tiles', '请瞄准对方的地块'), 'bad');
+    const before = queuedStrikes(rival.id).length;
     if (piece.terrain === 'salvo') aimSalvo(rival, at);
     else {
       const size = blastExtra(grid, idleKeySet());
@@ -4243,9 +4213,42 @@ function aimAtPointer() {
       playOutgoingRival(rival, cells, piece.terrain);
     }
     confirm();
+    if (queuedStrikes(rival.id).length > before) tutorial.notify(piece.terrain === 'salvo' ? 'salvo' : 'aimed');
   }
   updateAimBar();
   updateHUD();
+}
+
+/**
+ * The rival tile the tutorial shows a missile card going to: one a card can be dropped on (in view, not under the hand
+ * or a panel) and not aimed at already, preferably one of their buildings (the Capital only failing others), nearest a
+ * spot a little above the middle of the screen, so the drag from the hand reads clearly. Null outside a rival city.
+ */
+const targetV = new THREE.Vector3();
+function rivalTarget() {
+  const r = rivalShown;
+  if (!r || view !== 'rival' || r.alive === false) return null;
+  const taken = new Set();
+  for (const q of queuedStrikes(r.id)) for (const [x, z] of q.cells ?? [q.at]) taken.add(plotKey(x, z));
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  let best = null;
+  let bestScore = Infinity;
+  for (const c of r.grid.cells.values()) {
+    if (taken.has(plotKey(c.x, c.z))) continue;
+    const w = hexToWorld(c.x, c.z);
+    targetV.set(w.x, 0.05, w.z).project(camera);
+    const x = (targetV.x * 0.5 + 0.5) * W;
+    const y = (-targetV.y * 0.5 + 0.5) * H;
+    const reachable = targetV.z < 1 && x > 0 && y > 0 && x < W && y < H && overBoard(x, y);
+    const kind = isBuilding(c.terrain) ? (c.terrain === 'capital' ? 250 : 0) : 500;
+    const score = (reachable ? 0 : 10000) + kind + Math.hypot(x - W / 2, y - H * 0.42);
+    if (score < bestScore) {
+      bestScore = score;
+      best = [c.x, c.z];
+    }
+  }
+  return best;
 }
 
 $('btnRivalClear').addEventListener('click', (e) => {
@@ -5009,7 +5012,6 @@ $('btnReplayTutorial').addEventListener('click', (e) => {
 function resetIsland(opts) {
   const tut = opts?.tutorial === true || !tutorialDone();
   resetView();
-  removeDecoy();
   rivals = createRivals((Math.random() * 0x100000000) >>> 0);
   runId++; // stops a missile strike / failure speech still running
   introRun++; // and an opening scene
@@ -5123,7 +5125,6 @@ function resetIsland(opts) {
 function skipTutorial() {
   markTutorialDone();
   tutorial.stop();
-  removeDecoy(); // skipped in the middle of the strike lesson
 }
 
 /**

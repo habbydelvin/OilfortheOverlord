@@ -174,7 +174,6 @@ export class Placement {
   /** Buildings a player missile may destroy (not a Capital). */
   missileable(cells) {
     return cells.filter(([x, z]) => {
-      if (this.decoyAt?.(x, z)) return true; // the tutorial's decoy outpost (main.js)
       const cell = this.grid.get(x, z);
       return cell && isBuilding(cell.terrain) && cell.terrain !== 'capital';
     });

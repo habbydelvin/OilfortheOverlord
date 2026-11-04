@@ -2366,6 +2366,24 @@ body.striking #mapIcons {
   opacity: 0;
   filter: drop-shadow(0 0 10px rgba(255, 220, 150, 0.8));
 }
+/* An action card has no picture: it carries the card's symbol instead (a missile's ▲). */
+.coach-hand-glyph {
+  position: absolute;
+  left: -30px;
+  top: -30px;
+  width: 68px;
+  height: 68px;
+  display: grid;
+  place-items: center;
+  font: 800 44px var(--dp-serif, serif);
+  color: #ffd27a;
+  text-shadow: 0 0 12px rgba(255, 170, 60, 0.9), 0 2px 0 #3a1a0a;
+  opacity: 0;
+  pointer-events: none;
+}
+.coach-hand-glyph:empty {
+  display: none;
+}
 /* Ripple under the fingertip when it presses. */
 .coach-tap {
   position: absolute;
@@ -2460,8 +2478,7 @@ body.striking #mapIcons {
   place-items: center;
   filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.6));
 }
-.coach-zoom.hidden,
-.coach-keyhint.hidden {
+.coach-zoom.hidden {
   display: none;
 }
 .cz-mouse {
@@ -2506,22 +2523,6 @@ body.striking #mapIcons {
   0% { transform: translate(0, 0); opacity: 0; }
   25% { opacity: 1; }
   100% { transform: translate(calc(var(--dx) * 26px), calc(var(--dy) * 26px)); opacity: 0; }
-}
-/* The strike lesson: a big K key over the board, pressed again and again. */
-.coach-keyhint {
-  position: fixed;
-  left: calc((100% - var(--panel-w)) / 2);
-  top: 30%;
-  translate: -50% -50%;
-  padding: 10px;
-  border-radius: 12px;
-  background: rgba(16, 18, 20, 0.85);
-  box-shadow: 0 0 0 1px rgba(232, 191, 104, 0.6), 0 6px 16px rgba(0, 0, 0, 0.5);
-}
-.coach-keyhint .coach-key {
-  width: 46px;
-  height: 46px;
-  font-size: 24px;
 }
 /* The planet in view (the War Map, full screen): a gold ring sweeping out over it. */
 .coach-reveal {
