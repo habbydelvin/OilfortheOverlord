@@ -392,7 +392,7 @@ export const ACTIONS = {
     range: 0,
     weight: 0, // produced by a Military Factory
     get rule() {
-      return `Destroy ${MISSILE.blast ?? 1} tile${(MISSILE.blast ?? 1) === 1 ? '' : 's'} · −${MISSILE.damage ?? 1} capital HP`;
+      return `Destroy 1 tile · +1 per Warhead Institute · −${MISSILE.damage ?? 1} capital HP`;
     },
   },
   missile2: {
@@ -420,7 +420,7 @@ export const ACTIONS = {
     rule: 'Drag onto a tile: every missile in hand fans out from there',
   },
   overtime: {
-    name: 'Work Overtime',
+    name: 'Rush Order',
     trigger: 'On play',
     top: 0x6e4a2a,
     edge: 0x46301c,
@@ -428,7 +428,7 @@ export const ACTIONS = {
     symbol: '⌛',
     range: 0,
     weight: 0.4,
-    rule: 'Spend 2 oil: a Military Factory gains +1 season of progress',
+    rule: 'A Military Factory gains +1 season of progress',
   },
 };
 
@@ -475,10 +475,10 @@ const ZH = {
   warhead: { name: '弹头研究所', rule: '每座开工的研究所使导弹爆炸再多打相邻 1 格' },
   intercept: { name: '拦截网络', rule: () => `每季 -${INTERCEPT.upkeep} 石油 · 炮塔击落瞄准 ${INTERCEPT.range} 格内的导弹` },
   magazine: { name: '储弹仓', rule: '导弹容量 +1' },
-  missile: { name: '导弹', rule: () => `摧毁 ${MISSILE.blast ?? 1} 格 · 首都 −${MISSILE.damage ?? 1}` },
+  missile: { name: '导弹', rule: () => `摧毁 1 格 · 弹头研究所每座 +1 格 · 首都 −${MISSILE.damage ?? 1}` },
   salvo: { name: '齐射', rule: '拖到一格上：手中每枚导弹从该处铺开瞄准' },
   missile2: { name: '导弹', rule: () => `摧毁 2×2 · 首都 −${MISSILE.damage ?? 1}` },
-  overtime: { name: '熬夜加班', rule: '花费 2 石油：一座军事工厂生产进度 +1 季' },
+  overtime: { name: '赶工令', rule: '一座军事工厂生产进度 +1 季' },
 };
 
 // name, trigger and rule become getters that answer in the current language (the English stays above).
@@ -640,7 +640,7 @@ export const SHOP_ITEMS = [
   ['warhead', 4],
   ['intercept', 4],
   ['magazine', 4],
-  ['overtime', 3],
+  ['overtime', 2],
 ];
 
 /** Military buildings (and the Overtime action that runs them): the Black Market's stock; rivals value them too. */

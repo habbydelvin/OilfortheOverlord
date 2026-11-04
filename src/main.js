@@ -6,9 +6,9 @@ import './themeShine.js';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
-import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws } from './sfx.js';
+import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws, silo } from './sfx.js';
 import { CameraRig } from './controls.js';
-import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed } from './grid.js';
+import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed, hexesAround } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
 import { preloadCardArt } from './tiles.js';
 import { TileFactory, TERRAINS, ACTIONS, SHOP_ITEMS, BASIC_SHOP, BLACK_MARKET, BLACK_MARKET_RESOURCE, MILITARY, shopReady, BANDIT_KEYS, isCamp, cardDef, cardText, hex, ICONS, isBuilding, iconize, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
@@ -17,7 +17,7 @@ import { Frontier } from './frontier.js';
 import { Placement, GHOST_LAYER, PREVIEW_PARAMS, PREVIEW_DEFAULTS, loadPreviewConfig, savePreviewConfig, clearPreviewConfig } from './placement.js';
 import { Hand, pieceCost } from './hand.js';
 import { copySeam } from './seamlessGround.js';
-import { NeonTiles } from './neonGlow.js';
+import { NeonTiles, createGlow, LIFT } from './neonGlow.js';
 import { BarrelGauge, OilFlights } from './barrelGauge.js';
 import { SeasonClock } from './seasonClock.js';
 import { setupCrt } from './crt.js';
@@ -28,13 +28,13 @@ import { Mysteries } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
 import { computeEconomy, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS } from './economy.js';
-import { FACTORY_OIL, OVERTIME_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, blastExtra } from './arsenal.js';
+import { FACTORY_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, blastExtra } from './arsenal.js';
 import { pieceOf } from './pieces.js';
 import { findCiws } from './interceptMesh.js';
 import { queueDrawn, addMissile, missileCount, missileKinds, trimMissiles, resetMissiles, openCityStrike, drawStrikeHand, returnStrikeHand, bindCityStrikeUi, queueStrike, unqueueStrike, queuedStrikes, takeQueue, clearQueue } from './cityStrike.js';
 import { CAPITAL_HP, resolve as resolveWar, applyToRival, footprint, spreadFrom } from './war.js';
 import { chooseStrikes, noteAttacks } from './rivalAI.js';
-import { INTERCEPT } from './arsenal.js';
+import { INTERCEPT, INTERCEPT_DEFAULTS, INTERCEPT_PARAMS, saveIntercept, clearIntercept } from './arsenal.js';
 import { Payout, tileHop } from './payout.js';
 import { EVENTS, KIND_LABEL, drawEvent } from './events.js';
 import { Dialogue } from './dialogue.js';
@@ -89,6 +89,11 @@ let globe;
 const rivalView = createRivalView({ renderer, factory, rig, fogSettings: () => fogCfg, fogQuality: () => gfxCfg.fogQuality });
 const tiles = new THREE.Group();
 scene.add(tiles);
+const interceptCover = new THREE.Group();
+scene.add(interceptCover);
+const INTERCEPT_GLOW = 0x4cc8ff;
+let interceptCoverKey = '';
+let interceptCoverGlows = [];
 const previewCfg = loadPreviewConfig(); // Game Debug → Placement preview
 const frontier = new Frontier(scene, previewCfg);
 const placement = new Placement(scene, grid, factory, previewCfg);
@@ -162,6 +167,22 @@ const debug = RELEASE
     updateHUD();
     return `Added ${k}`;
   },
+  onGiveMissile: () => {
+    if (view === 'rival' && rivalShown && rivalShown.alive !== false && !attackLive) {
+      if (!rivalHand) {
+        addMissile('missile');
+        openRivalHand(rivalShown);
+      } else {
+        hand.cards.push(pieceOf('missile'));
+        const ammo = hand.cards.filter((p) => isMissileAmmo(p.terrain)).length;
+        if (ammo > 2 && !hand.cards.some((p) => p.terrain === 'salvo')) hand.cards.unshift(pieceOf('salvo'));
+        hand.render();
+      }
+    } else addMissile('missile');
+    updateHUD();
+    updateAimBar();
+    return 'Added missile';
+  },
   onPerf: () => perf.setOpen(!perf.enabled),
   onResetTutorial: () => {
     localStorage.removeItem(TUTORIAL_KEY); // next reload starts with the tutorial again
@@ -204,6 +225,16 @@ const debug = RELEASE
     onChange: () => {
       hand.render();
       if (hand.piece) placement.setPiece(hand.piece);
+    },
+  },
+  intercept: {
+    params: INTERCEPT_PARAMS,
+    defaults: INTERCEPT_DEFAULTS,
+    cfg: INTERCEPT,
+    save: saveIntercept,
+    clear: clearIntercept,
+    onChange: () => {
+      interceptCoverKey = '';
     },
   },
   gfx: {
@@ -1347,8 +1378,6 @@ async function chargeOneFactory(cell) {
   const need = yearLength();
   const run = runId;
   if ((cell.missileProgress ?? 0) >= need) {
-    spawnMissileFloater(cell, factoryYield(grid, cell, idle).count);
-    await hopFactory(cell);
     if (run !== runId) return { count: 0 };
     return finishFactoryMissile(cell, idle);
   }
@@ -1362,7 +1391,6 @@ async function chargeOneFactory(cell) {
   if (run !== runId) return { count: 0 };
   thud();
   const completing = (cell.missileProgress ?? 0) + 1 >= need;
-  if (completing) spawnMissileFloater(cell, factoryYield(grid, cell, idle).count);
   await hopFactory(cell);
   if (run !== runId) return { count: 0 };
   factoryPaid.push(cell);
@@ -1373,16 +1401,61 @@ async function chargeOneFactory(cell) {
   return { count: 0 };
 }
 
-function finishFactoryMissile(cell, idle) {
-  const out = deliverFactory(cell, idle);
+async function finishFactoryMissile(cell, idle) {
+  const run = runId;
+  const y = factoryYield(grid, cell, idle);
+  const room = Math.max(0, currentMissileCap(idle) - missileCount());
+  const n = Math.min(y.count, room);
+  if (n <= 0) return { ...y, count: 0, stuck: true };
+  await playMissileMade(cell, n, y.kind);
+  if (run !== runId) return { count: 0 };
+  cell.missileProgress = 0;
+  const rec = factoryBars.get(`${cell.x},${cell.z}`);
+  if (rec) rec.preview = null;
   updateHUD();
-  const el = $('resMissile');
-  if (el && out.count) pop(el);
-  return out;
+  return { ...y, count: n };
 }
 
-function spawnMissileFloater(cell, n) {
-  spawnFactoryFloater(cell, `<div class="row" style="--c:#f0c060"><b>+${n}</b></div>`);
+function dockMissile(kind) {
+  if (!tryStoreMissile(kind)) return;
+  updateHUD();
+  const el = $('resMissile');
+  if (el) pop(el);
+  const row = el?.closest('.res');
+  if (row) {
+    row.classList.remove('made');
+    void row.offsetWidth;
+    row.classList.add('made');
+  }
+  latch();
+}
+
+/** The missile rises from the factory. Each rise banks one. */
+async function playMissileMade(cell, n, kind) {
+  const run = runId;
+  silo();
+  dust.burst(cell.x, cell.z, 0.7);
+  camShake.add(0.18);
+  if (view !== 'board') {
+    for (let i = 0; i < n; i++) {
+      if (run !== runId) return;
+      dockMissile(kind);
+      await wait(0.12);
+    }
+    return;
+  }
+  const w = hexToWorld(cell.x, cell.z);
+  await Promise.all(
+    Array.from({ length: n }, (_, i) =>
+      missiles.rollOut(w.x, w.z, {
+        delay: i * 0.18,
+        onArrive: () => {
+          if (run !== runId) return;
+          dockMissile(kind);
+        },
+      }),
+    ),
+  );
 }
 
 function spawnFactoryFloater(cell, html) {
@@ -1455,6 +1528,50 @@ function updateFactoryFloaters(dt) {
     const fs = Math.min(c.fadeStart, 0.999);
     f.el.style.opacity = p > fs ? 1 - (p - fs) / (1 - fs) : 1;
   }
+}
+
+function updateInterceptCover(time) {
+  interceptCover.visible = view === 'board' && !busy();
+  if (!interceptCover.visible) {
+    if (interceptCoverKey) {
+      interceptCoverKey = '';
+      for (const g of interceptCoverGlows) g.dispose();
+      interceptCoverGlows = [];
+    }
+    return;
+  }
+  const h = rig.isDragging ? null : hoveredCell();
+  let ox = null;
+  let oz = null;
+  let invalid = false;
+  if (hand.piece?.terrain === 'intercept' && h) {
+    ox = h[0];
+    oz = h[1];
+    invalid = placement.result && !placement.result.ok;
+  } else if (!hand.piece && h) {
+    const cell = grid.get(h[0], h[1]);
+    if (cell?.terrain === 'intercept') {
+      ox = cell.x;
+      oz = cell.z;
+    }
+  }
+  const k = ox == null ? '' : `${ox},${oz},${INTERCEPT.range},${invalid ? 'bad' : 'ok'}`;
+  if (k !== interceptCoverKey) {
+    interceptCoverKey = k;
+    for (const g of interceptCoverGlows) g.dispose();
+    interceptCoverGlows = [];
+    if (ox != null) {
+      for (const [x, z] of hexesAround(ox, oz, INTERCEPT.range)) {
+        const glow = createGlow(invalid ? 0xff4a4a : INTERCEPT_GLOW, 'intercept cover');
+        glow.setLevel(1);
+        const w = hexToWorld(x, z);
+        glow.group.position.set(w.x, LIFT, w.z);
+        interceptCover.add(glow.group);
+        interceptCoverGlows.push(glow);
+      }
+    }
+  }
+  for (const g of interceptCoverGlows) g.paint(0.7, time);
 }
 
 function updateFactoryBars() {
@@ -1659,7 +1776,8 @@ function shadeIdle(e = economyNow()) {
   const need = yearLength();
   for (const cell of grid.cells.values()) {
     if (!cell.mesh) continue;
-    const blocked = cell.terrain === 'milfactory' && (cell.missileProgress ?? 0) >= need;
+    const blocked =
+      cell.terrain === 'milfactory' && (cell.missileProgress ?? 0) >= need && missileHandCount() >= currentMissileCap();
     setGrey(cell.mesh, idle.has(`${cell.x},${cell.z}`) || blocked);
   }
   neonTiles.refresh(grid); // boosted buildings' tiles glow (not idle ones)
@@ -3479,8 +3597,8 @@ function updateBlackMarketButton() {
 
 // First visit: a field report announces the Dune Crawler at the gates, then the Smuggler reports in to the Overseer.
 const BM_ARRIVAL = [
-  () => L('A Dune Crawler has appeared at the city gates. Large, armoured, no markings. It is flying no colours.', '一辆巨型沙丘爬行车出现在城门外。体型庞大，装甲厚重，没有任何标识，也未挂任何旗帜。'),
-  () => L('Its crew requests an audience with the Overseer. The gate guard is holding them at the outer wall.', '车上的人请求面见总督。守门卫兵已将他们拦在外墙。'),
+  () => L("Sorry to interrupt, Overseer. There's a Dune Crawler at the gates. Huge thing, armoured, no markings, no colours. I don't like the look of it.", '抱歉打扰，总督。城门外来了一辆沙丘爬行车。个头很大，装甲厚重，没有标识，也没挂旗。我不太喜欢它的样子。'),
+  () => L("Its crew are asking to see you personally. I've had the guards hold them at the outer wall. Shall I bring them in?", '车上的人要求亲自见您。我已经让卫兵把他们拦在外墙了。要我带他们进来吗？'),
 ];
 const BM_INTRO = [
   () => L('*salutes* Overseer. An honour. Forgive the size of the Crawler. Business has been good.', '*敬礼* 总督。荣幸之至。请原谅这辆爬行车的块头，最近生意不错。'),
@@ -3492,9 +3610,9 @@ const BM_INTRO = [
 const BM_ASK_FIRST = () => L('The Crawler makes this run once a year, Overseer. Shall I open the hold?', '这辆爬行车一年只跑一趟，总督。要我打开货舱吗？');
 // Later visits: a one-line report, then a fresh greeting.
 const BM_RETURNS = [
-  () => L('The Dune Crawler is back at the city gates.', '那辆沙丘爬行车又回到了城门外。'),
-  () => L('Dust on the horizon: the Smuggler\'s Crawler is approaching the gates.', '地平线上扬起沙尘：走私贩的爬行车正驶向城门。'),
-  () => L('The gate guard reports a familiar Crawler at the outer wall, asking for the Overseer.', '守门卫兵报告：一辆熟悉的爬行车停在外墙，请求面见总督。'),
+  () => L('Your friend with the Crawler is back, Overseer. Parked at the gates as if he owns them.', '您那位开爬行车的朋友又来了，总督。就停在城门口，好像城门是他家的。'),
+  () => L("Dust on the horizon. That'll be the Smuggler again, I'd bet my stamp on it.", '地平线上扬起沙尘了。肯定又是那个走私贩，我拿我的印章打赌。'),
+  () => L("The gate guard's on the line. That Crawler's back, and asking for you by name.", '守门卫兵来电话了。那辆爬行车又回来了，点名要见您。'),
 ];
 const BM_GREETINGS = [
   () => L("*salutes* Overseer. The convoy was light this year, but I kept the good stuff for you.", '*敬礼* 总督。今年车队货不多，但好东西我给你留着。'),
@@ -3796,9 +3914,9 @@ window.addEventListener('contextmenu', (e) => hand.dragging && e.preventDefault(
 hand.onDrop = (x, y) => {
   if (!overBoard(x, y)) return;
   if (view === 'rival') {
-    // A missile card dragged onto a rival tile aims it there.
+    // A missile card dragged onto a rival tile: the rocket flies out of the card onto it.
     hand.onDragMove(x, y);
-    aimAtPointer();
+    dropMissileOnRival();
     return;
   } // dropped back on the hand or a panel: nothing placed, the card stays picked
   hand.onDragMove(x, y);
@@ -3926,12 +4044,7 @@ function tryPlace() {
     return;
   }
   if (ACTIONS[piece.terrain]) {
-    if (piece.terrain === 'overtime' && turn.stockpile < OVERTIME_OIL) {
-      placement.reject();
-      buzz();
-      toast(L(`Need ${OVERTIME_OIL} oil to work overtime`, `熬夜加班需要 ${OVERTIME_OIL} 石油`), 'bad', 1600);
-      return;
-    }
+
     const played = piece.terrain;
     const fromHand = isPlayerMissile(played) ? worldFromHandCard() : null;
     hand.consume();
@@ -3988,7 +4101,7 @@ async function playMilFactoryScene() {
   const rivalCount = rivals.filter((r) => r.alive !== false).length;
   dialogue.open({ kind: 'fortune', kindLabel: () => L('Field Report', '前线报告'), title: () => L('The first Military Factory', '第一座军工厂') });
   const lines = [
-    ['Field Report', () => L('The Military Factory is running, Overseer. Its first missile will be ready in a year.', '军工厂已经投产，总督。第一枚导弹将在一年后造好。')],
+    ['Field Report', () => L("The Military Factory's up and running, Overseer. I've seen the schedule: our first missile should be ready in about a year.", '军工厂已经开工了，总督。我看过进度表：第一枚导弹大约一年后就能造好。')],
     ['The Overlord', () => L('A missile factory. So my Overseer has grown teeth.', '一座导弹工厂。看来我的总督长出獠牙了。')],
     ['The Overlord', () => L(`Look at the War Map. ${rivalCount} cities squat on my sands, pumping oil that should be mine.`, `看看战争地图。${rivalCount} 座城市盘踞在我的沙漠上，抽着本该属于我的石油。`)],
     ['The Overlord', () => L('Wipe them off it, every last one, and I may find you something grander than a Hive City to run.', '把它们从地图上抹掉，一座不留，我或许会给你一个比蜂巢城更宏伟的位置。')],
@@ -4174,19 +4287,17 @@ async function firePlayerMissile(cells, fromHand = null) {
   updateHUD();
 }
 
-function workOvertime(x, z) {
+async function workOvertime(x, z) {
   const cell = grid.get(x, z);
-  turn.stockpile -= OVERTIME_OIL;
   const need = yearLength();
   const idle = idleKeySet();
   if ((cell.missileProgress ?? 0) < need) cell.missileProgress = (cell.missileProgress ?? 0) + 1;
   if (cell.missileProgress >= need) {
-    const y = deliverFactory(cell, idle);
-    if (!y.stuck) toast(L(y.count > 1 ? 'Overtime finished missiles' : 'Overtime finished a missile', '加班赶出了导弹'), 'good');
+    const y = await finishFactoryMissile(cell, idle);
+    if (!y.stuck) toast(L(y.count > 1 ? 'Rush order finished missiles' : 'Rush order finished a missile', '赶工令造出了导弹'), 'good');
   } else {
     toast(L(`Factory progress ${cell.missileProgress} / ${need}`, `工厂进度 ${cell.missileProgress} / ${need}`), 'good');
   }
-  showOil(turn.stockpile, true);
   updateHUD();
 }
 
@@ -4291,10 +4402,9 @@ function playerBuildingCount() {
 
 // ---------- war: aiming at a rival city, then the attack phase ----------
 // Visiting a rival with missiles in the silo swaps the season hand for missile cards (as the strike screen did):
-// pick a card and click (or drag it onto) one of their tiles to aim it. Leaving the city puts unplayed cards back.
+// pick a card and drag it onto one of their tiles to aim it. Leaving the city puts unplayed cards back.
 // Aiming only marks the target (a reticle and flight path stay on it): everything aimed fires after End Turn.
 let rivalHand = null; // the season hand, saved while the missile cards are out
-let cardsPlayed = 0; // names each card aimed, so its tiles (a salvo's together) share one reticle
 let aimHover = null;
 let aimAt = null; // a salvo's cell under the cursor: its reticle centres there
 
@@ -4363,38 +4473,48 @@ function rivalCell() {
   return worldToHex(hit.x, hit.z);
 }
 
-/** Click on a rival tile: aim the selected missile card there, or take back a missile already aimed there. */
-function aimAtPointer() {
+/** Click an already-aimed tile to take that missile back. Aiming is drop-the-card only. */
+function takeBackAim() {
   const rival = rivalShown;
   const c = rivalCell();
   if (!rival || !c || view !== 'rival' || rival.alive === false) return;
-  const at = [c[0], c[1]];
-  const back = unqueueStrike(rival.id, at, !rivalHand);
-  if (back) {
-    if (rivalHand) {
-      hand.cards.push(pieceOf(back));
-      hand.render();
-    }
-    tick();
-  } else {
-    const piece = aimPiece();
-    if (!piece) return;
-    if (!rival.grid.has(at[0], at[1])) return toast(L('Aim at one of their tiles', '请瞄准对方的地块'), 'bad');
-    const before = queuedStrikes(rival.id).length;
-    if (piece.terrain === 'salvo') aimSalvo(rival, at);
-    else {
-      const size = blastExtra(grid, idleKeySet());
-      const taken = new Set();
-      for (const s of queuedStrikes(rival.id)) {
-        for (const [x, z] of s.cells ?? footprint(s.kind, s.at, s.size, rival.grid)) taken.add(plotKey(x, z));
-      }
-      const cells = footprint(piece.terrain, at, size, rival.grid, taken);
-      queueDrawn(rival.id, at, piece.terrain, size, { cells, card: `card${++cardsPlayed}` });
-      hand.consume();
-    }
-    confirm();
-    if (queuedStrikes(rival.id).length > before) tutorial.notify(piece.terrain === 'salvo' ? 'salvo' : 'aimed');
+  const back = unqueueStrike(rival.id, [c[0], c[1]], !rivalHand);
+  if (!back) return;
+  if (rivalHand) {
+    hand.cards.push(pieceOf(back));
+    hand.render();
   }
+  tick();
+  updateAimBar();
+  updateHUD();
+}
+
+let aimCardSeq = 0;
+
+/** Drag a missile card onto a rival tile: lock the aim (red tiles + path). It fires after End Turn. */
+function dropMissileOnRival() {
+  const rival = rivalShown;
+  const c = rivalCell();
+  if (!rival || !c || view !== 'rival' || rival.alive === false) return;
+  const piece = aimPiece();
+  if (!piece) return;
+  const at = [c[0], c[1]];
+  if (!rival.grid.has(at[0], at[1])) return toast(L('Aim at one of their tiles', '请瞄准对方的地块'), 'bad');
+  const before = queuedStrikes(rival.id).length;
+  if (piece.terrain === 'salvo') aimSalvo(rival, at);
+  else {
+    const size = blastExtra(grid, idleKeySet());
+    const taken = new Set();
+    for (const s of queuedStrikes(rival.id)) {
+      for (const [x, z] of s.cells ?? footprint(s.kind, s.at, s.size, rival.grid)) taken.add(plotKey(x, z));
+    }
+    const cells = footprint(piece.terrain, at, size, rival.grid, taken);
+    queueDrawn(rival.id, at, piece.terrain, size, { cells, card: `card${++aimCardSeq}`, centre: at });
+    hand.consume();
+  }
+  const aimedNow = queuedStrikes(rival.id).length;
+  confirm();
+  if (aimedNow > before) tutorial.notify(piece.terrain === 'salvo' ? 'salvo' : 'aimed');
   updateAimBar();
   updateHUD();
 }
@@ -4446,7 +4566,7 @@ $('btnRivalClear').addEventListener('click', (e) => {
   updateHUD();
 });
 
-// A click aims (a drag still turns the camera).
+// A click on an aimed tile takes that missile back (a drag still turns the camera). Aiming is a card drop.
 let aimDown = null;
 renderer.domElement.addEventListener('pointerdown', (e) => {
   aimDown = view === 'rival' && e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
@@ -4454,7 +4574,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
 renderer.domElement.addEventListener('pointerup', (e) => {
   if (!aimDown || e.button !== 0 || Math.hypot(e.clientX - aimDown.x, e.clientY - aimDown.y) > 6) return;
   aimDown = null;
-  aimAtPointer();
+  takeBackAim();
 });
 
 function missileAmmoInHand() {
@@ -4469,11 +4589,11 @@ function aimSalvo(rival, at) {
   if (!cells.length) return toast(L('Aim at one of their tiles', '请瞄准对方的地块'), 'bad');
   const size = blastExtra(grid, idleKeySet());
   const taken = new Set();
-  const card = `card${++cardsPlayed}`;
+  const card = `card${++aimCardSeq}`;
   for (let i = 0; i < cells.length; i++) {
     const blast = footprint(ammo[i].terrain, cells[i], size, rival.grid, taken);
     for (const [x, z] of blast) taken.add(plotKey(x, z));
-    queueDrawn(rival.id, cells[i], ammo[i].terrain, size, { cells: blast, card, centre: [at[0], at[1]] });
+    queueDrawn(rival.id, cells[i], ammo[i].terrain, size, { cells: blast, card, centre: at });
   }
   const used = new Set(ammo.slice(0, cells.length));
   hand.cards = hand.cards.filter((p) => p.terrain !== 'salvo' && !used.has(p));
@@ -4790,9 +4910,9 @@ async function briefAttack(mine, theirs) {
     const targets = [...new Set(mine.map((s) => s.to))].map(cityName).join(L(', ', '、'));
     const eta = etaTo((f) => f.from === 'player');
     lines.push(
-      () => L(`Missiles away, Overseer. ${plural(mine.length, 'warhead')} on course for ${targets}.`, `导弹已发射，总督。${mine.length} 枚弹头正飞向${targets}。`),
-      () => L(`Time to impact: about ${eta} seconds. Their Intercept Networks may bring some down before they land.`, `预计 ${eta} 秒后命中。对方的拦截网可能会在落地前击落其中一部分。`),
-      () => L('Zoom out to the War Map and dive into their city if you want to watch them hit.', '缩放到战争地图，再进入对方城市，就能亲眼看着它们落下。'),
+      () => L(`That's it, Overseer, they're away. ${plural(mine.length, 'warhead')}, heading for ${targets}.`, `发射了，总督，它们已经出发。${mine.length} 枚弹头，正飞向${targets}。`),
+      () => L(`About ${eta} seconds until they land. Their Intercept Networks will try to shoot some down, so don't count on every one.`, `大约 ${eta} 秒后落地。对方的拦截网会设法击落一部分，所以别指望每一枚都能命中。`),
+      () => L("If you'd like to watch, zoom out to the War Map and dive into their city. I'll keep the coffee warm.", '想亲眼看的话，就缩放到战争地图，再进入对方城市。咖啡我给您热着。'),
     );
   }
   if (incoming) {
@@ -4801,12 +4921,12 @@ async function briefAttack(mine, theirs) {
     const eta = etaTo((f) => f.to === 'player');
     const nets = [...grid.cells.values()].some((c) => c.terrain === 'intercept');
     lines.push(
-      () => L(`Overseer! Radar has picked up launches. ${from} has fired ${plural(at.length, 'missile')} at Hive City.`, `总督！雷达侦测到导弹发射。${from}向蜂巢城发射了 ${at.length} 枚导弹。`),
-      () => L(`First impact in about ${eta} seconds. The countdown at the top shows when they land.`, `约 ${eta} 秒后首枚命中。顶部的倒计时会显示它们何时落地。`),
+      () => L(`Overseer! Radar's just lit up. ${from} has fired ${plural(at.length, 'missile')} at us.`, `总督！雷达刚刚亮了。${from}朝我们发射了 ${at.length} 枚导弹。`),
+      () => L(`The first one lands in about ${eta} seconds. I've put the countdown at the top of your screen.`, `第一枚大约 ${eta} 秒后落地。我已经把倒计时放在您屏幕顶部了。`),
       nets
-        ? () => L('Our Intercept Networks will fire on anything that comes near them, as long as we have the oil to spend.', '只要石油够用，我们的拦截网会向靠近的导弹开火。')
-        : () => L('We have no Intercept Networks, Overseer. Whatever they fired will get through.', '我们没有拦截网，总督。他们打来的每一枚都会命中。'),
-      () => L('Stay with the city to watch them come in, or take cover on the War Map. Your call.', '留在城里看着它们落下，或者退到战争地图上。由您决定。'),
+        ? () => L('Our Intercept Networks are tracking them. The gun crews will bring down what they can.', '我们的拦截网正在追踪它们。炮手们会尽量把它们打下来。')
+        : () => L("We've no Intercept Networks, Overseer. I'm sorry. Everything they fired is going to land.", '我们没有拦截网，总督。很抱歉。他们打来的每一枚都会落地。'),
+      () => L("You can stay and watch them come in, or step back to the War Map. Your call. I'll be right here.", '您可以留下来看着它们落下，也可以退回战争地图。由您决定。我就在这儿。'),
     );
     buzz();
   }
@@ -5580,7 +5700,7 @@ function frame(now) {
   neonTiles.update(dt, time);
   // Outlines where the card being placed (or hovered) would be boosted.
   const placing = hand.piece;
-  boostHints.update(dt, time, grid, (placing ?? hand.hoveredPiece)?.terrain ?? null, Boolean(placing), placing && !rig.isDragging ? hoveredCell() : null);
+  boostHints.update(dt, time, grid, (placing ?? hand.hoveredPiece)?.terrain ?? null, Boolean(placing), placing && !rig.isDragging ? hoveredCell() : null, placing && placement.result && !placement.result.ok);
   perf.end('ships');
   perf.begin('frontier+mysteries');
   frontier.update(dt, time);
@@ -5593,6 +5713,7 @@ function frame(now) {
   perf.begin('map icons');
   zoomIcons.update(grid);
   perf.end('map icons');
+  updateInterceptCover(time);
   perf.begin('expansion');
   checkExpansion();
   const cell = rig.isDragging ? null : hoveredCell();

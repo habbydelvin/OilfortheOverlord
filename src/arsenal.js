@@ -1,9 +1,8 @@
 import { DIRS, hexesAround } from './grid.js';
-import { MISSILE } from './missiles.js';
 
 /** Oil a Military Factory spends each season it works. */
 export const FACTORY_OIL = 3;
-/** Oil Work Overtime spends to add one season of progress. */
+/** Rush Order used to spend oil on play; it is free to play now (shop price is 2 barrels). */
 export const OVERTIME_OIL = 2;
 /** Oil an Intercept Network spends to stop one incoming hit. */
 /**
@@ -33,6 +32,11 @@ try {
 } catch {
   /* keep defaults */
 }
+export const INTERCEPT_PARAMS = [
+  { group: 'Intercept' },
+  { key: 'range', label: 'Coverage (cells)', min: 1, max: 5, step: 1, hint: '1 = adjacent hexes only' },
+  { key: 'chance', label: 'Stop chance', min: 0.1, max: 1, step: 0.05 },
+];
 export const saveIntercept = () => localStorage.setItem(INTERCEPT_KEY, JSON.stringify(INTERCEPT));
 export const clearIntercept = () => {
   localStorage.removeItem(INTERCEPT_KEY);
@@ -59,16 +63,19 @@ export function factoryYield(grid, cell, idleKeys) {
   return { count: 1 + labs, kind: 'missile' };
 }
 
-/** Staffed Warhead Institutes: each grows blast by 1×1 (0 labs = 1×1, 1 lab = 2×2). */
+/** Staffed Warhead Institutes on this board (each adds one extra hex to a missile). */
 export function warheadRadius(grid, idleKeys) {
   let n = 0;
   for (const c of grid.cells.values()) if (c.terrain === 'warhead' && !idleAt(idleKeys, c)) n++;
   return n;
 }
 
-/** Extra n×n steps: debug blast slider plus staffed Warhead Institutes. */
+/**
+ * Extra hexes beyond the aimed tile. Only staffed Warhead Institutes add any.
+ * `footprint` always does 1 (the aim) + this. The debug Blast slider is combat-test only.
+ */
 export function blastExtra(grid, idleKeys) {
-  return Math.max(0, (MISSILE.blast ?? 1) - 1) + warheadRadius(grid, idleKeys);
+  return warheadRadius(grid, idleKeys);
 }
 
 /** Intercept Networks adjacent to a cell, in placement order. */
@@ -77,7 +84,7 @@ export function interceptorsBeside(grid, x, z) {
 }
 
 /** How far (in cells) an Intercept Network covers in the attack phase. */
-export const INTERCEPT_RANGE = 2;
+export const INTERCEPT_RANGE = 1;
 
 /** Intercept Networks within `range` cells of (x, z), nearest first. */
 export function interceptorsNear(grid, x, z, range = INTERCEPT.range) {

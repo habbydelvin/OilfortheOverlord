@@ -287,6 +287,13 @@ document.getElementById('applyTune').addEventListener('click', (e) => {
     say(`Bad tuning JSON: ${err.message}`);
   }
 });
+document.getElementById('giveMissile').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  if (busy) return;
+  silo++;
+  renderHand();
+  paint();
+});
 document.getElementById('resetCity').addEventListener('click', () => {
   if (busy) return;
   oil = 9;

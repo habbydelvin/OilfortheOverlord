@@ -18,6 +18,7 @@ export const NEON = {
   station: 0xb44dff,
   settlement: 0xff8a2a,
   milfactory: 0xff5a3a,
+  missilelab: 0xffb020,
 };
 const BOOSTERS = {
   farm: ['pump', 'oasis', 'capital'],

@@ -108,8 +108,8 @@ export async function playBanditScene({ dialogue, turn, camp, clearCamp, pinMili
   await dialogue.say(
     REPORT,
     L(
-      'Three of your supply convoys never reached the Hive City. Burnt-out trucks were found in the empty wastes past the city edge.',
-      '你的三支补给车队没能抵达蜂巢城。在城市边缘外的空旷荒野中发现了烧毁的卡车残骸。',
+      "Overseer, bad news, I'm afraid. Three of our convoys didn't come in last night. I sent a patrol out: they found the trucks burnt out in the wastes past the city edge.",
+      '总督，恐怕是坏消息。昨晚有三支车队没回来。我派了巡逻队出去，他们在城市边缘外的荒野里找到了烧毁的卡车。',
     ),
   );
   await dialogue.say(

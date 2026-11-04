@@ -9,7 +9,7 @@ import { MISSILE } from './missiles.js';
  * for the board (main.js applies the player's craters with its own cinematic).
  *
  * Rules, the same for every city:
- *  - Blast is the aimed tile plus `size` extra neighbouring tiles (debug blast + Warhead Institutes).
+ *  - Blast is the aimed tile plus `size` extra neighbouring tiles (staffed Warhead Institutes; the debug blast slider is combat-test only).
  *  - Intercept Networks are simulated (interceptSim.js): turrets turn, fire one stream each, and missiles with hidden
  *    HP burst when the rounds wear them down. Upkeep is paid in the season's oil (economy.js), not per shot.
  *  - A hit turns the tiles into Toxic Craters. A hit on the Capital costs it HP (1, or 2 for a warhead) instead;
@@ -25,7 +25,7 @@ export const GRACE_ROUNDS = 1;
 
 export function footprint(kind, [x, z], size, grid, taken) {
   const extra = size ?? (kind === 'missile2' ? 1 : 0);
-  const n = Math.max(1, 1 + extra);
+  const n = 1 + Math.max(0, extra);
   const around = hexesAround(x, z, 5);
   if (!grid || n <= 1) return around.slice(0, n);
   const origin = around[0];
