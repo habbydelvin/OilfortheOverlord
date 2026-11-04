@@ -258,8 +258,17 @@ export class Tutorial {
     this.quietUntil = 0;
     this.framedPath = false;
     this.seasonsPlayed = 0;
-    for (const f of this.fx) f.el?.remove();
+    // Every short demonstration still on screen goes, with all its tokens: a reset mid-commission or mid-tribute must
+    // not leave a barrel behind on the Overlord's face. Whatever waits on one (the tribute) carries on.
+    for (const f of this.fx) {
+      f.el?.remove();
+      for (const t of f.tokens ?? []) t.remove();
+      f.done?.();
+    }
     this.fx = [];
+    this.tokensEl?.replaceChildren(); // (lesson and forecast tokens too: they're made again as needed)
+    this.viewTokens = [];
+    this.fcTokens = [];
   }
 
   /** No visible text: the buttons only have names for screen readers. */
