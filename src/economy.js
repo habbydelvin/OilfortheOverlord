@@ -2,10 +2,10 @@ import { DIRS } from './grid.js';
 import { TERRAINS } from './tiles.js';
 import { SCALE, scaled } from './scalingConfig.js';
 import { L } from './i18n.js';
-import { FACTORY_OIL, INTERCEPT, DECOY } from './arsenal.js';
+import { FACTORY_OIL, INTERCEPT, DECOY, isMilitaryLab, labOilCost } from './arsenal.js';
 
-/** Workers each building needs to run. */
-export const WORKERS = { farm: 1, station: 1, refinery: 1, missilelab: 2, warhead: 2, magazine: 2, decoyworks: 2, booster: 2 };
+/** Workers each building needs to run. Research buildings are not staffed: they spend oil while under construction. */
+export const WORKERS = { farm: 1, station: 1, refinery: 1, magazine: 2, decoyworks: 2 };
 
 /**
  * Calculates one season of the economy from the current grid.
@@ -289,13 +289,27 @@ export function computeEconomy(grid, state = {}) {
   // Intercept Networks are kept manned out of the season's oil (they never run out of rounds in a fight).
   const interceptOil = (counts.intercept ?? 0) * (INTERCEPT.upkeep ?? 0);
   for (const per of perCell) if (per.terrain === 'intercept') per.oil -= INTERCEPT.upkeep ?? 0;
-  // Staffed Decoy Builder spend their oil out of the season's yield too.
+  // Staffed Decoy Builders spend their oil out of the season's yield too.
   let decoyOil = 0;
   for (const per of perCell) {
     if (per.terrain !== 'decoyworks' || per.idle) continue;
     per.oil -= DECOY.oil;
     decoyOil += DECOY.oil;
   }
+  // Research still under construction. The stockpile pays this when the year-bar charges (labsPaid), so it is
+  // tracked here and not taken out of the season yield a second time.
+  let recipeOil = 0;
+  let warheadOil = 0;
+  let boosterOil = 0;
+  for (const per of perCell) {
+    if (!isMilitaryLab(per.terrain) || grid.get(per.x, per.z)?.built) continue;
+    const cost = labOilCost(per.terrain);
+    per.oil -= cost;
+    if (per.terrain === 'missilelab') recipeOil += cost;
+    else if (per.terrain === 'warhead') warheadOil += cost;
+    else boosterOil += cost;
+  }
+  const labOil = recipeOil + warheadOil + boosterOil;
   const oil = oilMade - oilStolen - interceptOil - decoyOil;
 
   // Per-tile: farms grow at the staffing rate; final oil is shared out over stations by their crude
@@ -393,6 +407,11 @@ export function computeEconomy(grid, state = {}) {
     oilMade,
     factoryOil,
     interceptOil,
+    decoyOil,
+    recipeOil,
+    warheadOil,
+    boosterOil,
+    labOil,
     mods,
     foodGrown,
     foodEaten: totalEaten,

@@ -28,7 +28,7 @@ import { Mysteries } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
 import { computeEconomy, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS } from './economy.js';
-import { FACTORY_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, blastExtra } from './arsenal.js';
+import { FACTORY_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, blastExtra, isMilitaryLab, labOilCost } from './arsenal.js';
 import { pieceOf } from './pieces.js';
 import { findCiws } from './interceptMesh.js';
 import { queueDrawn, addMissile, missileCount, missileKinds, trimMissiles, resetMissiles, openCityStrike, drawStrikeHand, returnStrikeHand, bindCityStrikeUi, queueStrike, unqueueStrike, queuedStrikes, takeQueue, clearQueue } from './cityStrike.js';
@@ -504,7 +504,15 @@ function addTile(x, z, terrain, delay = 0, instant = false, { bare = false, rot 
   mesh.position.set(w.x, 0, w.z);
   mesh.visible = instant;
   tiles.add(mesh);
-  grid.set(x, z, { terrain, mesh, onRuins, missileProgress: terrain === 'milfactory' ? 0 : undefined });
+  grid.set(x, z, {
+    terrain,
+    mesh,
+    onRuins,
+    missileProgress: terrain === 'milfactory' ? 0 : undefined,
+    buildProgress: isMilitaryLab(terrain) ? 0 : undefined,
+    built: isMilitaryLab(terrain) ? false : undefined,
+    buildHalted: isMilitaryLab(terrain) ? false : undefined,
+  });
   if (!instant) anims.push({ mesh, t: -delay, landed: false });
 }
 
@@ -1316,19 +1324,23 @@ const factoryBarV = new THREE.Vector3();
  * The highest points of a tile's model (smoke aside), in its holder's own space: what a label above it has to clear
  * on screen. A few dozen vertices off the top, so projecting them each frame costs next to nothing.
  */
+const _topBox = new THREE.Box3();
+const _topV = new THREE.Vector3();
 function topPoints(holder) {
+  if (holder.userData.topPts) return holder.userData.topPts;
   holder.updateMatrixWorld(true);
   const toHolder = new THREE.Matrix4().copy(holder.matrixWorld).invert();
-  const pts = [];
+  let maxY = 0.9;
   holder.traverse((o) => {
-    if (!o.isMesh || o.isSkinnedMesh) return;
+    if (!o.isMesh || o.isSkinnedMesh || !o.geometry) return;
     for (let q = o; q && q !== holder; q = q.parent) if (/Smoke|Steam/.test(q.name)) return;
-    const m = new THREE.Matrix4().multiplyMatrices(toHolder, o.matrixWorld);
-    const p = o.geometry.attributes.position;
-    const step = Math.max(1, Math.floor(p.count / 300));
-    for (let i = 0; i < p.count; i += step) pts.push(new THREE.Vector3().fromBufferAttribute(p, i).applyMatrix4(m));
+    if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+    const y = _topBox.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld).max.y;
+    _topV.set(0, y, 0).applyMatrix4(toHolder);
+    if (_topV.y > maxY) maxY = _topV.y;
   });
-  return pts.sort((a, b) => b.y - a.y).slice(0, 48);
+  holder.userData.topPts = [new THREE.Vector3(0, maxY, 0)];
+  return holder.userData.topPts;
 }
 const FACTORY_FILL_MS = 450;
 const FACTORY_HOP = 0.5;
@@ -1336,6 +1348,8 @@ const factoryFloaters = [];
 const factoryHops = [];
 const factoryJobs = [];
 const factoryPaid = [];
+const labsPaid = [];
+let labOilPool = 0;
 
 function previewFactoryBar(x, z) {
   const c = grid.get(x, z);
@@ -1346,7 +1360,7 @@ function previewFactoryBar(x, z) {
     rec = { el: null, filled: -1, need: 0, preview: null };
     factoryBars.set(k, rec);
   }
-  rec.preview = Math.min(yearLength(), (c.missileProgress ?? 0) + 1);
+  rec.preview = Math.min(yearLength(), ((c.terrain === 'milfactory' ? c.missileProgress : c.buildProgress) ?? 0) + 1);
 }
 
 function hopFactory(cell) {
@@ -1391,7 +1405,6 @@ async function chargeOneFactory(cell) {
   await wait(FACTORY_FILL_MS / 2000);
   if (run !== runId) return { count: 0 };
   thud();
-  const completing = (cell.missileProgress ?? 0) + 1 >= need;
   await hopFactory(cell);
   if (run !== runId) return { count: 0 };
   factoryPaid.push(cell);
@@ -1400,6 +1413,57 @@ async function chargeOneFactory(cell) {
   const rec = factoryBars.get(`${cell.x},${cell.z}`);
   if (rec) rec.preview = null;
   return { count: 0 };
+}
+
+function oilPoolForLabs(e = economyNow()) {
+  let oil = turn.stockpile + e.oil;
+  const need = yearLength();
+  for (const c of grid.cells.values()) {
+    if (c.terrain !== 'milfactory') continue;
+    if ((c.missileProgress ?? 0) >= need) continue;
+    oil -= FACTORY_OIL;
+  }
+  return oil;
+}
+
+/** One season of construction on a Recipe Lab or Warhead Institute. Finished labs stop paying oil. */
+async function chargeOneLab(cell) {
+  if (cell.built) return;
+  const need = yearLength();
+  const cost = labOilCost(cell.terrain);
+  const run = runId;
+  if (labOilPool < cost) {
+    cell.buildHalted = true;
+    return;
+  }
+  labOilPool -= cost;
+  cell.buildHalted = false;
+  spawnFactoryFloater(cell, `<div class="row neg" style="--c:#ff5a44"><b>-${cost}</b>${ICONS.oil}</div>`);
+  await flyOilToFactory(cell, cost);
+  if (run !== runId) return;
+  previewFactoryBar(cell.x, cell.z);
+  await wait(FACTORY_FILL_MS / 2000);
+  if (run !== runId) return;
+  thud();
+  await hopFactory(cell);
+  if (run !== runId) return;
+  labsPaid.push(cell);
+  cell.buildProgress = (cell.buildProgress ?? 0) + 1;
+  if (cell.buildProgress >= need) {
+    cell.built = true;
+    dropLabBar(cell);
+    toast(
+      cell.terrain === 'warhead'
+        ? L('Warhead Institute finished: missiles hit +1 tile', '弹头研究所建设完成：导弹多打 1 格')
+        : cell.terrain === 'booster'
+          ? L('Launch Accelerator finished: nearby launches fly faster', '发射加速器建设完成：附近发射的导弹飞得更快')
+          : L('Recipe Lab finished: neighbouring factories produce +1 Missile', '配方改良所建设完成：相邻工厂产量 +1'),
+      'good',
+    );
+    return;
+  }
+  const rec = factoryBars.get(`${cell.x},${cell.z}`);
+  if (rec) rec.preview = null;
 }
 
 async function finishFactoryMissile(cell, idle) {
@@ -1614,7 +1678,7 @@ function updateFactoryBars() {
   const need = yearLength();
   const live = new Set();
   for (const c of grid.cells.values()) {
-    if (c.terrain !== 'milfactory') continue;
+    if (c.terrain !== 'milfactory' && !(isMilitaryLab(c.terrain) && !c.built)) continue;
     const k = `${c.x},${c.z}`;
     live.add(k);
     let rec = factoryBars.get(k);
@@ -1625,17 +1689,30 @@ function updateFactoryBars() {
       rec = rec ? Object.assign(rec, { el }) : { el, filled: -1, need: 0, preview: null };
       factoryBars.set(k, rec);
     }
-    const filled = rec.preview ?? c.missileProgress ?? 0;
+    const filled = rec.preview ?? (c.terrain === 'milfactory' ? c.missileProgress : c.buildProgress) ?? 0;
     if (rec.need !== need || rec.el.querySelectorAll('i').length !== need) {
       rec.need = need;
+      const halt = rec.el.querySelector('.halt-label');
       rec.el.innerHTML = Array.from({ length: need }, () => '<i></i>').join('');
+      if (halt) rec.el.prepend(halt);
       rec.filled = -1;
     }
+    rec.el.classList.toggle('halted', Boolean(c.buildHalted));
+    let tag = rec.el.querySelector('.halt-label');
+    if (c.buildHalted) {
+      if (!tag) {
+        tag = document.createElement('b');
+        tag.className = 'halt-label';
+        rec.el.prepend(tag);
+      }
+      const haltText = L('Construction stopped', '停止建设');
+      if (tag.textContent !== haltText) tag.textContent = haltText;
+    } else if (tag) tag.remove();
     if (rec.filled !== filled) {
       const prev = rec.filled;
       rec.filled = filled;
       rec.el.classList.toggle('snap', filled === 0 && prev === need);
-      [...rec.el.children].forEach((pip, i) => pip.classList.toggle('on', i < filled));
+      [...rec.el.querySelectorAll('i')].forEach((pip, i) => pip.classList.toggle('on', i < filled));
     }
     // Centred over its cell, just above the factory as it shows on screen (the highest of its top points).
     if (rec.mesh !== c.mesh) {
@@ -1772,6 +1849,138 @@ function setRes(id, amount, change) {
 const greyTwin = new Map(); // material -> its grey twin
 const greyOrigin = new Map(); // grey twin -> material
 const GREY_GLSL = '#include <color_fragment>\n  diffuseColor.rgb = vec3(dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114))) * 0.6;';
+const BUILD_REVEAL_GLSL = `#include <color_fragment>
+  float n = fract(sin(dot(vBuildPos.xz * 11.3 + vBuildPos.y * 7.1, vec2(127.1, 311.7))) * 43758.5453);
+  n = mix(n, fract(sin(dot(vBuildPos.xy * 19.0, vec2(269.5, 183.3))) * 43758.5453), 0.4);
+  float painted = smoothstep(n - 0.1, n + 0.16, uDissolve);
+  float lum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+  vec3 unfinished = vec3(0.16, 0.15, 0.13) + lum * 0.12;
+  diffuseColor.rgb = mix(unfinished, diffuseColor.rgb, painted);`;
+const BUILD_U = { uDissolve: { value: 0 } };
+const BUILD_GROUND = /Ground|GroundTrim|FrontApron|Foundation|Plinth|Hex|Sand|Soil|Dirt|CargoPad/i;
+const BUILD_FX = /Smoke|Steam|Dust/i;
+const _partSize = new THREE.Vector3();
+
+function isGroundMesh(o) {
+  if (BUILD_GROUND.test(o.name)) return true;
+  if (!o.geometry) return false;
+  if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+  o.geometry.boundingBox.getSize(_partSize);
+  const span = Math.max(_partSize.x, _partSize.z);
+  return span > 0.7 && _partSize.y < span * 0.12;
+}
+
+function assignBuildParts(root) {
+  const body = [];
+  const ground = [];
+  root.updateMatrixWorld(true);
+  root.traverse((o) => {
+    if (!o.isMesh || !o.geometry) return;
+    if (BUILD_FX.test(o.name)) return;
+    const rec = { o };
+    if (isGroundMesh(o)) ground.push(rec);
+    else body.push(rec);
+  });
+  const first = 1 / Math.max(2, yearLength());
+  for (const rec of body) rec.o.userData.buildPart = first * 0.5;
+  for (const rec of ground) rec.o.userData.buildPart = 2;
+}
+
+const buildPatchCache = new WeakMap();
+
+function patchBuildReveal(mat) {
+  const hit = buildPatchCache.get(mat);
+  if (hit) return hit;
+  const c = mat.clone();
+  if (c.emissive) c.emissiveIntensity = 0;
+  const prev = c.onBeforeCompile;
+  const key = c.customProgramCacheKey?.call(c) ?? '';
+  c.onBeforeCompile = (shader, renderer) => {
+    prev?.call(c, shader, renderer);
+    shader.uniforms.uDissolve = BUILD_U.uDissolve;
+    shader.vertexShader = `varying vec3 vBuildPos;\n${shader.vertexShader}`.replace(
+      '#include <begin_vertex>',
+      '#include <begin_vertex>\n  vBuildPos = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+    );
+    if (!shader.vertexShader.includes('vBuildPos =')) {
+      shader.vertexShader = shader.vertexShader.replace(
+        'void main() {',
+        'void main() {\n  vBuildPos = (modelMatrix * vec4(position, 1.0)).xyz;',
+      );
+    }
+    shader.fragmentShader = `varying vec3 vBuildPos;\nuniform float uDissolve;\n${shader.fragmentShader}`.replace(
+      '#include <color_fragment>',
+      BUILD_REVEAL_GLSL,
+    );
+  };
+  c.customProgramCacheKey = () => `${key}|build-reveal-dissolve`;
+  c.needsUpdate = true;
+  buildPatchCache.set(mat, c);
+  return c;
+}
+
+function ensureBuildReveal(cell) {
+  const mesh = cell.mesh;
+  if (!mesh) return null;
+  if (mesh.userData.buildState) return mesh.userData.buildState;
+  assignBuildParts(mesh);
+  const state = { uBuild: { value: 0 }, orig: new Map(), draw: new Map() };
+  mesh.traverse((o) => {
+    if (!o.isMesh || !o.material || BUILD_FX.test(o.name)) return;
+    state.orig.set(o, o.material);
+    state.draw.set(o, o.onBeforeRender);
+    o.userData.buildDissolve = 0;
+    o.material = Array.isArray(o.material) ? o.material.map(patchBuildReveal) : patchBuildReveal(o.material);
+    o.onBeforeRender = () => {
+      BUILD_U.uDissolve.value = o.userData.buildDissolve ?? 0;
+    };
+  });
+  mesh.userData.buildState = state;
+  return state;
+}
+
+function clearBuildReveal(cell) {
+  const mesh = cell.mesh;
+  const state = mesh?.userData.buildState;
+  if (!state) return;
+  for (const [o, mat] of state.orig) {
+    if (o.material) o.material = mat;
+    o.onBeforeRender = state.draw.get(o) ?? null;
+  }
+  delete mesh.userData.buildState;
+}
+
+function dropLabBar(cell) {
+  const k = `${cell.x},${cell.z}`;
+  const rec = factoryBars.get(k);
+  if (!rec) return;
+  rec.el?.remove();
+  factoryBars.delete(k);
+}
+
+function updateBuildReveal(dt) {
+  const need = yearLength();
+  const step = dt * 1.4;
+  for (const cell of grid.cells.values()) {
+    if (!isMilitaryLab(cell.terrain) || !cell.mesh) continue;
+    if (anims.some((a) => a.mesh === cell.mesh && !a.landed)) continue;
+    const state = cell.built ? cell.mesh.userData.buildState : ensureBuildReveal(cell);
+    if (!state) continue;
+    const rec = factoryBars.get(`${cell.x},${cell.z}`);
+    const filled = rec?.preview ?? cell.buildProgress ?? 0;
+    const progress = cell.built ? 2 : Math.max(0, Math.min(1, filled / need));
+    let pending = false;
+    cell.mesh.traverse((o) => {
+      if (o.userData.buildPart == null) return;
+      const goal = progress + 0.001 >= o.userData.buildPart ? 1 : 0;
+      const d = o.userData.buildDissolve ?? 0;
+      const next = d + Math.sign(goal - d) * Math.min(Math.abs(goal - d), step);
+      o.userData.buildDissolve = next;
+      if (goal > 0 && next < 0.995) pending = true;
+    });
+    if (cell.built && !pending) clearBuildReveal(cell);
+  }
+}
 function greyOf(m) {
   if (greyOrigin.has(m)) return m;
   let g = greyTwin.get(m);
@@ -1805,6 +2014,12 @@ function shadeIdle(e = economyNow()) {
   const need = yearLength();
   for (const cell of grid.cells.values()) {
     if (!cell.mesh) continue;
+    if (isMilitaryLab(cell.terrain) && (!cell.built || cell.mesh.userData.buildState)) {
+      setGrey(cell.mesh, false);
+      const falling = anims.some((a) => a.mesh === cell.mesh && !a.landed);
+      if (!cell.built && !falling) ensureBuildReveal(cell);
+      continue;
+    }
     const blocked =
       cell.terrain === 'milfactory' && (cell.missileProgress ?? 0) >= need && missileHandCount() >= currentMissileCap();
     setGrey(cell.mesh, idle.has(`${cell.x},${cell.z}`) || blocked);
@@ -1872,6 +2087,21 @@ function runFactories() {
     if (cell.missileProgress < need) continue;
     made.push(deliverFactory(cell, idle));
   }
+  for (const cell of grid.cells.values()) {
+    if (!isMilitaryLab(cell.terrain) || cell.built) continue;
+    const cost = labOilCost(cell.terrain);
+    if (turn.stockpile < cost) {
+      cell.buildHalted = true;
+      continue;
+    }
+    cell.buildHalted = false;
+    turn.stockpile -= cost;
+    cell.buildProgress = (cell.buildProgress ?? 0) + 1;
+    if (cell.buildProgress >= need) {
+      cell.built = true;
+      dropLabBar(cell);
+    }
+  }
   return made;
 }
 
@@ -1938,7 +2168,8 @@ function updateHUD() {
   $('resMpD').className = e.idle ? 'down' : '';
   shadeIdle(e);
   // Oil: big number = the stockpile (the Overlord takes it all after Winter), small = this season's yield.
-  $('resOilD').textContent = e.factoryOil ? `(+${e.oil} −${e.factoryOil})` : `(+${e.oil})`;
+  const oilUpkeep = (e.factoryOil || 0) + (e.labOil || 0);
+  $('resOilD').textContent = oilUpkeep ? `(+${e.oil} −${oilUpkeep})` : `(+${e.oil})`;
   $('resOilD').className = e.oil > 0 ? 'up' : '';
   const cap = currentMissileCap(idleKeySet(e));
   trimMissiles(cap);
@@ -2044,6 +2275,7 @@ function breakdown(kind, e) {
     add(L(`Hydro-farms ×${c('farm')}`, `${nm('farm')} ×${c('farm')}`), -c('farm'));
     add(L(`Stations ×${c('station')}`, `${nm('station')} ×${c('station')}`), -c('station'));
     add(L(`Refineries ×${c('refinery')}`, `${nm('refinery')} ×${c('refinery')}`), -c('refinery'));
+    add(L(`Magazines ×${c('magazine')}`, `${nm('magazine')} ×${c('magazine')}`), -2 * c('magazine'));
     total(e.idle ? L('Idle', '闲置') : L('Free', '空闲'), e.idle ? e.idle : e.free);
     note(
       e.idle
@@ -2051,7 +2283,7 @@ function breakdown(kind, e) {
             `Not enough workers: your ${e.idle} newest building${e.idle === 1 ? '' : 's'} sit idle and produce nothing`,
             `人力不足：你最新建造的 ${e.idle} 座建筑处于闲置，没有任何产出`,
           )
-        : L('Each farm, station and refinery needs 1 worker. Housing raises the cap.', '每座农场、采油站和炼油厂各需 1 人力。住房能提高上限。'),
+        : L('Farms, stations and refineries need 1 worker; Magazines need 2. Housing raises the cap.', '农场、采油站和炼油厂各需 1 人力；储弹仓需 2。住房能提高上限。'),
     );
   } else {
     add(L(`Stations ×${c('station')}`, `${nm('station')} ×${c('station')}`), 2 * c('station'));
@@ -2066,6 +2298,9 @@ function breakdown(kind, e) {
     mul(L('Hunger', '饥饿'), e.fed);
     add(L('Settlement tax', `${nm('settlement')}税收`), e.taxOil);
     add(L(`Siphoner camps ×${c('bandit_siphon')}`, `${nm('bandit_siphon')} ×${c('bandit_siphon')}`), -e.oilStolen);
+    add(L(`Recipe Labs ×${c('missilelab')}`, `${nm('missilelab')} ×${c('missilelab')}`), -(e.recipeOil ?? 0));
+    add(L(`Warhead Institutes ×${c('warhead')}`, `${nm('warhead')} ×${c('warhead')}`), -(e.warheadOil ?? 0));
+    add(L(`Launch Accelerators ×${c('booster')}`, `${nm('booster')} ×${c('booster')}`), -(e.boosterOil ?? 0));
     total(L('This season', '本季'), signed(e.oil));
     note(
       L(
@@ -2201,7 +2436,7 @@ function placedCardExtra(per) {
 function inspectKeyOf(c, per) {
   const mods = (per?.mods ?? []).map((m) => `${m.id}:${m.oil ?? ''}:${m.n ?? ''}:${m.pct ?? ''}:${m.fed ?? ''}`).join(',');
   const grants = (per?.grants ?? []).map((g) => `${g.terrain}:${g.food ?? 0}:${g.oil ?? 0}`).join(',');
-  return `${c.x},${c.z},${c.terrain},${isZh() ? 1 : 0},${c.onRuins ? 1 : 0},${c.missileProgress ?? ''},${c.decoyProgress ?? ''},${c.terrain === 'magazine' || c.terrain === 'decoyworks' ? Number(isBoosted(grid, c.x, c.z)) : ''}|${mods}|${grants}|${per?.outFood}|${per?.outOil}|${per?.outManpower}|${per?.food}|${per?.oil}|${per?.idle ? 1 : 0}`;
+  return `${c.x},${c.z},${c.terrain},${isZh() ? 1 : 0},${c.onRuins ? 1 : 0},${c.missileProgress ?? ''},${c.decoyProgress ?? ''},${c.buildProgress ?? ''},${c.built ? 1 : 0},${c.buildHalted ? 1 : 0},${c.terrain === 'magazine' || c.terrain === 'decoyworks' ? Number(isBoosted(grid, c.x, c.z)) : ''}|${mods}|${grants}|${per?.outFood}|${per?.outOil}|${per?.outManpower}|${per?.food}|${per?.oil}|${per?.idle ? 1 : 0}`;
 }
 /** Shrink the rules until they sit under the picture. The name keeps its size unless it overflows the header. */
 function fitInspectCard(root) {
@@ -2282,6 +2517,16 @@ function updateInspect(cell) {
     const have = c.missileProgress ?? 0;
     notes.push(L(`Missile progress ${have} / ${need} seasons`, `导弹进度 ${have} / ${need} 季`));
   }
+  if (isMilitaryLab(c.terrain)) {
+    const need = yearLength();
+    notes.push(
+      c.built
+        ? L('Construction finished: bonus is permanent', '建设完成：加成为永久')
+        : c.buildHalted
+          ? L(`Construction stopped (no oil) ${c.buildProgress ?? 0} / ${need}`, `停止建设（没有石油） ${c.buildProgress ?? 0} / ${need}`)
+          : L(`Under construction ${c.buildProgress ?? 0} / ${need}`, `建设中 ${c.buildProgress ?? 0} / ${need}`),
+    );
+  }
   if (c.terrain === 'magazine') {
     const cap = currentMissileCap();
     notes.push(L(`Silo ${missileHandCount()} / ${cap}`, `弹库 ${missileHandCount()} / ${cap}`));
@@ -2307,6 +2552,34 @@ function updateInspect(cell) {
     ${notes.map((n) => `<div class="note">${n}</div>`).join('')}`;
   el.classList.remove('hidden');
   fitInspectCard(el);
+}
+
+const buildHoverV = new THREE.Vector3();
+function updateBuildHover(cell) {
+  const el = $('buildHover');
+  if (!el) return;
+  const c = cell ? grid.get(cell[0], cell[1]) : null;
+  const show = view === 'board' && c && isMilitaryLab(c.terrain) && !c.built && !c.buildHalted && c.mesh;
+  if (!show) {
+    el.classList.add('hidden');
+    return;
+  }
+  const need = yearLength();
+  const text = c.buildHalted
+    ? L(`Construction stopped ${c.buildProgress ?? 0} / ${need}`, `停止建设 ${c.buildProgress ?? 0} / ${need}`)
+    : L(`Under construction ${c.buildProgress ?? 0} / ${need}`, `建设中 ${c.buildProgress ?? 0} / ${need}`);
+  el.classList.toggle('halted', Boolean(c.buildHalted));
+  if (el.textContent !== text) el.textContent = text;
+  el.classList.remove('hidden');
+  const w = hexToWorld(c.x, c.z);
+  buildHoverV.set(w.x, 0, w.z).project(camera);
+  const px = (buildHoverV.x * 0.5 + 0.5) * window.innerWidth;
+  let top = buildHoverV.y;
+  const rec = factoryBars.get(`${c.x},${c.z}`);
+  const pts = rec?.top ?? (c.mesh ? topPoints(c.mesh) : []);
+  for (const p of pts) top = Math.max(top, buildHoverV.copy(p).applyMatrix4(c.mesh.matrixWorld).project(camera).y);
+  const py = (-top * 0.5 + 0.5) * window.innerHeight;
+  el.style.transform = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px) translate(-50%, calc(-100% - 28px))`;
 }
 
 // ---------- turns ----------
@@ -2389,6 +2662,10 @@ function finishSeasonFx(e) {
     turn.total += e.oil;
     for (const cell of factoryPaid.splice(0)) {
       if (turn.stockpile >= FACTORY_OIL) turn.stockpile -= FACTORY_OIL;
+    }
+    for (const cell of labsPaid.splice(0)) {
+      const cost = labOilCost(cell.terrain);
+      if (turn.stockpile >= cost) turn.stockpile -= cost;
     }
     showOil(turn.stockpile);
     document.body.classList.remove('paying');
@@ -2475,12 +2752,16 @@ function runPayout(e, onDone) {
     }
   }
   const tiles = [...parts.values()]
-    .filter((p) => p.terrain !== 'milfactory' && (p.food || p.idle || p.oil || EFFECT_TILES.has(p.terrain)))
+    .filter((p) => p.terrain !== 'milfactory' && !isMilitaryLab(p.terrain) && (p.food || p.idle || p.oil || EFFECT_TILES.has(p.terrain)))
     .map((p) => ({ ...p, mesh: payoutMesh(grid.get(p.x, p.z)) }))
     .flatMap(splitTriggers);
   if (!previewing) {
-    for (const c of grid.cells.values()) if (c.terrain === 'milfactory') factoryJobs.push(chargeOneFactory(c));
-    for (const c of grid.cells.values()) if (c.terrain === 'decoyworks') factoryJobs.push(chargeDecoyWorks(c));
+    labOilPool = oilPoolForLabs(e);
+    for (const c of grid.cells.values()) {
+      if (c.terrain === 'milfactory') factoryJobs.push(chargeOneFactory(c));
+      else if (c.terrain === 'decoyworks') factoryJobs.push(chargeDecoyWorks(c));
+      else if (isMilitaryLab(c.terrain) && !c.built) factoryJobs.push(chargeOneLab(c));
+    }
   }
 
   // Oil fills the quota bar; food fills the store bar (up to its capacity).
@@ -2816,6 +3097,8 @@ function settleTurn(e) {
   if (factoryWork.some((w) => w.decoy && w.stuck)) lines.push(`<span class="bad">${L('A Decoy Builder is waiting: the silo is full.', '诱饵弹建造厂在等待：导弹仓已满。')}</span>`);
   if (factoryWork.some((w) => w.unpaid))
     lines.push(`<span class="bad">${L('A Military Factory had no oil and sat idle.', '一座军事工厂没有石油，未能开工。')}</span>`);
+  if ([...grid.cells.values()].some((c) => isMilitaryLab(c.terrain) && !c.built && c.buildHalted))
+    lines.push(`<span class="bad">${L('Construction stopped: no oil.', '停止建设：没有石油。')}</span>`);
 
   // Bandits already camped: what they took this season.
   if (e.oilStolen)
@@ -5424,6 +5707,7 @@ function resetIsland(opts) {
   factoryHops.length = 0;
   factoryJobs.length = 0;
   factoryPaid.length = 0;
+  labsPaid.length = 0;
   for (const f of factoryFloaters) f.el.remove();
   factoryFloaters.length = 0;
   setAiming(false);
@@ -5812,6 +6096,7 @@ function frame(now) {
   perf.begin('ruin buttons');
   updateRuinButtons();
   updateFactoryBars();
+  updateBuildReveal(dt);
   perf.end('ruin buttons');
   perf.begin('map icons');
   zoomIcons.update(grid);
@@ -5828,6 +6113,7 @@ function frame(now) {
   perf.end('fog update');
   perf.begin('inspect');
   updateInspect(cell);
+  updateBuildHover(cell);
   perf.end('inspect');
   perf.begin('placement');
   // Hide the ghost while choosing a plot or while the payout plays.
@@ -5911,6 +6197,32 @@ function modelTextures(models) {
 /** Send every model texture to the GPU now, so the first landing doesn't stutter while ~60 MB uploads. */
 function warmUpModels(models = factory.models) {
   for (const tex of modelTextures(models)) renderer.initTexture(tex);
+}
+
+/** Compile the construction dissolve shader once the extra models are in, so the first drop doesn't hitch. */
+async function prewarmBuildReveal() {
+  const hold = new THREE.Group();
+  tiles.add(hold);
+  for (const terrain of ['missilelab', 'warhead']) {
+    let mesh;
+    try {
+      mesh = factory.create(terrain);
+    } catch {
+      continue;
+    }
+    mesh.position.set(0, -5, 0);
+    hold.add(mesh);
+    const cell = { mesh, terrain, built: false };
+    ensureBuildReveal(cell);
+    try {
+      await renderer.compileAsync(mesh, camera, scene);
+    } catch {
+      renderer.compile(scene, camera);
+    }
+    clearBuildReveal(cell);
+    hold.remove(mesh);
+  }
+  tiles.remove(hold);
 }
 
 /**
@@ -6008,6 +6320,7 @@ factory.extrasReady.then(async (extras) => {
   await warmUpModelsGradually(extras);
   adoptBlockouts();
   rivalView.refresh(true);
+  await prewarmBuildReveal();
 });
 
 // Release build: players get no Game Debug button, no tile library link (library.html isn't built), no cheats.

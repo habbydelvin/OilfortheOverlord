@@ -2,6 +2,10 @@ import { DIRS, hexesAround } from './grid.js';
 
 /** Oil a Military Factory spends each season it works. */
 export const FACTORY_OIL = 3;
+/** Oil a Recipe Lab spends each season. */
+export const RECIPE_OIL = 1;
+/** Oil a Warhead Institute spends each season. */
+export const WARHEAD_OIL = 1;
 /** Rush Order used to spend oil on play; it is free to play now (shop price is 2 barrels). */
 export const OVERTIME_OIL = 2;
 /** Oil an Intercept Network spends to stop one incoming hit. */
@@ -58,7 +62,7 @@ export const DECOY_DEFAULTS = {
 const DECOY_KEY = 'oto.decoy';
 export const DECOY = { ...DECOY_DEFAULTS };
 /**
- * Launch Accelerator tuning: a missile launched from a Magazine or Decoy Builder within `radius` cells of a staffed
+ * Launch Accelerator tuning: a missile launched from a Magazine or Decoy Builder within `radius` cells of a finished
  * Accelerator flies faster: War Map travel × travel, the final dive × flight (less time in interceptor reach).
  */
 export const BOOST_DEFAULTS = {
@@ -102,26 +106,43 @@ const near = (grid, x, z) => DIRS.map(([dx, dz]) => grid.get(x + dx, z + dz)).fi
 
 const idleAt = (idleKeys, cell) => idleKeys?.has(`${cell.x},${cell.z}`);
 
+/** Oil a Launch Accelerator spends each season while it is still under construction. */
+export const BOOST_OIL = 1;
+
+/** Recipe Lab, Warhead Institute, and Launch Accelerator: a year of construction, then a permanent bonus. */
+export const isMilitaryLab = (t) => t === 'missilelab' || t === 'warhead' || t === 'booster';
+export const labOilCost = (t) => (t === 'missilelab' ? RECIPE_OIL : t === 'warhead' ? WARHEAD_OIL : t === 'booster' ? BOOST_OIL : 0);
+
+/** Recipe Labs next to this cell. */
+export function recipeLabsBeside(grid, cell) {
+  return near(grid, cell.x, cell.z).filter((n) => n.terrain === 'missilelab');
+}
+
+/** True if this Recipe Lab sits next to a Military Factory. */
+export function recipeLabLinked(grid, cell) {
+  return near(grid, cell.x, cell.z).some((n) => n.terrain === 'milfactory');
+}
+
 /** What one staffed Military Factory produces when a year of work completes. */
 export function factoryYield(grid, cell, idleKeys) {
   const nbs = near(grid, cell.x, cell.z);
-  const labs = nbs.filter((n) => n.terrain === 'missilelab' && !idleAt(idleKeys, n)).length;
+  const labs = nbs.filter((n) => n.terrain === 'missilelab' && n.built).length;
   return { count: 1 + labs, kind: 'missile' };
 }
 
-/** Staffed Warhead Institutes on this board (each adds one extra hex to a missile). */
-export function warheadRadius(grid, idleKeys) {
+/** Finished Warhead Institutes on this board (each adds one extra hex). */
+export function warheadRadius(grid) {
   let n = 0;
-  for (const c of grid.cells.values()) if (c.terrain === 'warhead' && !idleAt(idleKeys, c)) n++;
+  for (const c of grid.cells.values()) if (c.terrain === 'warhead' && c.built) n++;
   return n;
 }
 
 /**
- * Extra hexes beyond the aimed tile. Only staffed Warhead Institutes add any.
+ * Extra hexes beyond the aimed tile. Each Warhead Institute adds one.
  * `footprint` always does 1 (the aim) + this. The debug Blast slider is combat-test only.
  */
-export function blastExtra(grid, idleKeys) {
-  return warheadRadius(grid, idleKeys);
+export function blastExtra(grid) {
+  return warheadRadius(grid);
 }
 
 /** Intercept Networks adjacent to a cell, in placement order. */
@@ -142,12 +163,12 @@ export function interceptorsNear(grid, x, z, range = INTERCEPT.range) {
   return out;
 }
 
-/** Staffed Launch Accelerators within BOOST.radius of (x, z). */
-export function boostersNear(grid, x, z, idleKeys) {
+/** Finished Launch Accelerators within BOOST.radius of (x, z). An unfinished one does not speed launches. */
+export function boostersNear(grid, x, z, _idleKeys) {
   const out = [];
   for (const [cx, cz] of hexesAround(x, z, BOOST.radius)) {
     const c = grid.get(cx, cz);
-    if (c?.terrain === 'booster' && !idleAt(idleKeys, c)) out.push(c);
+    if (c?.terrain === 'booster' && c.built) out.push(c);
   }
   return out;
 }

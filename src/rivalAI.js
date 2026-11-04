@@ -3,7 +3,7 @@ import { DIRS, key, hexDistance } from './grid.js';
 import { TERRAINS, MILITARY } from './tiles.js';
 import { SHAPES, ROTATIONS, rotateCells } from './pieces.js';
 import { computeEconomy } from './economy.js';
-import { FACTORY_OIL, INTERCEPT_OIL, INTERCEPT, DECOY, BOOST, factoryYield, interceptorsBeside, interceptorsNear, missileCapacity, blastExtra, boostersNear } from './arsenal.js';
+import { FACTORY_OIL, INTERCEPT_OIL, INTERCEPT, DECOY, BOOST, factoryYield, interceptorsBeside, interceptorsNear, missileCapacity, blastExtra, boostersNear, isMilitaryLab, labOilCost } from './arsenal.js';
 import { hexesAround } from './grid.js';
 
 /**
@@ -353,6 +353,19 @@ export function runFactories(rival, e = computeEconomy(rival.grid, { foodStore: 
     if (cell.decoyProgress < DECOY.seasons || rival.missiles.length >= cap) continue;
     rival.missiles.push('decoy');
     cell.decoyProgress = 0;
+  }
+  // Research, including Launch Accelerators: 1 oil a season until the year is up, then the bonus is permanent.
+  for (const cell of grid.cells.values()) {
+    if (!isMilitaryLab(cell.terrain) || cell.built) continue;
+    const cost = labOilCost(cell.terrain);
+    if (rival.oil < cost) {
+      cell.buildHalted = true;
+      continue;
+    }
+    cell.buildHalted = false;
+    rival.oil -= cost;
+    cell.buildProgress = (cell.buildProgress ?? 0) + 1;
+    if (cell.buildProgress >= need) cell.built = true;
   }
 }
 

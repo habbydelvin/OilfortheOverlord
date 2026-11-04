@@ -8,7 +8,7 @@ import { buildInterceptBunker } from './interceptMesh.js';
 import { buildDecoyWorks, buildAccelerator } from './launcherMeshes.js';
 import { copySeam } from './seamlessGround.js';
 import { MISSILE } from './missiles.js';
-import { INTERCEPT, DECOY, BOOST } from './arsenal.js';
+import { INTERCEPT, DECOY, BOOST, BOOST_OIL } from './arsenal.js';
 import { SCALE } from './scalingConfig.js';
 import { L } from './i18n.js';
 import { hexToWorld, hexRound, hexDistance, hexesAround, cellSeed, cellsCentre } from './grid.js';
@@ -106,25 +106,25 @@ export const TERRAINS = {
   },
   missilelab: {
     name: 'Missile Recipe Lab',
-    trigger: 'Passive',
+    trigger: 'Construction',
     top: 0x4a5a6e,
     edge: 0x2f3c4a,
     category: 'building',
     buildable: false,
     weight: 0.5,
-    rule: 'Each one: adjacent Military Factories produce +1 Missile',
-    stats: { manpower: -2 },
+    rule: '1 year to finish (−1 oil each season) · Then each finished lab: adjacent factories produce +1 Missile',
+    stats: { oil: -1 },
   },
   warhead: {
     name: 'Warhead Institute',
-    trigger: 'Passive',
+    trigger: 'Construction',
     top: 0x8a5a28,
     edge: 0x5c3a18,
     category: 'building',
     buildable: false,
     weight: 0.5,
-    rule: 'Each staffed lab adds 1 neighbouring tile to missile blast',
-    stats: { manpower: -2 },
+    rule: '1 year to finish (−1 oil each season) · Then each institute adds 1 blast tile',
+    stats: { oil: -1 },
   },
   intercept: {
     name: 'Intercept Network',
@@ -166,16 +166,16 @@ export const TERRAINS = {
   },
   booster: {
     name: 'Launch Accelerator',
-    trigger: 'Passive',
+    trigger: 'Construction',
     top: 0x5a7a9a,
     edge: 0x3a5068,
     category: 'building',
     buildable: false,
     weight: 0.4,
     get rule() {
-      return `Missiles launched within ${BOOST.radius} tiles fly ${Math.round((1 / BOOST.travel - 1) * 100)}% faster${BOOST.weave > 0 ? ' · They weave to dodge interceptors' : ''}`;
+      return `1 year to finish (−${BOOST_OIL} oil each season) · Then missiles launched within ${BOOST.radius} tiles fly ${Math.round((1 / BOOST.travel - 1) * 100)}% faster${BOOST.weave > 0 ? ' · They weave to dodge interceptors' : ''}`;
     },
-    stats: { manpower: -2 },
+    stats: { oil: -BOOST_OIL },
   },
 
   // ---- wasteland (4 cosmetic variants, share one draw weight: 4 × 1.34 ≈ 30% of draws) ----
@@ -475,6 +475,7 @@ export const ACTIONS = {
 
 const TRIGGER_ZH = {
   Passive: '被动',
+  Construction: '建设中',
   'On trigger': '触发时',
   Junk: '废料',
   'On play': '打出时',
@@ -512,12 +513,12 @@ const ZH = {
   demolish2: { name: '拆迁队', rule: '移除菱形范围内至多 4 个地块' },
   militia: { name: '派遣民兵', rule: '清除一个匪营或叛军营地' },
   milfactory: { name: '军事工厂', rule: '每季 -3 石油 · 一年后生产 1 枚导弹' },
-  missilelab: { name: '导弹配方改良所', rule: '每座：相邻军事工厂导弹 +1' },
-  warhead: { name: '弹头研究所', rule: '每座开工的研究所使导弹爆炸再多打相邻 1 格' },
+  missilelab: { name: '导弹配方改良所', trigger: '建设中', rule: '建设 1 年（每季 -1 石油）· 完成后每座使相邻军事工厂导弹 +1' },
+  warhead: { name: '弹头研究所', trigger: '建设中', rule: '建设 1 年（每季 -1 石油）· 完成后每座导弹爆炸 +1 格' },
   intercept: { name: '拦截网络', rule: () => `每季 -${INTERCEPT.upkeep} 石油 · 炮塔击落瞄准 ${INTERCEPT.range} 格内的导弹` },
   magazine: { name: '储弹仓', rule: '导弹容量 +1' },
   decoyworks: { name: '诱饵弹建造厂', rule: () => `每季 -${DECOY.oil} 石油 · ${DECOY.seasons > 1 ? `每 ${DECOY.seasons} 季` : '每季'}生产 1 枚诱饵弹 · 诱饵弹从此处发射` },
-  booster: { name: '发射加速器', rule: () => `${BOOST.radius} 格内发射的导弹飞行速度提升 ${Math.round((1 / BOOST.travel - 1) * 100)}%${BOOST.weave > 0 ? ' · 蛇形机动躲避拦截' : ''}` },
+  booster: { name: '发射加速器', trigger: '建设中', rule: () => `建设 1 年（每季 -${BOOST_OIL} 石油）· 完成后 ${BOOST.radius} 格内发射的导弹飞行速度提升 ${Math.round((1 / BOOST.travel - 1) * 100)}%${BOOST.weave > 0 ? ' · 蛇形机动躲避拦截' : ''}` },
   decoy: { name: '诱饵弹', rule: () => `接近目标时分裂为 ${DECOY.fakes} 枚假弹 · 吸引拦截火力 · 不造成伤害` },
   missile: { name: '导弹', rule: () => `摧毁 1 格 · 弹头研究所每座 +1 格 · 首都 −${MISSILE.damage ?? 1}` },
   salvo: { name: '齐射', rule: '拖到一格上：手中每枚导弹从该处铺开瞄准' },
@@ -527,7 +528,9 @@ const ZH = {
 
 // name, trigger and rule become getters that answer in the current language (the English stays above).
 for (const [key, def] of Object.entries({ ...TERRAINS, ...ACTIONS })) {
-  const zh = { trigger: TRIGGER_ZH[def.trigger], ...ZH[key] };
+  const trigEn = Object.getOwnPropertyDescriptor(def, 'trigger')?.value;
+  const zh = { ...ZH[key] };
+  if (zh.trigger == null && trigEn) zh.trigger = TRIGGER_ZH[trigEn];
   for (const field of ['name', 'trigger', 'rule']) {
     const d = Object.getOwnPropertyDescriptor(def, field);
     if (!d) continue;

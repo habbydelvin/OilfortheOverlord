@@ -30,7 +30,7 @@ function sections() {
         [badge(ICONS.oil), L('Oil Station', '采油站'), L('Pumps 2 crude oil each season. Needs 1 worker.', '每季开采 2 原油。需要 1 人力。')],
         [badge(MAP_ICONS.missile), L('Military Factory', '军事工厂'), L('Spends 3 oil each season. After a year of work, produces 1 Missile.', '每季消耗 3 石油。工作一年后生产 1 枚导弹。')],
         [badge(MAP_ICONS.decoy), L('Decoy Builder', '诱饵弹建造厂'), L('Needs 2 workers, spends 1 oil each season. Produces Decoys: aimed like missiles, they split into fakes near the target to draw interceptor fire. They deal no damage.', '需要 2 人力，每季消耗 1 石油。生产诱饵弹：像导弹一样瞄准，接近目标时分裂为多枚假弹以吸引拦截火力，不造成伤害。')],
-        [badge(MAP_ICONS.booster), L('Launch Accelerator', '发射加速器'), L('Needs 2 workers. Missiles and decoys launched from Magazines or Decoy Builder within 2 tiles fly faster and arrive first.', '需要 2 人力。从 2 格内的储弹仓或诱饵弹建造厂发射的导弹和诱饵弹飞得更快、先到达。')],
+        [badge(MAP_ICONS.booster), L('Launch Accelerator', '发射加速器'), L('1 year to finish (−1 oil each season). Then missiles and decoys launched from Magazines or Decoy Builder within 2 tiles fly faster and arrive first.', '建设 1 年（每季 -1 石油）。完成后，从 2 格内的储弹仓或诱饵弹建造厂发射的导弹和诱饵弹飞得更快、先到达。')],
         [badge(MAP_ICONS.crate), L('Missile Magazine', '储弹仓'), L('Needs 2 workers. Adds +1 missile capacity. The Capital holds 2 before you build one.', '需要 2 人力。导弹容量 +1。建成前由首都先存 2 枚。')],
         [badge(ICONS.manpower), L('Settlement · Labour Camp', '定居点 · 劳工营'), L('Settlements house workers (+2 manpower, eat 2 food). A Labour Camp adds +2 manpower next to a Settlement.', '定居点提供人力（+2 人力，消耗 2 食物）。劳工营与定居点相邻时 +2 人力。')],
         [badge(MAP_ICONS.ruins), L('Pre-war Ruins', '战前遗迹'), L('Build next to it to clear it. Clearing refills your hand to 5 cards.', '在相邻处建造即可清理。清理后手牌补满 5 张。')],
@@ -59,7 +59,7 @@ function sections() {
         [neon(NEON.farm), L('Boosted Hydro-farm', '受增益的水培农场'), L('Next to a Water Pump, Oasis or the Capital. Glows brighter with each one.', '与水泵站、绿洲或首都相邻。每多一个，光芒越亮。')],
         [neon(NEON.station), L('Boosted Oil Station', '受增益的采油站'), L('Next to a Tar Pit, the Capital or a staffed Refinery. Glows brighter with each one.', '与焦油坑、首都或有人力的炼油厂相邻。每多一个，光芒越亮。')],
         [neon(NEON.settlement), L('Boosted Settlement', '受增益的定居点'), L('Next to a Labour Camp.', '与劳工营相邻。')],
-        [neon(NEON.magazine), L('Accelerated launcher', '加速发射点'), L('A Magazine or Decoy Builder within reach of a staffed Launch Accelerator.', '位于有人力的发射加速器范围内的储弹仓或诱饵弹建造厂。')],
+        [neon(NEON.magazine), L('Accelerated launcher', '加速发射点'), L('A Magazine or Decoy Builder within reach of a finished Launch Accelerator.', '位于已建成的发射加速器范围内的储弹仓或诱饵弹建造厂。')],
       ],
     ],
     [
@@ -67,7 +67,7 @@ function sections() {
       [
         [plain(ICONS.food), L('Food', '食物'), L('Feeds the Capital and Settlements. Spare food is banked in the food stores.', '供养首都和定居点。多余的食物存入粮仓。')],
         [plain(ICONS.oil), L('Oil', '石油'), L('The Overlord\'s tribute. The stockpile is taken after Winter.', '献给霸主的贡品。冬季过后石油库存会被收走。')],
-        [plain(ICONS.manpower), L('Manpower', '人力'), L('Workers to staff farms, Oil Stations, Refineries, missile labs and Magazines.', '为农场、采油站、炼油厂、导弹研究所和储弹仓提供人手。')],
+        [plain(ICONS.manpower), L('Manpower', '人力'), L('Workers to staff farms, Oil Stations, Refineries and Magazines.', '为农场、采油站、炼油厂和储弹仓提供人手。')],
       ],
     ],
   ];
