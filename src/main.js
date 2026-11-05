@@ -131,7 +131,7 @@ placement.mysteries = mysteries; // "?" cells can't be built on, only next to (f
 const dialogue = new Dialogue(document.getElementById('dialogue'));
 const scaleCfg = loadScaleConfig(); // Game Debug → Scaling (events and camps)
 const iconCfg = loadIconConfig(); // Game Debug → Map icons
-const zoomIcons = new ZoomIcons(document.getElementById('mapIcons'), steadyCam, rig, iconCfg);
+const zoomIcons = new ZoomIcons(document.getElementById('mapIcons'), camera, rig, iconCfg);
 const traffic = new Traffic(scene); // ships flying between the tiles
 const trafficInstances = createInstancer(traffic.group, scene); // ships use the same model on every route
 const neonTiles = new NeonTiles(scene); // boosted buildings' tiles glow
@@ -6626,9 +6626,6 @@ function frame(now) {
   updateFactoryBars();
   updateBuildReveal(dt);
   perf.end('ruin buttons');
-  perf.begin('map icons');
-  zoomIcons.update(grid);
-  perf.end('map icons');
   updateInterceptCover(time);
   perf.begin('expansion');
   checkExpansion();
@@ -6672,6 +6669,11 @@ function frame(now) {
   }
   perf.gpuEnd();
   perf.end('render (cpu)');
+  // Anchor icons to the picture just drawn: current camera, planet bend and CRT projection (including camera shake).
+  // DOM changes still reach the same browser paint; updating earlier used the preceding frame's projection state.
+  perf.begin('map icons');
+  zoomIcons.update(grid);
+  perf.end('map icons');
   perf.begin('payout');
   payout.update(dt); // after render so labels use this frame's camera
   updateFactoryHops(dt);
