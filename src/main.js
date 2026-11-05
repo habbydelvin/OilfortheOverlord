@@ -8,7 +8,7 @@ import { createScene } from './scene.js';
 import { createInstancer } from './instancer.js';
 import { createShadowCache } from './shadowCache.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
-import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws } from './sfx.js';
+import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws, tribute, fanfare, raid, rout, panelOpen, panelClose, transition, reveal, smuggler, whistle, crush, sfxLoaded } from './sfx.js';
 import { createCombatAudio } from './combatAudio.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed, hexesAround } from './grid.js';
@@ -1451,6 +1451,7 @@ function clearRuins(x, z) {
   if (!c || !canClearRuins(c) || turn.over || payout.active || shopOpen || eventOpen) return;
   removeMesh(c.mesh);
   grid.cells.delete(`${x},${z}`);
+  demolition();
   const drawn = hand.refill(handSize());
   placement.cell = null;
   frontier.rebuild(grid);
@@ -3210,6 +3211,7 @@ function spawnRaider() {
   } else return null;
   addTile(x, z, 'raider');
   grid.get(x, z).onRuins = false;
+  raid();
   // Getters: the camp's text in the current language whenever it's read (a scene may show it after a switch).
   spawnRaider.last = {
     x,
@@ -3268,6 +3270,7 @@ function spawnBandits() {
   if (spawned.length) {
     placement.cell = null;
     frontier.rebuild(grid);
+    raid();
   }
   return spawned;
 }
@@ -3286,6 +3289,7 @@ function clearCamp(x, z) {
   removeMesh(cell.mesh);
   grid.cells.delete(`${x},${z}`);
   dust.burst(x, z);
+  rout();
   frontier.rebuild(grid);
   placement.cell = null;
   updateHUD();
@@ -3321,6 +3325,7 @@ async function playPendingScenes(writeReport = true) {
 
 /** "Crush them": costs population, or food when there is none. Returns what it cost. */
 function crushRebels() {
+  crush();
   shake.amount = Math.min(shake.amount + 0.9, 1.2);
   if (turn.population >= LEADER_COSTS.crushPopulation) {
     turn.population -= LEADER_COSTS.crushPopulation;
@@ -3365,14 +3370,15 @@ function showStrikes() {
 
 /** `reason`: a function returning the text, so it can be redrawn after a language switch. */
 let gameOverReason = null;
-function gameOver(reason) {
+function gameOver(reason, { won = false } = {}) {
   turn.over = true;
   hand.select(-1);
   gameOverReason = reason;
   $('gameoverTitle').textContent = L('The city has fallen', '城市已陷落'); // victory() retitles it
   showGameOver();
   $('gameover').classList.remove('hidden');
-  doom();
+  if (won) fanfare();
+  else doom();
 }
 
 function showGameOver() {
@@ -3500,6 +3506,7 @@ function settleTurn(e) {
     turn.target = null;
     const rise = turn.quotaBase - prevBase;
     if (met) {
+      tribute();
       const seized = L(
         `Tribute of ${quota} met. The Overlord seized all ${delivered} barrels.`,
         `${quota} 桶贡品已缴足。霸主收走了全部 ${delivered} 桶。`,
@@ -4054,6 +4061,7 @@ function openShop() {
   turn.pinned.forEach((k) => hand.addPinned(k));
   holdingPurchases = true;
   renderShop(true);
+  panelOpen();
   // Restart the open animation every time.
   const el = $('shop');
   el.classList.remove('hidden', 'opening');
@@ -4219,6 +4227,7 @@ function openStrikeScreen(opts = {}) {
   savedSeasonHand = hand.snapshot();
   const drawn = drawStrikeHand(opts.draw ?? ammoCount());
   strikeOpen = true;
+  panelOpen();
   hand.replaceHand(drawn);
   updateHUD();
   toast(
@@ -4234,6 +4243,7 @@ function openStrikeScreen(opts = {}) {
 
 function closeStrikeScreen(result = null) {
   if (!strikeOpen) return;
+  panelClose();
   returnStrikeHand(hand.cards.filter((p) => isPlayerMissile(p.terrain)));
   strikeOpen = false;
   hand.replaceHand(savedSeasonHand);
@@ -4273,6 +4283,7 @@ $('btnShopReroll').addEventListener('click', () => {
 });
 $('btnShopDone').addEventListener('click', () => {
   shopOpen = false;
+  panelClose();
   turn.coins = 0; // unspent excess goes to the Overlord
   turn.shopMult = 1; // a black market discount only lasts one visit
   $('shop').classList.add('hidden');
@@ -4318,6 +4329,7 @@ function revealBlackMarket(animate = true) {
   const btn = $('btnBlackMarket');
   btn.classList.remove('unseen');
   if (animate) {
+    smuggler();
     btn.classList.remove('arriving');
     void btn.offsetWidth;
     btn.classList.add('arriving');
@@ -4423,6 +4435,7 @@ async function openBlackMarket() {
   bmCategory = null;
   renderBlackMarket(true);
   const el = $('blackMarket');
+  panelOpen();
   el.classList.remove('hidden', 'opening');
   void el.offsetWidth;
   el.classList.add('opening');
@@ -4531,6 +4544,7 @@ async function closeBlackMarket(farewell = true) {
     return;
   }
   if (!wasOpen) return;
+  panelClose();
   const run = runId;
   dialogue.open();
   await dialogue.say(BM_SPEAKER, pickLine(BM_FAREWELLS));
@@ -4557,6 +4571,7 @@ function openCardPick() {
   eventOpen = true;
   hand.select(-1);
   renderCardPick(true);
+  panelOpen();
   const el = $('cardPick');
   el.classList.remove('hidden', 'opening');
   void el.offsetWidth;
@@ -4583,6 +4598,7 @@ function renderCardPick(animate = false) {
 
 /** `resume` false (a reset) drops the waiting new-year flow instead of continuing it. */
 function closeCardPick(resume = true) {
+  if (resume) panelClose();
   $('cardPick').classList.add('hidden');
   if (!shopOpen) document.body.classList.remove('shopping');
   const done = pickResolve;
@@ -4685,6 +4701,7 @@ function revealMysteries(cells) {
   const found = mysteries.revealAround(cells);
   if (!found.length) return;
   tutorial.notify('revealed', { found });
+  reveal();
   const tiles = landReveals(found, (i) => 0.25 + i * 0.15);
   if (tiles.length < found.length) return; // a missile: its own toast
   if (tutorial.active) return; // the guided opening shows the find itself (no caption)
@@ -4719,6 +4736,7 @@ function checkExpansion() {
 
 function expand(option) {
   grid.unlock(option.px, option.pz);
+  reveal();
   expansion.clear();
   fog.setOptions(null);
   // The clouds part; mystery sites in the new plot drop in as real tiles while they clear.
@@ -5074,6 +5092,7 @@ async function workOvertime(x, z) {
   const cell = grid.get(x, z);
   const need = yearLength();
   const idle = idleKeySet();
+  whistle();
   if ((cell.missileProgress ?? 0) < need) cell.missileProgress = (cell.missileProgress ?? 0) + 1;
   if (cell.missileProgress >= need) {
     const y = await finishFactoryMissile(cell, idle);
@@ -5939,6 +5958,7 @@ function victory() {
       `Every rival city-state lies in ruins. The Overlord's oil flows from Hive City alone. Victory in year ${turn.round}.`,
       `所有敌对城邦皆成废墟。霸主的石油只从蜂巢城流出。第 ${turn.round} 年获胜。`,
     ),
+    { won: true },
   );
   $('gameoverTitle').textContent = L('Victory', '胜利');
 }
@@ -6004,6 +6024,7 @@ async function swapView(change) {
   if (switching) return;
   switching = true;
   const run = viewRun;
+  transition();
   await fade(true);
   if (run !== viewRun) return;
   change();
@@ -7095,6 +7116,8 @@ factory.ready.then(async () => {
     }
   }
   buildLods(factory.models).catch((e) => console.warn('[lod] skipped', e)); // in the background
+  // The opening hand's deal should be heard: give the sound effects a moment to finish decoding (never more than 4 s).
+  await Promise.race([sfxLoaded(), new Promise((r) => setTimeout(r, 4000))]);
   // Sound has to be allowed before the opening hand is dealt, or that whoosh is skipped.
   // When the browser blocks autoplay, the loading screen stays up for one click or key.
   let started = false;
