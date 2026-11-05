@@ -4137,6 +4137,13 @@ body.paying .float-btn {
 #title.hidden {
   display: none;
 }
+/* Start: the menu falls away as the camera dives for the planet. */
+#title.departing {
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(1.06);
+  transition: opacity 0.6s ease-in, transform 0.9s ease-in;
+}
 #title .title-name {
   margin: 0 0 7vh;
   max-width: 9em;

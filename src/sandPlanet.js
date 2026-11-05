@@ -183,7 +183,68 @@ void main() {
 }
 `;
 
-export function createSandPlanet(radius, { seed = 3.7, sun = new THREE.Vector3(0.62, 0.42, 0.66), sea = new THREE.Vector3(-0.9, -0.2, 0.35) } = {}) {
+// The baked versions of SURFACE_FRAG / CLOUD_FRAG: the same planet, read from cube maps (BAKE_SURFACE /
+// BAKE_CLOUDS below) instead of ~75 noise evaluations per pixel every frame.
+const BAKED_SURFACE_FRAG = /* glsl */ `
+uniform vec3 uSun;
+uniform samplerCube uMap; // rgb: the sand colours (display values), a: the bump relief (fbm(p * 9, 4) * 0.5 + 0.5)
+varying vec3 vPos;
+varying vec3 vNormalW;
+varying vec3 vViewW;
+void main() {
+  vec3 p = normalize(vPos);
+  vec4 tex = texture(uMap, p);
+  vec3 col = pow(tex.rgb, vec3(2.2));
+  vec3 n = normalize(vNormalW);
+  vec3 t1 = normalize(cross(p, vec3(0.0, 1.0, 0.0)) + 1e-4);
+  vec3 t2 = cross(p, t1);
+  float e = 0.004;
+  float dx = (texture(uMap, p + t1 * e).a - texture(uMap, p - t1 * e).a) * 2.0;
+  float dy = (texture(uMap, p + t2 * e).a - texture(uMap, p - t2 * e).a) * 2.0;
+  n = normalize(n - (dx * t1 + dy * t2) * 0.55);
+  float light = smoothstep(-0.12, 0.75, dot(n, normalize(uSun)));
+  vec3 lit = col * (0.008 + 1.05 * light);
+  float rim = pow(1.0 - max(dot(normalize(vNormalW), vViewW), 0.0), 2.4);
+  lit = mix(lit, vec3(0.95, 0.72, 0.48) * (0.03 + 0.9 * light), rim * 0.6);
+  gl_FragColor = vec4(lit, 1.0);
+  #include <colorspace_fragment>
+}
+`;
+
+const BAKED_CLOUD_FRAG = /* glsl */ `
+uniform vec3 uSun;
+uniform samplerCube uClouds; // r: the cloud cover
+uniform samplerCube uFlow;   // rgb: a smooth, low-detail noise field that warps where the clouds are read
+uniform float uTime;
+varying vec3 vPos;
+varying vec3 vNormalW;
+varying vec3 vViewW;
+vec3 turnY(vec3 p, float a) {
+  float c = cos(a), s = sin(a);
+  return vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
+}
+// The flow field, drifting over the planet: the cover is read through it, so the shapes swirl and change.
+vec3 flowAt(vec3 p, float a) { return texture(uFlow, turnY(p, a)).rgb - 0.5; }
+void main() {
+  float facing = max(dot(normalize(vNormalW), vViewW), 0.0);
+  vec3 p = normalize(vPos);
+  // Two phases of the field, each fading in and out in turn, so the warp never just slides one way.
+  float t = uTime * 0.02;
+  float k = 0.5 + 0.5 * sin(t * 2.0);
+  vec3 w = mix(flowAt(p, t), flowAt(p.zxy, -t * 0.8), k);
+  float a = texture(uClouds, normalize(p + w * 0.1)).r * smoothstep(0.0, 0.35, facing);
+  if (a < 0.003) discard;
+  float light = smoothstep(-0.12, 0.75, dot(normalize(vNormalW), normalize(uSun)));
+  gl_FragColor = vec4(vec3(1.0, 0.93, 0.84) * (0.02 + 1.05 * light), a * (0.35 + 0.65 * light));
+  #include <colorspace_fragment>
+}
+`;
+
+/**
+ * The main screen's planet. With `renderer`, its surface and clouds are baked once into cube maps (cheap to draw);
+ * without, the original live procedural shaders.
+ */
+export function createSandPlanet(radius, { renderer = null, seed = 3.7, sun = new THREE.Vector3(0.62, 0.42, 0.66), sea = new THREE.Vector3(-0.9, -0.2, 0.35) } = {}) {
   const group = new THREE.Group();
   group.name = 'sand planet';
   const shared = {
@@ -193,10 +254,19 @@ export function createSandPlanet(radius, { seed = 3.7, sun = new THREE.Vector3(0
     uTime: { value: 0 },
   };
   const flat = (m) => ((m.userData.flat = true), m); // its own projection: never the board's map-shape bend
+  let surfaceFrag = SURFACE_FRAG;
+  let cloudFrag = CLOUD_FRAG;
+  if (renderer) {
+    shared.uMap = { value: bakeCube(renderer, BAKE_SURFACE, { uSeed: shared.uSeed, uSeaDir: shared.uSeaDir }, 1024) };
+    shared.uClouds = { value: bakeCube(renderer, BAKE_CLOUDS, { uSeed: shared.uSeed }, 1024) };
+    shared.uFlow = { value: bakeCube(renderer, BAKE_FLOW, { uSeed: shared.uSeed }, 128) };
+    surfaceFrag = BAKED_SURFACE_FRAG;
+    cloudFrag = BAKED_CLOUD_FRAG;
+  }
 
   const surface = new THREE.Mesh(
     new THREE.SphereGeometry(radius, 160, 120),
-    flat(new THREE.ShaderMaterial({ uniforms: shared, vertexShader: SURFACE_VERT, fragmentShader: SURFACE_FRAG })),
+    flat(new THREE.ShaderMaterial({ uniforms: shared, vertexShader: SURFACE_VERT, fragmentShader: surfaceFrag })),
   );
   const clouds = new THREE.Mesh(
     new THREE.SphereGeometry(radius * 1.012, 160, 120),
@@ -204,7 +274,7 @@ export function createSandPlanet(radius, { seed = 3.7, sun = new THREE.Vector3(0
       new THREE.ShaderMaterial({
         uniforms: shared,
         vertexShader: SURFACE_VERT,
-        fragmentShader: CLOUD_FRAG,
+        fragmentShader: cloudFrag,
         transparent: true,
         depthWrite: false,
       }),
@@ -312,6 +382,17 @@ void main() {
   float wisps = fbm(p * 14.0 + warp * 2.0, 4) * 0.5 + 0.5;
   float a = clamp(smoothstep(0.42, 0.75, c) * (0.45 + 0.7 * wisps), 0.0, 0.92);
   gl_FragColor = vec4(a, a, a, 1.0);
+}
+`;
+
+// The main screen's cloud flow field: three smooth noise values (0..1) to warp the baked cover with.
+const BAKE_FLOW = /* glsl */ `
+uniform float uSeed;
+${BAKE_CUBE}
+${NOISE}
+void main() {
+  vec3 q = cubeDir() * vec3(1.6, 4.0, 1.6) + uSeed * 4.1;
+  gl_FragColor = vec4(fbm(q, 3) * 0.5 + 0.5, fbm(q + 5.2, 3) * 0.5 + 0.5, fbm(q + 9.4, 3) * 0.5 + 0.5, 1.0);
 }
 `;
 
@@ -456,7 +537,7 @@ void main() {
 `;
 
 /** Renders a bake shader once into a mipmapped cube map, face by face in strips so no single draw runs long. */
-function bakeCube(renderer, fragmentShader, uniforms, size) {
+export function bakeCube(renderer, fragmentShader, uniforms, size) {
   const rt = new THREE.WebGLCubeRenderTarget(size, {
     minFilter: THREE.LinearMipmapLinearFilter,
     magFilter: THREE.LinearFilter,

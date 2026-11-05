@@ -60,12 +60,15 @@ export function createTitleScreen({ root, scene, camera, getModel, onStart, onOp
   const toCamera = (p, d, out) =>
     out.copy(camera.position).addScaledVector(right, p.x * d).addScaledVector(up, p.y * d).addScaledVector(back, p.z * d);
 
+  let departing = false;
+
   function update(dt) {
     if (!active) return;
     t += dt;
     if (!ship) build();
     if (!ship) return;
     mixer.update(dt);
+    if (departing) return; // left where it was in the world: the camera flies on without it
     camera.updateMatrixWorld();
     camera.matrixWorld.extractBasis(right, up, back);
     const d = camera.position.length(); // distance to the planet's centre: everything scales with it
@@ -82,14 +85,23 @@ export function createTitleScreen({ root, scene, camera, getModel, onStart, onOp
 
   function show() {
     active = true;
+    departing = false;
     t = 0;
     scene.add(holder);
-    root.classList.remove('hidden');
+    root.classList.remove('hidden', 'departing');
     document.body.classList.add('title-screen');
+  }
+
+  /** Start pressed: the menu fades and the ship stays put in the world while the camera dives past it. */
+  function depart() {
+    departing = true;
+    root.classList.add('departing');
   }
 
   function hide() {
     active = false;
+    departing = false;
+    root.classList.remove('departing');
     holder.removeFromParent();
     root.classList.add('hidden');
     document.body.classList.remove('title-screen');
@@ -109,6 +121,7 @@ export function createTitleScreen({ root, scene, camera, getModel, onStart, onOp
       t = seconds;
     },
     show,
+    depart,
     hide,
     update,
     get active() {

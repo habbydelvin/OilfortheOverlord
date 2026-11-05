@@ -3,7 +3,49 @@ import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { createGlobeBend } from './globeBend.js';
-import { createPaintedGlobe } from './sandPlanet.js';
+import { createPaintedGlobe, bakeCube } from './sandPlanet.js';
+
+// The nebula's dust (3D value noise on the view direction), baked into a cube map in rgb.
+const NEBULA_BAKE = /* glsl */ `
+uniform int uFace;
+uniform float uSize;
+vec3 cubeDir() {
+  vec2 st = gl_FragCoord.xy / uSize * 2.0 - 1.0;
+  float s = st.x, t = st.y;
+  if (uFace == 0) return normalize(vec3(1.0, -t, -s));
+  if (uFace == 1) return normalize(vec3(-1.0, -t, s));
+  if (uFace == 2) return normalize(vec3(s, 1.0, t));
+  if (uFace == 3) return normalize(vec3(s, -1.0, -t));
+  if (uFace == 4) return normalize(vec3(s, -t, 1.0));
+  return normalize(vec3(-s, -t, -1.0));
+}
+float h3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+float n3(vec3 p) {
+  vec3 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(h3(i), h3(i + vec3(1, 0, 0)), u.x), mix(h3(i + vec3(0, 1, 0)), h3(i + vec3(1, 1, 0)), u.x), u.y),
+             mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), u.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), u.x), u.y), u.z);
+}
+float f3(vec3 p) {
+  float s = 0.0, a = 0.5;
+  for (int o = 0; o < 5; o++) { s += a * n3(p); p *= 2.03; a *= 0.5; }
+  return s;
+}
+void main() {
+  vec3 d = cubeDir() * 2.2;
+  float warp = f3(d + 5.3);
+  float n = f3(d + warp * 1.6);
+  float dust = smoothstep(0.42, 0.85, n);
+  float dark = smoothstep(0.55, 0.8, f3(d * 2.0 + 11.0)); // darker lanes through the glow
+  vec3 col = mix(vec3(0.16, 0.05, 0.03), vec3(0.42, 0.17, 0.09), smoothstep(0.6, 0.95, n));
+  gl_FragColor = vec4(col * dust * (1.0 - 0.6 * dark), 1.0);
+}
+`;
+const nebulaCubes = new WeakMap(); // renderer -> its baked nebula
+function nebulaCube(renderer) {
+  let cube = nebulaCubes.get(renderer);
+  if (!cube) nebulaCubes.set(renderer, (cube = bakeCube(renderer, NEBULA_BAKE, {}, 512)));
+  return cube;
+}
 import { WHEEL_GAP, wheelUnits } from './controls.js';
 import { L, onLangChange } from './i18n.js';
 import { PLAYER_NODE } from './rivals.js';
@@ -381,10 +423,11 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
   }
 
   // Nebula: dim reddish dust on a huge sphere behind the stars (3D value noise on the view direction).
+  // Its pattern never changes: baked once into a cube map (shared by every globe view), only strength stays live.
   const nebulaMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
-    uniforms: { uStrength: { value: GLOBE.nebula }, uBg: { value: new THREE.Color(BG) } },
+    uniforms: { uStrength: { value: GLOBE.nebula }, uBg: { value: new THREE.Color(BG) }, uNebula: { value: nebulaCube(renderer) } },
     vertexShader: /* glsl */ `
       varying vec3 vDir;
       void main() {
@@ -394,27 +437,10 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     fragmentShader: /* glsl */ `
       uniform float uStrength;
       uniform vec3 uBg;
+      uniform samplerCube uNebula;
       varying vec3 vDir;
-      float h3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
-      float n3(vec3 p) {
-        vec3 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
-        return mix(mix(mix(h3(i), h3(i + vec3(1, 0, 0)), u.x), mix(h3(i + vec3(0, 1, 0)), h3(i + vec3(1, 1, 0)), u.x), u.y),
-                   mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), u.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), u.x), u.y), u.z);
-      }
-      float f3(vec3 p) {
-        float s = 0.0, a = 0.5;
-        for (int o = 0; o < 5; o++) { s += a * n3(p); p *= 2.03; a *= 0.5; }
-        return s;
-      }
       void main() {
-        vec3 d = vDir * 2.2;
-        float warp = f3(d + 5.3);
-        float n = f3(d + warp * 1.6);
-        float dust = smoothstep(0.42, 0.85, n);
-        float dark = smoothstep(0.55, 0.8, f3(d * 2.0 + 11.0)); // darker lanes through the glow
-        vec3 col = mix(vec3(0.16, 0.05, 0.03), vec3(0.42, 0.17, 0.09), smoothstep(0.6, 0.95, n));
-        col *= dust * (1.0 - 0.6 * dark);
-        gl_FragColor = vec4(uBg + col * uStrength, 1.0);
+        gl_FragColor = vec4(uBg + texture(uNebula, vDir).rgb * uStrength, 1.0);
       }`,
   });
   const nebula = new THREE.Mesh(new THREE.SphereGeometry(300, 48, 24), nebulaMat);

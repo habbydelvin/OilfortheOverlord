@@ -6082,7 +6082,7 @@ function fillRivalBar(rival) {
 }
 
 /** Back to the board from either the globe or a rival city. Safe during a reset. */
-function resetView() {
+function resetView({ keepClouds = false } = {}) {
   if (view === 'rival') {
     closeRivalHand();
     rivalView.exit();
@@ -6095,7 +6095,7 @@ function resetView() {
   rig.resetOverscroll();
   viewRun++; // drops a fade that is still running
   switching = false;
-  clouds.reset();
+  if (!keepClouds) clouds.reset(); // the title dive keeps its cover up through the reset
   document.body.classList.remove('globe-view', 'rival-view');
   setMusicMuffled(false);
 }
@@ -6249,7 +6249,7 @@ const titleGlobe = createGlobeView({
 });
 // Its planet is painted, not the hex world (sandPlanet.js); the star, nebula and moon stay from the War Map scene.
 titleGlobe.setLook({ hidePlanet: true });
-const titlePlanet = createSandPlanet(GLOBE_RADIUS);
+const titlePlanet = createSandPlanet(GLOBE_RADIUS, { renderer }); // baked once into cube maps: cheap to draw every frame
 titleGlobe.scene.add(titlePlanet.group);
 const titleScreen = createTitleScreen({
   root: $('title'),
@@ -6268,14 +6268,59 @@ function showTitle() {
   titleScreen.show();
 }
 
-/** Start: a new game from the very beginning, the full tutorial included. */
+/**
+ * Start: a new game from the very beginning, the full tutorial included. The camera dives from orbit into the
+ * planet (the Mothership stays behind in the world), punches through the clouds, and comes out above Hive City.
+ */
+const TITLE_DIVE = { duration: 2.4, cloudsAt: 1.9, fovKick: 14 }; // the cloud cover (0.55 s) closes as the camera reaches the surface
+let titleDive = null; // { t, d0, fov0, covering }
+
 function startFromTitle() {
-  if (switching) return;
-  swapView(() => {
-    titleScreen.hide();
-    titleGlobe.exit();
-    localStorage.removeItem(TUTORIAL_KEY);
-    resetIsland({ tutorial: true }); // back on the board (resetView), lessons start over
+  if (switching || titleDive) return;
+  switching = true;
+  zoomWhoosh(true);
+  titleScreen.depart();
+  const cam = titleGlobe.camera;
+  titleDive = { t: 0, d0: cam.position.length(), fov0: cam.fov, covering: false };
+}
+
+/** Every title frame while diving: after the globe placed its camera, pull it down toward the planet. */
+function updateTitleDive(dt) {
+  const dv = titleDive;
+  const cam = titleGlobe.camera;
+  dv.t += dt;
+  const k = Math.min(1, dv.t / TITLE_DIVE.duration);
+  // A slow push that keeps accelerating: barely moving at first, then falling into the clouds.
+  const e = k ** 2.2;
+  const d1 = GLOBE_RADIUS * 1.006; // just under the cloud shell
+  cam.position.set(0, 0, dv.d0 + (d1 - dv.d0) * e);
+  cam.lookAt(0, 0, 0);
+  cam.fov = dv.fov0 + TITLE_DIVE.fovKick * Math.sin(Math.min(1, k * 1.15) * Math.PI * 0.5) ** 2; // speed: the view widens
+  cam.updateProjectionMatrix();
+  cam.updateMatrixWorld();
+  if (!dv.covering && dv.t >= TITLE_DIVE.cloudsAt) {
+    dv.covering = true;
+    clouds.cover().then(arriveFromTitle);
+  }
+}
+
+/** Behind the clouds: swap to the new city, then part them over it, the board camera still settling down. */
+function arriveFromTitle() {
+  const cam = titleGlobe.camera;
+  cam.fov = titleDive.fov0;
+  cam.updateProjectionMatrix();
+  titleDive = null;
+  titleScreen.hide();
+  titleGlobe.exit();
+  localStorage.removeItem(TUTORIAL_KEY);
+  resetIsland({ tutorial: true, keepClouds: true }); // back on the board, lessons start over
+  const home = rig.goalDistance;
+  rig.distance = rig.maxDistance; // out of the clouds high above the city, then down onto it
+  rig.goalDistance = home;
+  switching = true;
+  const run = viewRun;
+  clouds.uncover().then(() => {
+    if (run === viewRun) switching = false;
   });
 }
 
@@ -6579,7 +6624,7 @@ $('btnReplayTutorial').addEventListener('click', (e) => {
  */
 function resetIsland(opts) {
   const tut = opts?.tutorial === true || !tutorialDone();
-  resetView();
+  resetView({ keepClouds: opts?.keepClouds });
   rivals = createRivals((Math.random() * 0x100000000) >>> 0);
   runId++; // stops a missile strike / failure speech still running
   combatAudio.endAttack(); // a reset must not leave the siren wailing
@@ -6979,6 +7024,7 @@ function frame(now) {
     perf.begin('render (cpu)');
     flattenCurve();
     titleGlobe.update(dt);
+    if (titleDive) updateTitleDive(dt);
     titlePlanet.update(dt);
     titleScreen.update(dt);
     titleGlobe.render();
