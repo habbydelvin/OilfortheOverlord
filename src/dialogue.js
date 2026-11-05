@@ -10,7 +10,6 @@
  *   dialogue.close()
  */
 
-import { sting } from './sfx.js';
 import { L, onLangChange, textOf } from './i18n.js';
 
 /** Portrait per speaker. A string starting with '<svg' is inlined; anything else is used as an image URL. */
@@ -85,7 +84,6 @@ export class Dialogue {
     this.banner = banner;
     if (banner) {
       this.#renderBanner();
-      sting(banner.kind);
       if (continuing) {
         b.style.animation = 'none';
         void b.offsetWidth;
