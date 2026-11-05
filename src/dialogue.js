@@ -10,6 +10,7 @@
  *   dialogue.close()
  */
 
+import { choiceClick, choiceHover, click as clickSfx, speak } from './sfx.js';
 import { L, onLangChange, textOf } from './i18n.js';
 
 /** Portrait per speaker. A string starting with '<svg' is inlined; anything else is used as an image URL. */
@@ -217,6 +218,7 @@ export class Dialogue {
       }
       this.shown = next;
       el.textContent = text.slice(0, this.shown);
+      if (talk) speak();
       if (this.shown < text.length) this.raf = requestAnimationFrame(step);
       else this.#finishTyping();
     };
@@ -255,6 +257,7 @@ export class Dialogue {
     for (let k = 0; k < n && this.choices[i].disabled; k++) i = (i + dir + n) % n;
     if (this.choices[i].disabled || i === this.selected) return;
     this.selected = i;
+    choiceHover();
     for (const b of this.$('.dlg-choices').children) b.classList.toggle('on', Number(b.dataset.i) === this.selected);
   }
 
@@ -281,11 +284,13 @@ export class Dialogue {
         this.selected = pick;
       }
       if (this.choices[this.selected]?.disabled) return;
+      if (sound) choiceClick();
       const done = this.resolve;
       this.resolve = null;
       done(this.selected);
       return;
     }
+    if (sound) clickSfx();
     const done = this.resolve;
     this.resolve = null;
     done();

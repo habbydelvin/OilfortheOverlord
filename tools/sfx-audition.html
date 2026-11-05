@@ -20,7 +20,7 @@
     const groups = {
       'Recorded / 录音': [['thud (tile lands)', () => sfx.thud()], ['thud heavy (Wasteland piece)', () => sfx.thud(true)]],
       'Board / 棋盘 (synth)': [['tick up', () => sfx.tick(true)], ['tick down', () => sfx.tick(false)], ['hover', sfx.hover], ['chirp', sfx.chirp], ['deal', sfx.deal], ['shuffle', sfx.shuffle], ['coin', sfx.coin], ['food', sfx.food], ['barrel 0', () => sfx.barrel(0)], ['barrel 1', () => sfx.barrel(1)], ['latch', sfx.latch], ['confirm', sfx.confirm], ['buzz', sfx.buzz], ['deny', sfx.deny], ['demolition', () => sfx.demolition()], ['demolition heavy', () => sfx.demolition(true)], ['doom', sfx.doom]],
-      'Dialogue / 对话 (synth, not used in game)': [['speak', sfx.speak], ['click', sfx.click], ['choiceHover', sfx.choiceHover], ['choiceClick', sfx.choiceClick]],
+      'Dialogue / 对话 (synth)': [['speak', sfx.speak], ['click', sfx.click], ['choiceHover', sfx.choiceHover], ['choiceClick', sfx.choiceClick]],
       'Combat fallback / 战斗 (synth)': [['silo', sfx.silo], ['boom', sfx.boom], ['ciws 0.8s', () => sfx.ciws(0.8)]],
     };
     sfx.sfxLoaded().then((ok) => (document.getElementById('status').textContent = ok ? 'Loaded.' : 'FAILED to load (see console).'));
