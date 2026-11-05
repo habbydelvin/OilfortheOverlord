@@ -635,6 +635,12 @@ export class LaserStrike {
     this.light = new THREE.PointLight(0xffa040, 0, 12, 1.6);
     this.light.position.set(0, -50, 0);
     scene.add(this.light);
+    this.beamColor = new THREE.Color(0x24c5ff);
+  }
+
+  /** Tint of the thin columns, the bolt's outer shell, and the orb glow. The core stays white. */
+  setBeamColor(hex) {
+    this.beamColor.set(hex);
   }
 
   // ---------- a missile standing on the ground before it launches ----------
@@ -912,6 +918,126 @@ export class LaserStrike {
     return true;
   }
 
+  // ---------- 激光打击: three beams gather, then a bolt ----------
+  #gathers = [];
+  #beamGeo = null;
+  #orbGeo = null;
+
+  #ensureBeamGeo() {
+    if (this.#beamGeo) return;
+    this.#beamGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
+    this.#beamGeo.translate(0, 0.5, 0); // base on the ground, length runs up +Y
+    this.#orbGeo = new THREE.SphereGeometry(1, 18, 12);
+  }
+
+  /**
+   * Beams over a world point (x, z). Three thin columns start apart, spin, and draw together.
+   * Then a thick column and a bolt drop in a flash. Resolves when the bolt touches the ground
+   * and the beams are gone. `onBolt` fires as the thick column appears.
+   */
+  gather(x, z, { onBolt } = {}) {
+    this.#ensureBeamGeo();
+    const mat = (color, opacity) =>
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+        fog: false,
+      });
+    const column = (radius, height, color, opacity) => {
+      const mesh = new THREE.Mesh(this.#beamGeo, mat(color, opacity));
+      mesh.scale.set(radius, height, radius);
+      mesh.frustumCulled = false;
+      mesh.renderOrder = 12;
+      return mesh;
+    };
+    const H = 14;
+    const tint = this.beamColor;
+    const group = new THREE.Group();
+    group.position.set(x, 0.05, z);
+    const thin = [0, 1, 2].map(() => column(0.07 / 3, H, tint, 0.95));
+    for (const m of thin) group.add(m);
+    const thick = column(0.26, H, 0xffffff, 1);
+    const shell = column(0.55, H, tint, 0.45);
+    thick.visible = shell.visible = false;
+    group.add(thick, shell);
+    const orb = new THREE.Mesh(this.#orbGeo, mat(0xffffff, 1));
+    orb.scale.setScalar(0.55);
+    orb.visible = false;
+    orb.frustumCulled = false;
+    orb.renderOrder = 13;
+    const glow = new THREE.Mesh(this.#orbGeo, mat(tint, 0.45));
+    glow.scale.setScalar(1.15);
+    orb.add(glow);
+    group.add(orb);
+    this.group.add(group);
+    const g = { group, thin, thick, shell, orb, age: 0, bolt: false, onBolt, resolve: null, done: false };
+    const promise = new Promise((resolve) => (g.resolve = resolve));
+    this.#gathers.push(g);
+    return promise;
+  }
+
+  abortGathers() {
+    for (const g of this.#gathers) this.#dropGather(g);
+    this.#gathers = [];
+  }
+
+  #dropGather(g) {
+    if (g.done) return;
+    g.done = true;
+    this.group.remove(g.group);
+    for (const m of [...g.thin, g.thick, g.shell, g.orb, g.orb.children[0]]) m.material.dispose();
+  }
+
+  #updateGathers(dt) {
+    const GATHER = 1.65; // long enough to see the three columns spin inward
+    const BOLT = 0.1; // thick column and the falling bolt: one instant
+    const H = 14;
+    const SPREAD = 0.9;
+    for (let i = this.#gathers.length - 1; i >= 0; i--) {
+      const g = this.#gathers[i];
+      g.age += dt;
+      if (g.age < GATHER) {
+        const u = g.age / GATHER;
+        const e = u * u * (3 - 2 * u);
+        const spread = SPREAD * (1 - e);
+        const spin = g.age * ((Math.PI * 2 * 1.25) / GATHER);
+        g.thin.forEach((m, k) => {
+          const a = spin + (k * Math.PI * 2) / 3;
+          m.position.set(Math.cos(a) * spread, 0, Math.sin(a) * spread);
+          m.material.opacity = 0.55 + 0.4 * e;
+        });
+        continue;
+      }
+      if (!g.bolt) {
+        g.bolt = true;
+        for (const m of g.thin) m.visible = false;
+        g.thick.visible = g.shell.visible = g.orb.visible = true;
+        g.orb.position.set(0, H, 0);
+        g.onBolt?.();
+      }
+      const b = Math.min(1, (g.age - GATHER) / BOLT);
+      g.orb.position.y = H * (1 - b);
+      if (b < 1) continue;
+      const resolve = g.resolve;
+      this.#dropGather(g);
+      this.#gathers.splice(i, 1);
+      resolve?.();
+    }
+  }
+
+  /**
+   * The missile's ground blast, with no missile: flash, shockwave, mushroom. `target` is passed to
+   * hooks.onImpact now and hooks.onCover after the crater-swap delay. Its x/z are world positions.
+   */
+  impact(target, hooks = {}) {
+    const job = { left: 1, resolve: () => {}, hooks };
+    this.#detonate({ target, i: 0, job }, target.harmless ? 0.45 : 1);
+  }
+
   /**
    * Launch one missile at each target ({ x, z }, in order, one every `stagger` s).
    * hooks.onImpact(target, i) fires at detonation, hooks.onCover(target, i) once the cloud
@@ -1049,6 +1175,7 @@ export class LaserStrike {
     }
 
     this.#updateUpright(dt);
+    this.#updateGathers(dt);
     this.#updateGuns(dt);
     this.#updateReplay(dt);
     this.#updateRounds(dt);

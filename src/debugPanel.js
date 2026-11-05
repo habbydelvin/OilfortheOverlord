@@ -7,7 +7,7 @@ const decimals = (step) => (String(step).split('.')[1] ?? '').length;
  * Each tuning section edits its `cfg` in place (read live) and saves to localStorage.
  * `fog` and `gfx` are optional extra sections: { params, defaults, cfg, save, clear, onChange(param) }.
  */
-export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog, globe, gfx, missiles, intercept, icons, scaling, audio, preview, shake, onShake, onMissiles, onPerf, onResetTutorial, crtOn, onCrt, onGiveTile, giveKeys, onGiveMissile, overlordStrike, onOverlordStrike }) {
+export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog, globe, gfx, missiles, intercept, icons, scaling, audio, preview, shake, onShake, onMissiles, onPerf, onResetTutorial, crtOn, onCrt, onGiveTile, giveKeys, onGiveMissile, overlordStrike, onOverlordStrike, laserColor, onLaserColor, laserColorDefault = '#24c5ff' }) {
   const fmt = (p, v) => (p.type === 'select' || p.type === 'color' ? v : Number(v).toFixed(decimals(p.step)));
   const payout = { id: 'payout', params: PAYOUT_PARAMS, defaults: PAYOUT_DEFAULTS, cfg, save: savePayoutConfig, clear: clearPayoutConfig };
   const sections = [audio && { id: 'audio', ...audio }, gfx && { id: 'gfx', ...gfx }, preview && { id: 'preview', ...preview }, shake && { id: 'shake', ...shake }, missiles && { id: 'missiles', ...missiles }, intercept && { id: 'intercept', ...intercept }, payout, scaling && { id: 'scaling', ...scaling }, icons && { id: 'icons', ...icons }, fog && { id: 'fog', ...fog }, globe && { id: 'globe', ...globe }].filter(Boolean);
@@ -56,6 +56,11 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
             <option value="laser"${overlordStrike?.() === 'laser' ? ' selected' : ''}>激光打击</option>
           </select>
         </label>
+        <label class="dbg-row${(laserColor?.() ?? laserColorDefault).toLowerCase() === laserColorDefault.toLowerCase() ? '' : ' changed'}" title="Colour of the three thin columns, the bolt shell, and the orb glow. The white core stays white.">
+          <span class="dbg-name">激光颜色</span>
+          <span class="dbg-val" data-v="laserColor">${laserColor?.() ?? laserColorDefault}</span>
+          <input type="color" data-act="laserColor" value="${laserColor?.() ?? laserColorDefault}" />
+        </label>
         <div class="dbg-actions dbg-dev">
           <button data-act="skipMet" title="Jump to the tribute and deliver exactly the quota">Skip year <small>(meet)</small></button>
           <button data-act="skipMiss" title="Jump to the tribute and deliver nothing (a strike)">Skip year <small>(miss)</small></button>
@@ -99,6 +104,14 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
   });
 
   root.addEventListener('input', (e) => {
+    if (e.target.dataset.act === 'laserColor') {
+      const hex = e.target.value;
+      const val = root.querySelector('[data-v="laserColor"]');
+      if (val) val.textContent = hex;
+      e.target.closest('.dbg-row')?.classList.toggle('changed', hex.toLowerCase() !== laserColorDefault.toLowerCase());
+      onLaserColor?.(hex);
+      return;
+    }
     const k = e.target.dataset.k;
     const sec = sectionOf(e.target.dataset.s);
     if (!k || !sec) return;
