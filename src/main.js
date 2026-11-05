@@ -6,6 +6,8 @@ import './themeShine.js';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { createInstancer } from './instancer.js';
+import { createTitleScreen } from './titleScreen.js';
+import { createSandPlanet } from './sandPlanet.js';
 import { createShadowCache } from './shadowCache.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, setMusicMuffled, startMusic } from './music.js';
 import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws, wasteThud, buildThud, zoomWhoosh } from './sfx.js';
@@ -59,7 +61,7 @@ import { Tutorial, TUTORIAL_KEY, OPENING, tutorialDone, markTutorialDone } from 
 import { L, both, isZh, toggleLang, onLangChange, applyStatic, textOf, retranslate } from './i18n.js';
 import { createRivals, advanceRivals, rivalStats, PLAYER_NODE } from './rivals.js';
 import { createRivalView } from './rivalView.js';
-import { createGlobeView, GLOBE_PARAMS, GLOBE_DEFAULTS, loadGlobeConfig, saveGlobeConfig, clearGlobeConfig } from './globeView.js';
+import { createGlobeView, GLOBE_RADIUS, GLOBE_PARAMS, GLOBE_DEFAULTS, loadGlobeConfig, saveGlobeConfig, clearGlobeConfig } from './globeView.js';
 import { createCloudTransition } from './cloudTransition.js';
 
 applyStatic(); // the page's own text in the saved language
@@ -6218,6 +6220,7 @@ function globeHome() {
 globe = createGlobeView({
   renderer,
   root: $('globeUI'),
+  painted: true, // painted like the main screen's planet, hex lines on it (sandPlanet.js createPaintedGlobe)
   factory,
   playerBuildings: playerBuildingCount,
   playerHp: () => turn.capitalHp,
@@ -6230,6 +6233,51 @@ globe = createGlobeView({
   onApproach: (s) => approach(s),
   approachLead: () => missileCfg.followFlight,
 });
+// ---------- main screen ----------
+// Its own planet, apart from the War Map's: its own scene, camera and look (no hex grid, finer sand), so nothing
+// done here reaches the in-game planet. Its labels live in a detached element (the main screen shows none).
+const titleGlobeUI = document.createElement('div');
+titleGlobeUI.innerHTML = '<div class="globe-title"></div><div id="globeLabels"></div><div id="globeCard" class="hidden"></div>';
+const titleGlobe = createGlobeView({
+  renderer,
+  root: titleGlobeUI,
+  factory,
+  playerBuildings: () => 0,
+  playerHp: () => 5,
+  onVisit: () => {},
+});
+// Its planet is painted, not the hex world (sandPlanet.js); the star, nebula and moon stay from the War Map scene.
+titleGlobe.setLook({ hidePlanet: true });
+const titlePlanet = createSandPlanet(GLOBE_RADIUS);
+titleGlobe.scene.add(titlePlanet.group);
+const titleScreen = createTitleScreen({
+  root: $('title'),
+  scene: titleGlobe.scene,
+  camera: titleGlobe.camera,
+  getModel: () => factory.models?.get('mothership'),
+  onStart: startFromTitle,
+  onOptions: () => debug.toggle(), // every Game Debug option, for now
+});
+
+/** The main screen: the planet from mid distance, the menu over it. */
+function showTitle() {
+  view = 'title';
+  setBoardFraming(false);
+  titleGlobe.enter([], 'player'); // pulls back from just above the planet to its usual distance
+  titleScreen.show();
+}
+
+/** Start: a new game from the very beginning, the full tutorial included. */
+function startFromTitle() {
+  if (switching) return;
+  swapView(() => {
+    titleScreen.hide();
+    titleGlobe.exit();
+    localStorage.removeItem(TUTORIAL_KEY);
+    resetIsland({ tutorial: true }); // back on the board (resetView), lessons start over
+  });
+}
+
 rig.onZoomPastMax = () => {
   if (view === 'board' || view === 'rival') openGlobe();
   if (!switching) rig.resetOverscroll(); // refused (another screen is up)
@@ -6257,6 +6305,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (tgt.matches?.('input, select, textarea')) return; // typing in the debug panel
+  if (view === 'title') return; // the main screen: only its menu
   if (k === 'g' && !e.repeat) {
     if (view === 'globe') globeHome();
     else openGlobe();
@@ -6920,6 +6969,19 @@ function frame(now) {
   const time = now / 1000;
   perf.frameBegin(now);
   if (view !== 'board') shadowCache.invalidate();
+  if (view === 'title') {
+    // The main screen: the planet scene (War Map) with the title ship, nothing of the board.
+    perf.begin('render (cpu)');
+    flattenCurve();
+    titleGlobe.update(dt);
+    titlePlanet.update(dt);
+    titleScreen.update(dt);
+    titleGlobe.render();
+    perf.end('render (cpu)');
+    perf.frameEnd();
+    requestAnimationFrame(frame);
+    return;
+  }
 
   perf.begin('camera');
   rig.update(dt);
@@ -7213,7 +7275,7 @@ factory.ready.then(async () => {
     startMusic();
     if (started || !sound) return sound;
     started = true;
-    resetIsland(); // a first visit gets the guided Spring
+    showTitle(); // the main screen; Start begins the game
     last = performance.now();
     requestAnimationFrame(frame);
     $('loading').classList.add('done');
@@ -7273,4 +7335,4 @@ factory.extrasReady.then(async (extras) => {
 if (RELEASE) for (const id of ['debugDock', 'libraryLink']) document.getElementById(id)?.remove();
 
 // Handy for debugging in the console (dev builds only).
-if (!RELEASE) window.tileIsland = { lod: { LOD, lodStats, setLod }, instancer, shadowCache, tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, openCityStrike, drawStrikeHand, missileCount, _t: { openGlobe, globeCfg, clear: () => (eventOpen = false), war: { addMissile, queueDrawn, updateAimBar, runAttackPhase, rivals: () => rivals } } };
+if (!RELEASE) window.tileIsland = { titleScreen, lod: { LOD, lodStats, setLod }, instancer, shadowCache, tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, openCityStrike, drawStrikeHand, missileCount, _t: { openGlobe, globeCfg, clear: () => (eventOpen = false), war: { addMissile, queueDrawn, updateAimBar, runAttackPhase, rivals: () => rivals } } };

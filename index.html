@@ -75,6 +75,15 @@
       </div>
     </div>
     <div id="app"></div>
+    <!-- Main screen (titleScreen.js): over the planet, before a game starts. -->
+    <div id="title" class="hidden">
+      <h1 class="title-name" data-zh="献给霸主的石油">Oil for the Overlord</h1>
+      <nav class="title-menu">
+        <button id="btnContinue" class="btn steel" type="button" disabled data-zh="继续">Continue</button>
+        <button id="btnStart" class="btn gold" type="button" data-zh="开始">Start</button>
+        <button id="btnOptions" class="btn steel" type="button" data-zh="选项">Options</button>
+      </nav>
+    </div>
     <!-- Language: English / 中文 (src/i18n.js). Shows the language it switches to. -->
     <button id="btnMissile" type="button" title="Launch a missile strike on random buildings" aria-label="Launch a missile strike on random buildings" data-zh-title="向随机建筑发射导弹" data-zh-aria-label="向随机建筑发射导弹"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(45 12 12)"><path d="M12 1.5c2 1.6 3 4 3 6.5v8h-6V8c0-2.5 1-4.9 3-6.5z" fill="currentColor"/><path d="M9 12.5l-3 3.5v2.5l3-1.5zM15 12.5l3 3.5v2.5l-3-1.5z" fill="currentColor"/><path d="M10.2 17h3.6l-.6 2.2h-2.4z" fill="currentColor"/><path d="M10.8 20.2h2.4L12 23z" fill="#ff8a2a"/></g></svg></button>
     <button id="btnReplayTutorial" type="button" title="Restart into the tutorial" aria-label="Restart the game into the tutorial" data-zh-title="重新开始并进入教程" data-zh-aria-label="重新开始游戏并进入教程"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.2 8.5A8 8 0 1 1 4 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M3.6 4.2v4.9h4.9" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.6 7.6a1.1 1.1 0 0 1 2.2 0v4.1l2.6.5c.8.2 1.3.9 1.2 1.7l-.4 2.6c-.1.7-.7 1.2-1.4 1.2h-3.3c-.5 0-.9-.2-1.2-.6l-2-2.6a1.1 1.1 0 0 1 1.6-1.5l.7.7z" fill="currentColor"/></svg></button>

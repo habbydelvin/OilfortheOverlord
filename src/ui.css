@@ -4119,3 +4119,78 @@ body.paying .float-btn {
     bottom: calc(8px + 18px + 18px + 1.2em + 4px + 4px);
   }
 }
+
+/* ---------- main screen (titleScreen.js) ---------- */
+/* Over the planet; under the Game Debug panel (z 100), which Options opens. */
+#title {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 11vh 0 0 7vw;
+  pointer-events: auto; /* nothing reaches the planet: it isn't playable here */
+  background: radial-gradient(ellipse 60% 70% at 18% 40%, rgba(0, 0, 0, 0.45), transparent 70%);
+}
+#title.hidden {
+  display: none;
+}
+#title .title-name {
+  margin: 0 0 7vh;
+  max-width: 9em;
+  font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'OTO Han Serif', serif;
+  font-size: clamp(40px, 6.4vw, 92px);
+  font-weight: 700;
+  line-height: 1.02;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #e8bf68;
+  text-shadow: 0 3px 0 #5a3a12, 0 6px 22px rgba(0, 0, 0, 0.85);
+  animation: titleIn 1.2s ease-out both;
+}
+#title .title-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: clamp(220px, 22vw, 320px);
+  animation: titleIn 1.2s 0.35s ease-out both;
+}
+#title .title-menu .btn {
+  width: 100%;
+  min-height: 58px;
+  font-size: 20px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+#title .title-menu .btn:disabled {
+  filter: grayscale(1) brightness(0.6);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+@keyframes titleIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+/* Nothing of the game's HUD on the main screen (language and music stay); Game Debug only through Options. */
+/* Options opens Game Debug, inside #ui: lift that layer over the menu (everything else in it is hidden here). */
+body.title-screen #ui {
+  z-index: 92;
+}
+/* While Options is open, the menu steps back behind it. */
+body.title-screen:has(#debug:not(.hidden)) #title {
+  opacity: 0.2;
+  pointer-events: none;
+}
+/* The cloud transition to the board rolls in over the menu too. */
+body.title-screen #viewClouds {
+  z-index: 96;
+}
+body.title-screen #ui > :not(#debugDock),
+body.title-screen #btnDebug,
+body.title-screen #btnMissile,
+body.title-screen #btnReplayTutorial {
+  display: none;
+}
