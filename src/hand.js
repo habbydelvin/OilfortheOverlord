@@ -1,7 +1,7 @@
 import { pieceOf, randomPiece, rotateCells, shapeFits, SHAPES, ROTATIONS } from './pieces.js';
 import { ACTIONS, ICONS, TERRAINS, cardDef, cardText, hex, shapeGridHTML, snapHTML, cardArtHTML } from './tiles.js';
 import { WORKERS } from './economy.js';
-import { bindCardHover, chirp, deal as dealSfx, tick } from './sfx.js';
+import { bindCardHover, rotateClick, deal as dealSfx, tick } from './sfx.js';
 import { L } from './i18n.js';
 
 const MP_ICON = ICONS.manpower;
@@ -283,7 +283,7 @@ export class Hand {
     this.render();
     this.onChange?.(p);
     this.onRotate?.(p);
-    chirp();
+    rotateClick();
   }
 
   /** A little hop that draws the eye to this card (the one the tutorial wants). */

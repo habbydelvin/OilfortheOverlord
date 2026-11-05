@@ -7,8 +7,8 @@ import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { createInstancer } from './instancer.js';
 import { createShadowCache } from './shadowCache.js';
-import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
-import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws } from './sfx.js';
+import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, setMusicMuffled, startMusic } from './music.js';
+import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws, wasteThud, buildThud, zoomWhoosh } from './sfx.js';
 import { createCombatAudio } from './combatAudio.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed, hexesAround } from './grid.js';
@@ -31,7 +31,7 @@ import { Mysteries, siloFires } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
 import { computeEconomy, computeEconomyIf, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS, rebelsRise, WORKERS } from './economy.js';
-import { FACTORY_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, blastExtra, isMilitaryLab, labOilCost } from './arsenal.js';
+import { FACTORY_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, blastExtra, isMilitaryLab, labOilCost, BASE_MISSILE_CAP, MAGAZINE_CAP } from './arsenal.js';
 import { pieceOf, pieceOffsets } from './pieces.js';
 import { findCiws } from './interceptMesh.js';
 import { queueDrawn, addMissile, missileCount, ammoCount, missileKinds, trimMissiles, resetMissiles, openCityStrike, drawStrikeHand, returnStrikeHand, bindCityStrikeUi, queueStrike, unqueueStrike, queuedStrikes, takeQueue, clearQueue } from './cityStrike.js';
@@ -625,7 +625,7 @@ const WASTELAND_VARIANTS = ['wasteland1', 'wasteland2', 'wasteland3', 'wasteland
 /**
  * Places a tile, replacing whatever was there (building over Wasteland / Ruins).
  * It stomps down after `delay` seconds; `instant` puts it straight in place instead (the starting Capital).
- * bare: the cell gets an empty holder because a whole-piece Wasteland model covers it (see addWastePiece).
+ * bare: an empty holder. Wasteland no longer uses one (each cell drops on its own).
  */
 function addTile(x, z, terrain, delay = 0, instant = false, { bare = false, rot = 0 } = {}) {
   // Mix wasteland shades per cell so a wasteland piece doesn't look like one flat slab.
@@ -652,7 +652,7 @@ function addTile(x, z, terrain, delay = 0, instant = false, { bare = false, rot 
     built: isMilitaryLab(terrain) ? false : undefined,
     buildHalted: isMilitaryLab(terrain) ? false : undefined,
   });
-  if (!instant) anims.push({ mesh, t: -delay, landed: false });
+  if (!instant) anims.push({ mesh, t: -delay, landed: false, waste: terrain.startsWith('wasteland'), build: isBuilding(terrain) });
 }
 
 /** Swap any flat stand-in that now has a loaded blockout, including one still falling. */
@@ -663,7 +663,10 @@ function adoptBlockouts() {
     const next = factory.upgrade(previous, cell.terrain);
     if (next === previous) continue;
     const anim = anims.find((a) => a.mesh === previous);
-    if (anim) anim.mesh = next;
+    if (anim) {
+      releaseGround(anim);
+      anim.mesh = next;
+    }
     cell.mesh = next;
     if (cell.terrain === 'milfactory') setPadMissile(cell, cell.missileReady);
   }
@@ -676,40 +679,54 @@ factory.ready.then(adoptBlockouts);
 function removeMesh(mesh) {
   tiles.remove(mesh);
   const i = anims.findIndex((a) => a.mesh === mesh);
-  if (i >= 0) anims.splice(i, 1);
+  if (i >= 0) {
+    releaseGround(anims[i]);
+    anims.splice(i, 1);
+  }
   const piece = mesh.userData.piece;
   if (piece && !piece.broken) breakWastePiece(piece, mesh);
 }
 
 // ---------- Wasteland pieces ----------
+/** Gap before the next hex of a Wasteland piece starts falling. The fall itself is DROP.fall (0.24s). */
+const WASTE_DROP_GAP = 0.08;
+
 /**
- * A Wasteland piece lands as one group spanning all its cells (a look per cell, see factory.createPiece).
- * Every cell still gets its own (empty) holder, so the board rules work per cell as before. Each holder points
- * at the piece record: { shape, rot, cells: keys, lead: key of the first cell in reading order, group, broken }.
+ * A Wasteland piece lands as separate hexes, one after another, each with its own rock thud.
+ * Every cell still points at the piece record: { shape, rot, cells: keys, lead, group: null, broken },
+ * so covering one cell still breaks the rest. The drag preview stays one connected shape.
  * Before the piece models have loaded, the cells get coloured blocks and adoptWastePieces upgrades them later.
  */
+/** Drop order: the hex that touches land you already have, then outward. Shape order can start on the dangling end. */
+function wasteDropOrder(cells) {
+  const neighbours = (x, z) => DIRS.reduce((n, [dx, dz]) => n + (grid.has(x + dx, z + dz) ? 1 : 0), 0);
+  const rooted = cells.filter(([x, z]) => grid.has(x, z) || grid.touchesIsland(x, z));
+  let anchor = cells[0];
+  let best = -1;
+  for (const cell of rooted.length ? rooted : cells) {
+    const n = neighbours(...cell);
+    if (n > best) {
+      best = n;
+      anchor = cell;
+    }
+  }
+  const index = new Map(cells.map((c, i) => [plotKey(...c), i]));
+  const rest = cells.filter((c) => c !== anchor);
+  rest.sort((a, b) => hexDistance(...anchor, ...a) - hexDistance(...anchor, ...b) || index.get(plotKey(...a)) - index.get(plotKey(...b)));
+  return [anchor, ...rest];
+}
+
 function addWastePiece(piece, cells) {
   const [lx, lz] = [...cells].sort((a, b) => a[1] - b[1] || a[0] - b[0])[0];
   const rec = { shape: piece.shape, rot: piece.rot, seed: piece.id, cells: cells.map(([x, z]) => plotKey(x, z)), lead: plotKey(lx, lz), group: null, broken: false };
-  const group = factory.createPiece(piece.shape, piece.rot, piece.id);
-  cells.forEach(([x, z], i) => {
-    addTile(x, z, piece.terrain, i * 0.05, Boolean(group), { bare: Boolean(group) });
-    grid.get(x, z).mesh.userData.piece = rec;
+  const mid = cellsCentre(cells);
+  wasteDropOrder(cells).forEach(([x, z], i) => {
+    addTile(x, z, piece.terrain, i * WASTE_DROP_GAP, false);
+    const cell = grid.get(x, z);
+    cell.mesh.userData.piece = rec;
+    const w = hexToWorld(x, z);
+    factory.fillWastePart(cell.mesh, cell.terrain, rec, [w.x - mid.x, w.z - mid.z], cellSeed(x, z));
   });
-  if (group) placeWasteGroup(rec, group, true);
-}
-
-/** Put a piece's model over its cells; `drop` makes it stomp in like a placed tile, with dust under every cell. */
-function placeWasteGroup(rec, group, drop) {
-  const pts = rec.cells.map((k) => k.split(',').map(Number));
-  const mid = cellsCentre(pts);
-  group.position.set(mid.x, 0, mid.z);
-  rec.group = group;
-  tiles.add(group);
-  if (drop) {
-    group.visible = false;
-    anims.push({ mesh: group, t: 0, landed: false, cells: pts });
-  }
 }
 
 /**
@@ -721,7 +738,10 @@ function breakWastePiece(rec, removed) {
   if (rec.group) {
     tiles.remove(rec.group);
     const i = anims.findIndex((a) => a.mesh === rec.group);
-    if (i >= 0) anims.splice(i, 1);
+    if (i >= 0) {
+      releaseGround(anims[i]);
+      anims.splice(i, 1);
+    }
   }
   for (const k of rec.cells) {
     const c = grid.cells.get(k);
@@ -752,19 +772,16 @@ function adoptWastePieces() {
     if (!cell.terrain.startsWith('wasteland')) continue;
     const rec = cell.mesh.userData.piece;
     if (rec && !rec.broken) {
-      if (rec.group || done.has(rec)) continue;
+      if (done.has(rec)) continue;
       done.add(rec);
-      const group = factory.createPiece(rec.shape, rec.rot, rec.seed);
-      if (!group) {
-        // No whole-piece model for this shape: each cell gets a lone cell's look.
-        for (const k of rec.cells) {
-          const c = grid.cells.get(k);
-          if (c && !c.mesh.userData.blockout) factory.fillWaste(c.mesh, c.terrain, cellSeed(c.x, c.z));
-        }
-        continue;
+      // Stay separate hexes. Each one takes the look it had in the piece, once the models exist.
+      const mid = cellsCentre(rec.cells.map((k) => k.split(',').map(Number)));
+      for (const k of rec.cells) {
+        const c = grid.cells.get(k);
+        if (!c || c.mesh.userData.blockout) continue;
+        const w = hexToWorld(c.x, c.z);
+        factory.fillWastePart(c.mesh, c.terrain, rec, [w.x - mid.x, w.z - mid.z], cellSeed(c.x, c.z));
       }
-      for (const k of rec.cells) grid.cells.get(k)?.mesh.clear();
-      placeWasteGroup(rec, group, false);
     } else if (!cell.mesh.userData.blockout) {
       if (rec) fillLeftover(cell, rec); // broken before the models came: its part of the piece all the same
       else factory.fillWaste(cell.mesh, cell.terrain, cellSeed(cell.x, cell.z));
@@ -2066,6 +2083,65 @@ function hideFallingPlates(mesh) {
   return plates;
 }
 
+const groundInv = new THREE.Matrix4();
+
+/** Flat plates that sit on the sand. The landing squash must not scale these, or their edge flickers against the ground. */
+function groundPlates(root) {
+  const plates = [];
+  root.traverse((o) => {
+    if (!o.isMesh || o === root) return;
+    const seamless = [o.material].flat().some((m) => m && isSeamless(m));
+    if (o.userData.ground || isGroundMesh(o) || seamless) plates.push(o);
+  });
+  return plates;
+}
+
+/**
+ * Keep each ground plate at the transform it has when the tile is at rest.
+ * The matrix is written directly: the squash scale differs on each axis, so splitting it back into
+ * position, rotation and scale shears a rotated plate and the sand crawls.
+ */
+function holdGround(a) {
+  const mesh = a.mesh;
+  if (!a.groundHold) {
+    const savedScale = mesh.scale.clone();
+    const savedY = mesh.position.y;
+    mesh.scale.set(1, 1, 1);
+    mesh.position.y = 0;
+    mesh.updateMatrixWorld(true);
+    a.groundHold = groundPlates(mesh).map((o) => ({
+      o,
+      world: o.matrixWorld.clone(),
+      pos: o.position.clone(),
+      quat: o.quaternion.clone(),
+      scale: o.scale.clone(),
+      auto: o.matrixAutoUpdate,
+    }));
+    mesh.scale.copy(savedScale);
+    mesh.position.y = savedY;
+  }
+  if (!a.groundHold.length) return;
+  mesh.updateMatrixWorld(true);
+  for (const p of a.groundHold) {
+    groundInv.copy(p.o.parent.matrixWorld).invert();
+    p.o.matrix.copy(groundInv).multiply(p.world);
+    p.o.matrixAutoUpdate = false;
+    p.o.matrixWorldNeedsUpdate = true;
+  }
+}
+
+function releaseGround(a) {
+  if (!a.groundHold) return;
+  for (const p of a.groundHold) {
+    p.o.position.copy(p.pos);
+    p.o.quaternion.copy(p.quat);
+    p.o.scale.copy(p.scale);
+    p.o.matrixAutoUpdate = p.auto;
+    p.o.matrixWorldNeedsUpdate = true;
+  }
+  a.groundHold = null;
+}
+
 function updateDropAnims(dt) {
   for (let i = anims.length - 1; i >= 0; i--) {
     const a = anims[i];
@@ -2085,7 +2161,9 @@ function updateDropAnims(dt) {
     if (!a.landed) {
       a.landed = true;
       for (const o of a.plates ?? []) o.castShadow = true; // on the ground again: the plate's shadow is its own edge
-      thud(Boolean(a.cells));
+      if (a.cells || a.waste) wasteThud();
+      else if (a.build) buildThud();
+      else thud();
       // The cells it landed on: a whole Wasteland piece knows its cells, a single tile's is under its position.
       const cells = a.cells ?? [worldToHex(a.mesh.position.x, a.mesh.position.z)];
       for (const [cx, cz] of cells) {
@@ -2104,7 +2182,9 @@ function updateDropAnims(dt) {
     a.mesh.scale.set(1 + k * 0.45, 1 - k, 1 + k * 0.45);
     const bounce = u < 0.16 ? Math.sin((u / 0.16) * Math.PI) * DROP.rebound : 0;
     a.mesh.position.y = Math.max(0, bounce);
+    holdGround(a);
     if (u >= DROP.settle) {
+      releaseGround(a);
       a.mesh.position.y = 0;
       a.mesh.scale.set(1, 1, 1);
       anims.splice(i, 1);
@@ -2538,7 +2618,45 @@ function updateHUD() {
 const rerollCost = () => turn.rerolls + 1;
 
 // ---------- resource breakdown tooltips ----------
-let tipKind = null; // 'food' | 'mp' | 'oil' while a resource row is hovered
+let tipKind = null; // 'food' | 'mp' | 'oil' | 'missile' while a resource row is hovered
+
+/**
+ * Oil the stockpile will actually hand to factories and unfinished labs this season.
+ * Factories whose year bar is already full do not pay again. Labs are reserved against every
+ * factory that still owes oil, then paid only while the stockpile can cover the next one.
+ */
+function militaryOilDue(e) {
+  const need = yearLength();
+  let purse = turn.stockpile + e.oil;
+  let factoryDue = 0;
+  let factoryPaidN = 0;
+  let factorySkipped = 0;
+  const labs = { missilelab: 0, warhead: 0, booster: 0 };
+  let labSkipped = 0;
+  const unfinished = [];
+  for (const cell of grid.cells.values()) {
+    if (cell.terrain === 'milfactory') {
+      if ((cell.missileProgress ?? 0) >= need) continue;
+      factoryDue++;
+      if (purse >= FACTORY_OIL) {
+        purse -= FACTORY_OIL;
+        factoryPaidN++;
+      } else factorySkipped++;
+    } else if (isMilitaryLab(cell.terrain) && !cell.built) unfinished.push(cell);
+  }
+  let labPool = turn.stockpile + e.oil - factoryDue * FACTORY_OIL;
+  for (const cell of unfinished) {
+    const cost = labOilCost(cell.terrain);
+    if (labPool < cost || purse < cost) {
+      labSkipped++;
+      continue;
+    }
+    labPool -= cost;
+    purse -= cost;
+    labs[cell.terrain]++;
+  }
+  return { purse, factoryPaidN, factorySkipped, labs, labSkipped };
+}
 
 const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
 const pct = (f) => `${Math.round(f * 100)}%`;
@@ -2620,14 +2738,28 @@ function breakdown(kind, e) {
     mul(L('Hunger', '饥饿'), e.fed);
     add(L('Settlement tax', `${nm('settlement')}税收`), e.taxOil);
     add(L(`Siphoner camps ×${c('bandit_siphon')}`, `${nm('bandit_siphon')} ×${c('bandit_siphon')}`), -e.oilStolen);
-    add(L(`Recipe Labs ×${c('missilelab')}`, `${nm('missilelab')} ×${c('missilelab')}`), -(e.recipeOil ?? 0));
-    add(L(`Warhead Institutes ×${c('warhead')}`, `${nm('warhead')} ×${c('warhead')}`), -(e.warheadOil ?? 0));
-    add(L(`Launch Accelerators ×${c('booster')}`, `${nm('booster')} ×${c('booster')}`), -(e.boosterOil ?? 0));
+    add(L(`Intercept Networks ×${c('intercept')}`, `${nm('intercept')} ×${c('intercept')}`), -(e.interceptOil ?? 0));
+    const decoyN = (e.perCell ?? []).filter((p) => p.terrain === 'decoyworks' && !p.idle).length;
+    add(L(`Decoy Builders ×${decoyN}`, `${nm('decoyworks')} ×${decoyN}`), -(e.decoyOil ?? 0));
     total(L('This season', '本季'), signed(e.oil));
+    const due = militaryOilDue(e);
+    add(L(`Military Factories ×${due.factoryPaidN}`, `${nm('milfactory')} ×${due.factoryPaidN}`), -(due.factoryPaidN * FACTORY_OIL));
+    add(L(`Recipe Labs ×${due.labs.missilelab}`, `${nm('missilelab')} ×${due.labs.missilelab}`), -(due.labs.missilelab * labOilCost('missilelab')));
+    add(L(`Warhead Institutes ×${due.labs.warhead}`, `${nm('warhead')} ×${due.labs.warhead}`), -(due.labs.warhead * labOilCost('warhead')));
+    add(L(`Launch Accelerators ×${due.labs.booster}`, `${nm('booster')} ×${due.labs.booster}`), -(due.labs.booster * labOilCost('booster')));
+    const held = due.factorySkipped + due.labSkipped;
+    if (held) {
+      note(
+        L(
+          held === 1 ? 'Not enough oil: 1 building sits still' : `Not enough oil: ${held} buildings sit still`,
+          `石油不足：${held} 座建筑停工`,
+        ),
+      );
+    }
     note(
       L(
-        `Stockpile ${turn.stockpile} → ${turn.stockpile + e.oil} / ${turn.quota} tribute`,
-        `石油库存 ${turn.stockpile} → ${turn.stockpile + e.oil} / 贡品 ${turn.quota}`,
+        `Stockpile ${turn.stockpile} → ${due.purse} / ${turn.quota} tribute`,
+        `石油库存 ${turn.stockpile} → ${due.purse} / 贡品 ${turn.quota}`,
       ),
     );
     note(L(`The Overlord takes all of it after ${SEASONS[yearLength() - 1]}.`, `${SEASONS[yearLength() - 1]}季结束后，霸主会全部拿走。`));
@@ -2635,10 +2767,79 @@ function breakdown(kind, e) {
   return rows;
 }
 
+/** Capacity and what is building a missile. The Missiles row used to fall through into the oil lines. */
+function missileBreakdown(e) {
+  const rows = [];
+  const add = (label, v) => v && rows.push([label, signed(v), v < 0 ? 'add bad' : 'add']);
+  const total = (label, v) => rows.push([label, v, 'total']);
+  const note = (text) => rows.push([text, '', 'note']);
+  const nm = (t) => TERRAINS[t].name;
+  const idle = idleKeySet(e);
+  const cap = missileCapacity(grid, idle);
+  add(L('Hive City', '蜂巢城'), BASE_MISSILE_CAP);
+  const magazines = [...grid.cells.values()].filter((c) => c.terrain === 'magazine');
+  const idleMags = magazines.filter((c) => idle.has(`${c.x},${c.z}`)).length;
+  const staffedMags = magazines.length - idleMags;
+  add(L(`Magazines ×${staffedMags}`, `${nm('magazine')} ×${staffedMags}`), staffedMags * MAGAZINE_CAP);
+  total(L('Capacity', '容量'), cap);
+  if (idleMags) {
+    note(
+      L(
+        idleMags === 1 ? '1 idle Magazine adds no capacity' : `${idleMags} idle Magazines add no capacity`,
+        `${idleMags} 座闲置${nm('magazine')}不增加容量`,
+      ),
+    );
+  }
+  const loaded = missileHandCount();
+  const inHand = strikeOpen ? hand.cards.filter((p) => p.terrain === 'missile' || p.terrain === 'missile2').length : 0;
+  note(
+    inHand
+      ? L(`${loaded} / ${cap} loaded (${inHand} in the strike hand)`, `${loaded} / ${cap} 已装填（${inHand} 在袭击手牌中）`)
+      : L(`${loaded} / ${cap} loaded`, `${loaded} / ${cap} 已装填`),
+  );
+
+  const need = yearLength();
+  const factories = [...grid.cells.values()].filter((c) => c.terrain === 'milfactory');
+  let room = Math.max(0, cap - loaded);
+  let coming = 0;
+  let waiting = false;
+  if (!factories.length) note(L('No Military Factory is building missiles.', '没有军事工厂在生产导弹。'));
+  for (const cell of factories) {
+    const y = factoryYield(grid, cell, idle);
+    const extra = y.count - 1;
+    const labEn = extra > 0 ? ` · Recipe Lab +${extra}` : '';
+    const labZh = extra > 0 ? ` · ${nm('missilelab')} +${extra}` : '';
+    const pips = cell.missileProgress ?? 0;
+    const fills = pips < need && pips + 1 >= need;
+    if (pips >= need || fills) {
+      const n = Math.min(y.count, room);
+      room -= n;
+      coming += n;
+      if (n > 0) add(L(`Military Factory finishes${labEn}`, `${nm('milfactory')}本季完成${labZh}`), n);
+      if (n < y.count) waiting = true;
+    } else {
+      note(L(`Military Factory ${pips}/${need}${labEn}`, `${nm('milfactory')} ${pips}/${need}${labZh}`));
+    }
+  }
+  if (waiting) note(L('Magazine full: the missile waits.', '弹仓已满：导弹等候空位。'));
+  if (coming) total(L('This season', '本季'), `+${coming}`);
+  const decoyN = (e.perCell ?? []).filter((p) => p.terrain === 'decoyworks' && !p.idle).length;
+  if (decoyN) {
+    note(
+      L(
+        `Decoy Builders ×${decoyN} make decoys. Decoys do not use a slot.`,
+        `${nm('decoyworks')} ×${decoyN} 生产诱饵。诱饵不占弹仓。`,
+      ),
+    );
+  }
+  return rows;
+}
+
 function renderResTip(e = economyNow()) {
-  const rows = breakdown(tipKind, e);
+  const rows = tipKind === 'missile' ? missileBreakdown(e) : breakdown(tipKind, e);
+  const title = tipKind === 'missile' ? L('Missiles', '导弹') : L('How this season adds up', '本季收支明细');
   $('resTip').innerHTML =
-    `<div class="title">${L('How this season adds up', '本季收支明细')}</div>` +
+    `<div class="title">${title}</div>` +
     (rows.length ? '' : `<div class="row note">${L('Nothing yet', '暂无')}</div>`) +
     rows
       .map(([label, value, type]) => `<div class="row ${type}"><span>${label}</span><b>${value}</b></div>`)
@@ -5902,6 +6103,7 @@ function resetView() {
   switching = false;
   clouds.reset();
   document.body.classList.remove('globe-view', 'rival-view');
+  setMusicMuffled(false);
 }
 
 // ---------- view switches (board ⇄ globe ⇄ rival city) ----------
@@ -5934,6 +6136,8 @@ function openGlobe() {
   }
   const from = view === 'rival' ? rivalShown?.id : 'player';
   rig.locked = true;
+  zoomWhoosh(false);
+  setMusicMuffled(true);
   swapView(() => {
     if (view === 'rival') {
       setAiming(false);
@@ -5952,7 +6156,9 @@ function openGlobe() {
 
 /** Globe → board, after the fly-in onto Hive City. The board camera comes back pulled out, then settles in. */
 function closeGlobe() {
-  if (view !== 'globe') return Promise.resolve();
+  if (view !== 'globe' || switching) return Promise.resolve();
+  zoomWhoosh(true);
+  setMusicMuffled(false);
   return swapView(() => {
     globe.exit();
     document.body.classList.remove('globe-view');
@@ -5968,7 +6174,9 @@ function closeGlobe() {
 
 function enterRival(id) {
   const rival = rivals.find((entry) => entry.id === id);
-  if (!rival || view !== 'globe') return;
+  if (!rival || view !== 'globe' || switching) return;
+  zoomWhoosh(true);
+  setMusicMuffled(false);
   swapView(() => {
     globe.exit();
     document.body.classList.remove('globe-view');
