@@ -9,6 +9,7 @@ import { createInstancer } from './instancer.js';
 import { createShadowCache } from './shadowCache.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
 import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws } from './sfx.js';
+import { createCombatAudio } from './combatAudio.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed, hexesAround } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
@@ -121,6 +122,20 @@ const fog = new FogOfWar(scene, fogCfg);
 // Reduced-resolution fog (quality presets); the placed tiles still hide the fog behind them.
 fog.attachRenderer(renderer, scene, [tiles, instancer.group]);
 const missileCfg = loadMissileConfig(); // Game Debug → Missiles
+// Recorded combat sounds (public/audio/combat-test). Until they have loaded, the synthesised sounds below play instead.
+const combatAudio = createCombatAudio();
+/** The recorded sound once loaded, else the old synthesised one. */
+const snd = (recorded, fallback) => (combatAudio.ready ? recorded() : fallback?.());
+const explode = (size) => snd(() => combatAudio.explosion(size), boom);
+const launchSnd = () => snd(() => combatAudio.launch(), boom);
+const gunSnd = (dur) => snd(() => combatAudio.gunBurst(dur), () => ciws(dur));
+/** A whoosh that peaks when this missile lands or is shot down. Null until the recordings are loaded. */
+function missileWhoosh(t) {
+  if (!combatAudio.ready) return null;
+  const now = typeof t.clock === 'function' ? t.clock() : 0;
+  const end = (t.killAt ?? (t.t0 ?? 0) + (t.flight ?? missileCfg.followFlight)) - now;
+  return end > 0.2 ? combatAudio.incoming(end) : null;
+}
 const missiles = new MissileStrike(scene, camera, missileCfg);
 const shakeCfg = loadShakeConfig(); // Game Debug → Missile camera shake
 const camShake = new CameraShake(camera, shakeCfg); // missile strikes only; tiles etc. use the small `shake` jolt
@@ -168,7 +183,10 @@ const debug = RELEASE
     },
     onChange: (p) => {
       if (!p || p.key === 'music') setMusicVolume(audioCfg.music);
-      if (!p || p.key === 'sfx') setSfxVolume(audioCfg.sfx);
+      if (!p || p.key === 'sfx') {
+        setSfxVolume(audioCfg.sfx);
+        combatAudio.syncMaster();
+      }
     },
   },
   onPlay: () => previewPayout(),
@@ -962,6 +980,7 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
     flight: t.from || t.flight ? t.flight : missileCfg.followFlight,
   }));
   const original = new Map(tracked.map((t, i) => [t, targets[i]]));
+  const whoosh = new Map(tracked.map((t) => [t, missileWhoosh(t)]));
   await missiles.fire(tracked, {
     onMove: (pos, t, u) => {
       if (trackCamera) track(pos, original.get(t), u);
@@ -969,6 +988,8 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
     },
     onIntercept: (hit) => {
       if (run !== runId) return;
+      whoosh.get(hit)?.stop(0.25);
+      explode('small');
       flying.delete(original.get(hit));
       pending.delete(original.get(hit));
     },
@@ -976,8 +997,9 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
       if (run !== runId) return;
       flying.delete(original.get(hit));
       pending.delete(original.get(hit));
+      whoosh.get(hit)?.stop(0.12);
+      explode(hit.harmless ? 'small' : 'large');
       const { x, z } = hit.cell;
-      boom();
       dust.burst(x, z, hit.harmless ? 0.7 : 1.8);
       fog.disturb(x, z);
       camShake.add(missileCfg.shake * (hit.harmless ? 0.3 : 1));
@@ -1025,6 +1047,8 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
 const CIWS_START = 0.22;
 const CIWS_GAP = 0.14;
 function fireDefences(t, u) {
+  // A simulated strike's guns play from setDefence. This list is the older cinematic path.
+  if (typeof t.clock === 'function') return;
   const shots = t.shots;
   if (!shots?.length) return;
   t.fired ??= 0;
@@ -1033,11 +1057,11 @@ function fireDefences(t, u) {
     const pad = hexToWorld(shot.x, shot.z);
     missiles.fireCIWS(findCiws(grid.get(shot.x, shot.z)?.mesh), new THREE.Vector3(pad.x, 0.35, pad.z), () => missiles.position(t), {
       success: shot.success,
-      onFire: (dur) => ciws(dur),
+      onFire: (dur) => gunSnd(dur),
       onKill: () => {
         if (missiles.destroy(t)) {
           camShake.add(missileCfg.shake * 0.35);
-          boom();
+          explode('small');
         }
       },
     });
@@ -1133,7 +1157,7 @@ async function groundStrike(spot, target, lostText = (l) => L(`The silo's missil
       camShake.add(0.3);
       await wait(1.2);
       standing.remove();
-      boom();
+      launchSnd();
       dust.burst(spot.x, spot.z, 1.6);
     };
   }
@@ -4891,7 +4915,7 @@ function siloLaunch(cell, count, launch) {
     cut: (i) => {
       const missile = mesh.getObjectByName(SILO_PARTS[0]);
       if (!missile) return null;
-      boom();
+      launchSnd();
       dust.burst(cell.x, cell.z, 1.2);
       camShake.add(0.25);
       return launch(siloFrom(missile), i);
@@ -4967,7 +4991,7 @@ async function launchSalvo(strikes) {
             await wait(0.1 + Math.random() * 0.25);
             if (run !== runId) return;
             dust.burst(cell.x, cell.z, 0.8);
-            boom();
+            launchSnd();
             fireAway({ x: w.x, y: 0.55, z: w.z, world: true }, s);
           }
         })(),
@@ -5432,10 +5456,16 @@ function playRivalStrike(r, rec) {
   rivalMissiles ??= new MissileStrike(rivalView.scene, camera, missileCfg);
   const w = hexToWorld(rec.at[0], rec.at[1]);
   // Their networks' fire is the simulated defence (setDefence in frame()); the missile flies the simulated path.
-  return rivalMissiles.fire([{ x: w.x, z: w.z, ...simFlight(rec) }], {
-    onIntercept: () => boom(),
+  const target = { x: w.x, z: w.z, ...simFlight(rec) };
+  const whoosh = missileWhoosh(target);
+  return rivalMissiles.fire([target], {
+    onIntercept: () => {
+      whoosh?.stop(0.25);
+      explode('small');
+    },
     onImpact: (t) => {
-      boom();
+      whoosh?.stop(0.12);
+      explode(t?.harmless ? 'small' : 'large');
       if (view === 'rival') camShake.add(missileCfg.shake * (t?.harmless ? 0.3 : 1));
     },
     onCover: () => craterRival(r, rec),
@@ -5469,8 +5499,11 @@ const simFlight = (rec) => ({
 /** The city on screen shows its networks' simulated fire (turrets turning, the stream, the rounds). */
 function syncDefence() {
   const board = attackLive && view === 'board' ? warSims.get('player') : null;
-  missiles.setDefence(board ?? null, warClock, (i) => findCiws(grid.get(board.turrets[i].x, board.turrets[i].z)?.mesh), (d) => ciws(d));
-  if (rivalMissiles) rivalMissiles.setDefence((attackLive && view === 'rival' && rivalShown && warSims.get(rivalShown.id)) || null, warClock);
+  missiles.setDefence(board ?? null, warClock, (i) => findCiws(grid.get(board.turrets[i].x, board.turrets[i].z)?.mesh), (d) => gunSnd(d));
+  if (rivalMissiles) {
+    const sim = attackLive && view === 'rival' && rivalShown ? warSims.get(rivalShown.id) : null;
+    rivalMissiles.setDefence(sim || null, warClock, (i) => findCiws(rivalShown?.grid.get(sim?.turrets[i].x, sim?.turrets[i].z)?.mesh), (d) => gunSnd(d));
+  }
   else if (attackLive && view === 'rival' && rivalShown && warSims.get(rivalShown.id)) rivalMissiles = new MissileStrike(rivalView.scene, camera, missileCfg);
 }
 
@@ -5617,6 +5650,8 @@ async function runAttackPhase() {
   landing = [];
   played.clear();
   warTimer.classList.remove('hidden');
+  // The air-raid siren follows missiles aimed at Hive City, from launch until the last one is down.
+  if (res.some((s) => s.to === 'player' && !s.fizzled)) snd(() => combatAudio.sirenOn(), buzz);
   const phase = globe.playAttack(res, rivals);
   // Everyone fires at once: on Hive City your magazines open and the salvo climbs away as the countdown starts.
   // The first strike while the military lesson is open: launched from home, it waits in the air for you to follow it.
@@ -5625,10 +5660,14 @@ async function runAttackPhase() {
   if (follow) holdForFollow(run, mine[0].to);
   // The first time missiles fly each way, the Field Report briefs you with everything frozen in the air.
   const briefed = await briefAttack(mine, theirs);
-  if (run !== runId) return true;
+  if (run !== runId) {
+    combatAudio.endAttack();
+    return true;
+  }
   if (!briefed.incoming) announceIncoming(theirs);
   await phase;
   await Promise.all(landing);
+  combatAudio.endAttack();
   attackLive = false;
   warTimer.classList.add('hidden');
   if (run !== runId) return true;
@@ -5747,7 +5786,6 @@ async function briefAttack(mine, theirs) {
         : () => L("We've no Intercept Networks, Overseer. I'm sorry. Everything they fired is going to land.", '我们没有拦截网，总督。很抱歉。他们打来的每一枚都会落地。'),
       () => L("You can stay and watch them come in, or step back to the War Map. Your call. I'll be right here.", '您可以留下来看着它们落下，也可以退回战争地图。由您决定。我就在这儿。'),
     );
-    buzz();
   }
   dialogue.open({ kind: 'pressure', kindLabel: () => L('Field Report', '前线报告'), title: () => (incoming ? L('Incoming missiles', '导弹来袭') : L('First strike', '首次打击')) });
   for (const line of lines) {
@@ -5765,7 +5803,6 @@ async function announceIncoming(strikes) {
   const from = [...new Set(at.map((x) => x.from))].map(cityName).join(L(', ', '、'));
   // A toast, not a banner: nothing stops you looking around while they fly.
   toast(L(`Incoming! ${from} launched ${at.length} missile${at.length === 1 ? '' : 's'} at Hive City`, `导弹来袭！${from}向蜂巢城发射了 ${at.length} 枚导弹`), 'bad', 2600);
-  buzz();
 }
 
 /** Every rival city has fallen and the tribute still flows: the run is won. */
@@ -6231,6 +6268,7 @@ function resetIsland(opts) {
   resetView();
   rivals = createRivals((Math.random() * 0x100000000) >>> 0);
   runId++; // stops a missile strike / failure speech still running
+  combatAudio.endAttack(); // a reset must not leave the siren wailing
   introRun++; // and an opening scene
   tutorial.stop();
   grid.expansionMode = localStorage.getItem(MODE_KEY) === 'expansion';
@@ -6904,6 +6942,7 @@ factory.ready.then(async () => {
   let swallowNextClick = false;
   const go = () => {
     const sound = unlockSfx();
+    combatAudio.unlock();
     startMusic();
     if (started || !sound) return sound;
     started = true;

@@ -21,6 +21,7 @@ import { loadGfxConfig, applyGfx } from './graphics.js';
 import { CrtPass } from './crtPass.js';
 import { CAPITAL_HP, resolve, VOLLEY_GAP } from './war.js';
 import { boom, buzz, ciws, unlockSfx } from './sfx.js';
+import { createCombatAudio } from './combatAudio.js';
 import { findCiws } from './interceptMesh.js';
 
 /**
@@ -81,6 +82,83 @@ const missiles = new MissileStrike(scene, camera, missileCfg);
 const dust = new Dust(scene);
 const camShake = new CameraShake(camera, loadShakeConfig());
 window.addEventListener('pointerdown', () => unlockSfx?.(), { once: true });
+
+// ---------- recorded combat sounds (combatAudio.js): launch, incoming, explosions, CIWS, the air-raid siren ----------
+const audio = createCombatAudio();
+const audioState = document.getElementById('audioState');
+const unlockAudio = () => {
+  audio.unlock();
+  audio.load().then(() => (audioState.textContent = audio.ready ? 'on' : 'some files missing'));
+};
+window.addEventListener('pointerdown', unlockAudio, { once: true });
+window.addEventListener('keydown', unlockAudio, { once: true });
+/** The recorded sound once loaded, else the old synthesised one. */
+const snd = (recorded, fallback) => (audio.ready ? recorded() : fallback?.());
+const explode = (size) => snd(() => audio.explosion(size), boom);
+
+const MIX = [
+  ['missile', 'Missiles', 0, 1.5, 0.05],
+  ['explosion', 'Explosions', 0, 1.5, 0.05],
+  ['gun', 'Guns (CIWS)', 0, 1.5, 0.05],
+  ['siren', 'Siren', 0, 1.5, 0.05],
+  ['sirenFadeIn', 'Siren fade in (s)', 0.1, 3, 0.1],
+  ['sirenFadeOut', 'Siren fade out (s)', 0.3, 8, 0.1],
+];
+document.getElementById('audioMix').innerHTML = MIX.map(
+  ([k, label, min, max, step]) => `<label class="tune-row"><span>${label}</span><input type="range" data-mix="${k}" min="${min}" max="${max}" step="${step}" value="${audio.cfg[k]}" /><b>${audio.cfg[k]}</b></label>`,
+).join('');
+document.getElementById('audioMix').addEventListener('input', (e) => {
+  const k = e.target.dataset.mix;
+  if (!k) return;
+  const v = Number(e.target.value);
+  audio.setVolume(k, v);
+  e.target.nextElementSibling.textContent = v;
+});
+document.querySelectorAll('[data-snd]').forEach((b) =>
+  b.addEventListener('click', (e) => {
+    e.currentTarget.blur();
+    unlockAudio();
+    audio.load().then(() => {
+      const k = b.dataset.snd;
+      const shows = () => setTimeout(() => (audioState.textContent = `played ${audio.stats().lastFile ?? '—'}`), 0);
+      if (k === 'launch') audio.launch();
+      else if (k === 'incoming') (audio.incoming(2.5), shows());
+      else if (k === 'large' || k === 'small') (audio.explosion(k), shows());
+      else if (k === 'gun') (audio.gunBurst(1.5), shows());
+      else if (k === 'siren') (audio.sirenActive ? audio.sirenOff() : audio.sirenOn());
+      else if (k === 'salvo') {
+        // 24 impacts in about a second, a mix of strikes and intercepts: a worst case for stacking.
+        audio.resetStats();
+        for (let i = 0; i < 24; i++) setTimeout(() => audio.explosion(Math.random() < 0.6 ? 'large' : 'small'), Math.random() * 1000);
+        const poll = setInterval(() => {
+          const st = audio.stats();
+          const db = st.peakOut > 0 ? (20 * Math.log10(st.peakOut)).toFixed(1) : '-inf';
+          audioState.textContent = `played ${st.played} · grouped ${st.grouped} · skipped ${st.skipped} · replaced ${st.stolen} · voices ${st.activeExplosions}/${st.peakVoices} peak · out ${db} dBFS`;
+        }, 50);
+        setTimeout(() => clearInterval(poll), 4000);
+      }
+      else if (k === 'end') {
+        // A full attack that ends mid-everything: hear every release.
+        audio.sirenOn();
+        const w = audio.incoming(3);
+        setTimeout(() => audio.gunBurst(3), 600);
+        setTimeout(() => audio.explosion('small'), 1300);
+        setTimeout(() => {
+          w?.stop();
+          audio.explosion('large');
+          audio.endAttack();
+        }, 2500);
+      }
+    });
+  }),
+);
+
+// The siren follows what's coming at Hive City: on when they launch, winding down once the last has come down.
+const threats = new Set();
+function threatDone(rec) {
+  if (!threats.delete(rec) || threats.size) return;
+  Promise.all(landing).then(() => !threats.size && audio.sirenOff());
+}
 
 // CIWS feel (this page only): seconds of fire before a hit brings the missile down, etc.
 
@@ -362,6 +440,7 @@ document.getElementById('incomingDecoys').addEventListener('click', (e) => {
 });
 document.getElementById('resetCity').addEventListener('click', () => {
   if (busy) return;
+  audio.endAttack({ sirenFade: 0.6 });
   oil = 9;
   hp = CAPITAL_HP;
   alive = true;
@@ -435,7 +514,7 @@ let warSims = new Map();
 const warClock = () => globe.warTime();
 function syncDefence() {
   const home = busy && view === 'home' ? warSims.get('player') : null;
-  missiles.setDefence(home ?? null, warClock, (i) => findCiws(meshes.get(key(home.turrets[i].x, home.turrets[i].z))), (d) => ciws(d));
+  missiles.setDefence(home ?? null, warClock, (i) => findCiws(meshes.get(key(home.turrets[i].x, home.turrets[i].z))), (d) => snd(() => audio.gunBurst(d), () => ciws(d)));
   rivalMissiles.setDefence((busy && view === 'rival' && shown && warSims.get(shown.id)) || null, warClock);
 }
 
@@ -495,16 +574,23 @@ async function play(resolved) {
   const recs = resolved.filter((r) => !r.fizzled);
   if (!recs.length) return;
   // The camera is never touched: the missiles fly into whatever you're looking at.
-  if (recs.some((r) => r.shots.length)) buzz();
+  if (!audio.ready && recs.some((r) => r.shots.length)) buzz();
 
   const targets = recs.map((rec) => ({ ...simTarget(rec), aimName: nameAt(rec.at[0], rec.at[1]) }));
   const flying = new Map();
   const pending = new Set(targets);
+  // Each missile's whoosh rises to its impact (or to where the CIWS gets it), then fades.
+  const whoosh = new Map();
+  for (const t of targets) {
+    const end = (t.killAt ?? t.t0 + (t.flight ?? missileCfg.flightTime)) - warClock();
+    if (end > 0.2) whoosh.set(t, audio.incoming(end));
+  }
 
   await missiles.fire(targets, {
     onMove: (pos, t) => flying.set(t, pos.clone()),
     onIntercept: (t) => {
-      boom();
+      whoosh.get(t)?.stop(0.25);
+      explode('small');
       camShake.add(missileCfg.shake * 0.35);
       flying.delete(t);
       pending.delete(t);
@@ -514,7 +600,8 @@ async function play(resolved) {
     onImpact: (t) => {
       flying.delete(t);
       pending.delete(t);
-      boom();
+      whoosh.get(t)?.stop(0.12);
+      explode(t.harmless ? 'small' : 'large');
       if (t.harmless) dust.burst(t.cell.x, t.cell.z, 0.7);
       else for (const [x, z] of t.rec.cells) dust.burst(x, z, t.rec.kind === 'missile2' ? 1.4 : 1.8);
       fog.disturb(t.cell.x, t.cell.z);
@@ -579,9 +666,9 @@ function craterRival(r, rec) {
 
 function playRival(r, rec) {
   return rivalMissiles.fire([simTarget(rec)], {
-    onIntercept: () => boom(),
+    onIntercept: () => explode('small'),
     onImpact: (t) => {
-      boom();
+      explode(t?.harmless ? 'small' : 'large');
       if (view === 'rival') camShake.add(missileCfg.shake * (t?.harmless ? 0.3 : 1));
     },
     onCover: () => craterRival(r, rec),
@@ -604,7 +691,7 @@ function launchSalvo(recs) {
     setTimeout(() => {
       missiles.fire([{ x: w.x, z: w.z, from, away: true, lean: { x: dir.x * 5 - dir.z * side, z: dir.z * 5 + dir.x * side }, flight: rec.boosted ? 1.6 * BOOST.flight : 1.6, accel: 1.9, boosted: !!rec.boosted, harmless: !!rec.decoy }]);
       dust.burst(at.x, at.z, 0.8);
-      boom();
+      snd(() => audio.launch(), boom);
     }, (rec.launch ?? 0) * 1000);
   }
 }
@@ -624,6 +711,7 @@ function approach(rec) {
 }
 
 function arrive(rec) {
+  threatDone(rec);
   if (rec.fizzled || played.has(rec)) return;
   if (rec.decoy) {
     if (rec.to === 'player' && view !== 'home') say(`Hive City (off screen): ${describe(rec)}`);
@@ -1031,9 +1119,14 @@ async function runTurn() {
     drawAims();
     landing = [];
     played.clear();
+    threats.clear();
+    for (const rec of res) if (rec.to === 'player' && !rec.fizzled) threats.add(rec);
+    if (threats.size) audio.sirenOn();
     if (view === 'home') launchSalvo(res.filter((s) => s.from === 'player'));
     await globe.playAttack(res, rivals);
     await Promise.all(landing);
+    threats.clear();
+    audio.endAttack(); // anything still sounding winds down (explosions ring out)
     for (const r of rivals) {
       applyToRival(r, results.get(r.id));
       noteAttacks(r, res);
