@@ -344,7 +344,7 @@ export function clearGlobeConfig() {
 }
 
 /** freeDuringWar: cities can still be visited mid attack phase (the playback keeps running: call tickWar). */
-export function createGlobeView({ renderer, root, factory, playerBuildings, playerHp = () => 5, onVisit, onDive = () => {}, freeDuringWar = false, onArrive = null, onApproach = null, approachLead = () => 0 }) {
+export function createGlobeView({ renderer, root, factory, playerBuildings, playerHp = () => 5, lastFoe = () => null, onVisit, onDive = () => {}, freeDuringWar = false, onArrive = null, onApproach = null, approachLead = () => 0 }) {
   const dom = renderer.domElement;
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(BG);
@@ -1021,9 +1021,11 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       const hp = n.hpShown ?? (n.rival ? (n.rival.capitalHp ?? 5) : playerHp());
       const dead = n.deadShown || (n.rival ? n.rival.alive === false : hp <= 0);
       const pips = dead ? L('Destroyed', '已摧毁') : '■'.repeat(hp) + '□'.repeat(Math.max(0, 5 - hp));
-      n.el.innerHTML = `<i></i>${n.rival ? '' : '<b class="globe-crown" aria-hidden="true">♛</b>'}<span>${name}</span><b class="globe-hp">${pips}</b>`;
+      const foe = Boolean(n.rival) && lastFoe() === n.id;
+      n.el.innerHTML = `<i></i>${foe ? `<em class="globe-foe">${L('Last to fire on you', '上一个打你的')}</em>` : ''}${n.rival ? '' : '<b class="globe-crown" aria-hidden="true">♛</b>'}<span>${name}</span><b class="globe-hp">${pips}</b>`;
       n.el.classList.toggle('home', !n.rival);
       n.el.classList.toggle('dead', dead);
+      n.el.classList.toggle('foe', foe);
     }
     root.querySelector('.globe-title').textContent = L('War Map', '战争地图');
   }
@@ -1113,6 +1115,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       ${rival ? `<div><span>${L('Missiles', '导弹')}</span><b>${rival.stats.missiles ?? 0}</b></div>
       <div><span>${L('Interceptors', '拦截网')}</span><b>${rival.stats.interceptors ?? 0}</b></div>` : ''}
       <div><span>${L('Tension', '紧张度')}</span><b>—</b></div>
+      ${lastFoe() === n.id ? `<div><span>${L('Last strike', '上次来袭')}</span><b>${L('Fired on Hive City', '向蜂巢城开过火')}</b></div>` : ''}
       <div class="globe-card-hint">${rival ? L('Click to visit', '点击访问') : L('Click to return', '点击返回')}</div>`;
     cardEl.classList.remove('hidden');
   }

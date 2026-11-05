@@ -164,6 +164,7 @@ function threatDone(rec) {
 
 // War state (declared early: the tuning panel reads it on load).
 let view = 'home'; // 'home' | 'globe' | 'rival'
+let lastAttacker = null; // { id, fired, hits } the last rival that fired on Hive City
 /**
  * Test rivals all get a real air defence: RIVAL_NETS Intercept Networks spread around their Capital (on their own
  * tiles, keeping the Capital), so decoys have turrets to fool.
@@ -446,6 +447,7 @@ document.getElementById('resetCity').addEventListener('click', () => {
   alive = true;
   turn = 0;
   roll = 0;
+  lastAttacker = null;
   nextBtn.textContent = 'Next turn';
   nextBtn.disabled = false;
   logEl.innerHTML = '';
@@ -465,8 +467,9 @@ buildTuning();
 
 function paint() {
   const nets = [...grid.cells.values()].filter((c) => c.terrain === 'intercept').length;
+  const foe = lastFoeRival();
   statusEl.textContent = alive
-    ? `Oil ${oil} · Interceptors ${nets} · Capital ${hp}/${CAPITAL_HP} · Missiles in hand ${silo} · Decoys ${decoys} · Aimed ${queue.length}${shown ? ` · In ${shown.def.name} (${shown.capitalHp}/${CAPITAL_HP})` : ''}`
+    ? `Oil ${oil} · Interceptors ${nets} · Capital ${hp}/${CAPITAL_HP} · Missiles in hand ${silo} · Decoys ${decoys} · Aimed ${queue.length}${shown ? ` · In ${shown.def.name} (${shown.capitalHp}/${CAPITAL_HP})` : ''}${foe ? ` · Last to fire on you: ${foe.def.name}` : ''}`
     : 'The capital is gone.';
 }
 
@@ -634,12 +637,19 @@ function armRivals() {
 armRivals();
 
 const playerBuildings = () => [...grid.cells.values()].filter((c) => TERRAINS[c.terrain]?.category === 'building').length;
+function lastFoeRival() {
+  if (!lastAttacker) return null;
+  const rival = rivals.find((r) => r.id === lastAttacker.id);
+  return rival && rival.alive !== false ? rival : null;
+}
+
 const globe = createGlobeView({
   renderer,
   root: document.getElementById('globeUI'),
   factory,
   playerBuildings,
   playerHp: () => hp,
+  lastFoe: () => lastFoeRival()?.id ?? null,
   freeDuringWar: true, // move between the planet and the cities while the missiles are in the air
   onVisit: (id) => (id === 'player' ? goHome() : enterRival(id)),
   onDive: (k) => !switching && clouds.setPeek(k),
@@ -1134,8 +1144,20 @@ async function runTurn() {
     }
     const atMe = res.filter((x) => x.to === 'player' && !x.decoy);
     const decoyRecs = res.filter((x) => x.to === 'player' && x.decoy);
-    if (atMe.length || decoyRecs.length)
-      say(`Incoming: ${atMe.filter((x) => x.hit).length}/${atMe.length} missiles got through${decoyRecs.length ? ` · ${decoyRecs.length} decoys drew ${decoyRecs.reduce((n, x) => n + (x.drew ?? 0), 0)} kills` : ''}`);
+    if (atMe.length) {
+      const by = new Map();
+      for (const s of atMe) {
+        const g = by.get(s.from) ?? { id: s.from, fired: 0, hits: 0 };
+        g.fired++;
+        if (s.hit) g.hits++;
+        by.set(s.from, g);
+      }
+      lastAttacker = [...by.values()].sort((a, b) => b.hits - a.hits || b.fired - a.fired)[0];
+    }
+    if (atMe.length || decoyRecs.length) {
+      const from = [...new Set(atMe.map((x) => x.from))].map(nameOf).join(', ');
+      say(`Incoming from ${from || '—'}: ${atMe.filter((x) => x.hit).length}/${atMe.length} missiles got through${decoyRecs.length ? ` · ${decoyRecs.length} decoys drew ${decoyRecs.reduce((n, x) => n + (x.drew ?? 0), 0)} kills` : ''}`);
+    }
     for (const rec of res.filter((x) => x.from === 'player')) {
       const name = rivals.find((r) => r.id === rec.to)?.def.name;
       say(`You → ${name}: ${rec.hit ? `hit${rec.lost.length ? ` (${rec.lost.map((c) => c.name).join(', ')})` : ''}${rec.capital != null ? `, Capital ${rec.capital}/${CAPITAL_HP}` : ''}${rec.eliminated ? ' · DESTROYED' : ''}` : 'intercepted'}`);
@@ -1180,16 +1202,24 @@ function updateTimer() {
   // The city in view first (big), then every other target (small).
   const by = new Map();
   for (const f of flights) {
-    const g = by.get(f.to) ?? { n: 0, eta: Infinity, mine: 0 };
+    const g = by.get(f.to) ?? { n: 0, eta: Infinity, mine: 0, from: new Set() };
     g.n++;
     g.eta = Math.min(g.eta, f.eta);
     if (f.from === 'player') g.mine++;
+    else g.from.add(f.from);
     by.set(f.to, g);
   }
   const fmt = (t) => `${t.toFixed(1)}s`;
   if (here) {
     const g = by.get(here);
-    lines.push(g ? `<b>${g.n} missile${g.n === 1 ? '' : 's'} arriving at ${nameOf(here)} in ${fmt(g.eta)}</b>` : `<b>Nothing inbound on ${nameOf(here)}</b>`);
+    const who = g ? [...g.from].map(nameOf).join(', ') : '';
+    const head =
+      here === 'player' && who
+        ? `${who} · ${g.n} missile${g.n === 1 ? '' : 's'} arriving at Hive City in ${fmt(g.eta)}`
+        : g
+          ? `${g.n} missile${g.n === 1 ? '' : 's'} arriving at ${nameOf(here)} in ${fmt(g.eta)}`
+          : `Nothing inbound on ${nameOf(here)}`;
+    lines.push(`<b>${head}</b>`);
   } else lines.push(`<b>Missiles in the air: ${flights.length}</b>`);
   for (const [to, g] of [...by].sort((a, b) => a[1].eta - b[1].eta)) {
     if (to === here) continue;

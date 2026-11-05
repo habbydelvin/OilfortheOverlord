@@ -337,7 +337,7 @@ let forecastKey = null;
 // Turn state: a turn is a season, a round is four seasons, tribute after Winter.
 /** Food in the store at the start, so a bad first year isn't an instant loss. */
 const STARTING_FOOD = 5;
-const turn = { bmCooldown: 0, bmMet: false, strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, event: null, metStreak: 0, lastMissed: false, unlocked: new Set(), pinned: [], coins: 0, total: 0, food: STARTING_FOOD, population: 0, quota: FIRST_QUOTA, capitalHp: CAPITAL_HP, ...freshTargetState() };
+const turn = { bmCooldown: 0, bmMet: false, lastAttacker: null, strikes: 0, round: 1, season: 0, stockpile: 0, rerolls: 0, event: null, metStreak: 0, lastMissed: false, unlocked: new Set(), pinned: [], coins: 0, total: 0, food: STARTING_FOOD, population: 0, quota: FIRST_QUOTA, capitalHp: CAPITAL_HP, ...freshTargetState() };
 
 /**
  * Yearly target state (see targets.js).
@@ -2410,6 +2410,7 @@ function updateHUD() {
   const n = grid.size;
   const hpEl = $('capitalHp');
   if (hpEl) hpEl.innerHTML = Array.from({ length: CAPITAL_HP }, (_, i) => `<i class="${i < turn.capitalHp ? '' : 'lost'}"></i>`).join('');
+  fillLastFoe();
   const quota = turn.quota;
   const left = yearLength() - 1 - turn.season;
   $('seasonLabel').textContent = L(
@@ -5653,10 +5654,59 @@ function toastWarSummary(all) {
     parts.push(L(`Decoys drew ${drew} kill${drew === 1 ? '' : 's'}`, `诱饵弹吸引了 ${drew} 次击落`));
   }
   if (mine.length) parts.push(L(`Your missiles: ${mine.filter((s) => s.hit).length}/${mine.length} hit`, `你的导弹：命中 ${mine.filter((s) => s.hit).length}/${mine.length}`));
-  if (at.length) parts.push(L(`Incoming: ${at.filter((s) => s.hit).length}/${at.length} got through`, `来袭：${at.filter((s) => s.hit).length}/${at.length} 命中`));
+  if (at.length) {
+    const from = [...new Set(at.map((s) => s.from))].map(cityName).join(L(', ', '、'));
+    const through = at.filter((s) => s.hit).length;
+    parts.push(L(`Incoming from ${from}: ${through}/${at.length} got through`, `来自${from}：${through}/${at.length} 命中`));
+  }
   const fell = res.filter((s) => s.eliminated && s.to !== 'player').map((s) => cityName(s.to));
   if (fell.length) parts.push(L(`${fell.join(', ')} fell`, `${fell.join('、')}陷落`));
   if (parts.length) toast(parts.join(' · '));
+}
+
+/** Remember who just fired on Hive City (most hits, then most shots). Stays until someone else does. */
+function noteLastAttacker(strikes) {
+  const at = strikes.filter((s) => s.to === 'player' && s.from !== 'player' && !s.decoy);
+  if (!at.length) return;
+  const by = new Map();
+  for (const s of at) {
+    const g = by.get(s.from) ?? { id: s.from, fired: 0, hits: 0 };
+    g.fired++;
+    if (s.hit) g.hits++;
+    by.set(s.from, g);
+  }
+  turn.lastAttacker = [...by.values()].sort((a, b) => b.hits - a.hits || b.fired - a.fired)[0];
+}
+
+function lastFoeRival() {
+  const rec = turn.lastAttacker;
+  if (!rec) return null;
+  const rival = rivals.find((r) => r.id === rec.id);
+  return rival && rival.alive !== false ? rival : null;
+}
+
+function fillLastFoe() {
+  const el = $('lastFoe');
+  if (!el) return;
+  const rival = lastFoeRival();
+  el.classList.toggle('hidden', !rival);
+  if (!rival) return;
+  el.style.setProperty('--foe', rival.def.color);
+  const name = L(rival.def.name, rival.def.zh);
+  el.querySelector('span').textContent = name;
+  el.title = L(`Last to fire on Hive City: ${rival.def.name}. Open the War Map.`, `上一个向蜂巢城开火的：${rival.def.zh}。打开战争地图。`);
+}
+
+function huntLastFoe() {
+  const rival = lastFoeRival();
+  if (!rival) return;
+  if (view === 'globe') {
+    globe.visit(rival.id);
+    return;
+  }
+  if (view === 'rival' && rivalShown?.id === rival.id) return;
+  if (view === 'board' && mapBlocked()) return toast(L('Finish the current screen first', '请先完成当前界面'), 'bad');
+  openGlobe(rival.id);
 }
 
 /** The countdown: when the missiles in the air reach the city in view, and every other target. */
@@ -5670,10 +5720,11 @@ function updateWarTimer() {
   const here = view === 'rival' ? rivalShown?.id : view === 'board' ? 'player' : null;
   const by = new Map();
   for (const f of flights) {
-    const g = by.get(f.to) ?? { n: 0, eta: Infinity, mine: 0 };
+    const g = by.get(f.to) ?? { n: 0, eta: Infinity, mine: 0, from: new Set() };
     g.n++;
     g.eta = Math.min(g.eta, f.eta);
     if (f.from === 'player') g.mine++;
+    else g.from.add(f.from);
     by.set(f.to, g);
   }
   const fmt = (t) => `${t.toFixed(1)}s`;
@@ -5684,7 +5735,11 @@ function updateWarTimer() {
   const lines = [];
   if (head) {
     const g = by.get(head);
-    const text = L(`${g.n} missile${g.n === 1 ? '' : 's'} arriving at ${cityName(head)} in ${fmt(g.eta)}`, `${g.n} 枚导弹将在 ${fmt(g.eta)} 后抵达${cityName(head)}`);
+    const who = [...g.from].map(cityName).join(L(', ', '、'));
+    const text =
+      head === 'player' && who
+        ? L(`${who} · ${g.n} missile${g.n === 1 ? '' : 's'} arriving at Hive City in ${fmt(g.eta)}`, `${who} · ${g.n} 枚导弹将在 ${fmt(g.eta)} 后抵达蜂巢城`)
+        : L(`${g.n} missile${g.n === 1 ? '' : 's'} arriving at ${cityName(head)} in ${fmt(g.eta)}`, `${g.n} 枚导弹将在 ${fmt(g.eta)} 后抵达${cityName(head)}`);
     lines.push(`<b class="${head === here ? '' : tone(head, g)}">${text}</b>`);
   } else lines.push(`<b>${L(`Missiles in the air: ${flights.length}`, `空中导弹：${flights.length}`)}</b>`);
   for (const [to, g] of sorted) {
@@ -5756,6 +5811,7 @@ async function runAttackPhase() {
   const me = results.get('player');
   turn.stockpile = Math.max(0, turn.stockpile - (me?.oilSpent ?? 0));
   turn.capitalHp = Math.max(0, turn.capitalHp - (me?.hpLost ?? 0));
+  noteLastAttacker(res);
   globe.renderLabels();
   eventOpen = false;
   updateHUD();
@@ -5955,14 +6011,14 @@ async function swapView(change) {
   if (run === viewRun) switching = false;
 }
 
-function openGlobe() {
+function openGlobe(focusId) {
   if (switching || view === 'globe') return;
   if (view === 'board') {
     if (mapBlocked()) return;
     boardReturnDistance = rig.goalDistance;
     hand.select(-1);
   }
-  const from = view === 'rival' ? rivalShown?.id : 'player';
+  const from = focusId ?? (view === 'rival' ? rivalShown?.id : 'player');
   rig.locked = true;
   swapView(() => {
     if (view === 'rival') {
@@ -6052,6 +6108,7 @@ globe = createGlobeView({
   factory,
   playerBuildings: playerBuildingCount,
   playerHp: () => turn.capitalHp,
+  lastFoe: () => lastFoeRival()?.id ?? null,
   onVisit: (id) => (id === 'player' ? closeGlobe() : enterRival(id)),
   onDive: (k) => {
     if (!switching) clouds.setPeek(k);
@@ -6068,6 +6125,10 @@ rig.onZoomPastMax = () => {
 $('btnRivalBack').addEventListener('click', (e) => {
   e.currentTarget.blur();
   leaveRival();
+});
+$('lastFoe').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  huntLastFoe();
 });
 
 /**
@@ -6432,6 +6493,7 @@ function resetIsland(opts) {
     shopMult: 1,
     bmCooldown: 0,
     bmMet: false,
+    lastAttacker: null,
     guided: tut && !ALL_TILES, // a tutorial run: its opening is authored, and a few lessons get their cards dealt
     gifted: false, // (tutorial run) the free missile for the military lesson
     ...freshTargetState(),
