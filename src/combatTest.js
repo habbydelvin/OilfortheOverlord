@@ -1135,7 +1135,7 @@ function frame(now) {
     factory.update(dt);
     updateCurve(camera, rig.target);
     rivalView.update(dt, camera);
-    renderer.render(rivalView.scene, camera);
+    rivalView.render(camera);
     requestAnimationFrame(frame);
     return;
   }

@@ -133,6 +133,7 @@ const scaleCfg = loadScaleConfig(); // Game Debug → Scaling (events and camps)
 const iconCfg = loadIconConfig(); // Game Debug → Map icons
 const zoomIcons = new ZoomIcons(document.getElementById('mapIcons'), steadyCam, rig, iconCfg);
 const traffic = new Traffic(scene); // ships flying between the tiles
+const trafficInstances = createInstancer(traffic.group, scene); // ships use the same model on every route
 const neonTiles = new NeonTiles(scene); // boosted buildings' tiles glow
 const boostHints = new BoostHints(scene); // outlines where the hovered / placed card would be boosted
 setupLegend(document.getElementById('btnLegend'), document.getElementById('legend')); // icon legend window
@@ -6574,16 +6575,16 @@ function frame(now) {
   if (view === 'rival') {
     perf.end('camera');
     perf.begin('tile anims');
-    factory.update(dt);
+    factory.update(dt, rivalView.scene);
     perf.end('tile anims');
     perf.begin('render (cpu)');
     perf.gpuBegin();
     updateCurve(camera, rig.target); // rival cities follow the Graphics map shape (Flat / Planet), like the board
     syncSteadyCam();
     camShake.update(dt, rig.distance);
-    rivalView.update(dt, camera); // its fog of war (offscreen pass before the scene)
+    rivalView.update(dt, camera); // fog and targeting animations; render() owns the depth/colour passes
     updateAimHover();
-    renderer.render(rivalView.scene, camera);
+    rivalView.render(camera);
     tutorial.update(time); // the guided trip: back to the War Map from here
     perf.gpuEnd();
     perf.end('render (cpu)');
@@ -6606,7 +6607,7 @@ function frame(now) {
   missiles.update(dt);
   perf.end('missiles');
   perf.begin('tile anims');
-  factory.update(dt);
+  factory.update(dt, scene);
   perf.end('tile anims');
   perf.begin('ships');
   traffic.update(dt, grid);
@@ -6655,9 +6656,11 @@ function frame(now) {
   perf.begin('render (cpu)');
   perf.gpuBegin();
   updateCurve(camera, rig.target); // the small-planet bend, around where the camera looks
-  shadowCache.update(scene, camera, renderer); // inspect the real casters before swapping their draw representation
+  scene.updateMatrixWorld(); // once for culling, fog depth and shadow inspection, including when shadows are off
+  shadowCache.update(scene, camera, renderer, true);
   try {
-    instancer.begin(camera);
+    instancer.begin(camera, true);
+    trafficInstances.begin(camera, true);
     fog.render(camera); // the same batches also hide the fog behind buildings
     crtPass.begin();
     renderer.render(scene, camera); // the sun's pass uses these batches too
@@ -6665,6 +6668,7 @@ function frame(now) {
     crtPass.end(time);
   } finally {
     instancer.end(); // picking, animation and material swaps always see the original objects
+    trafficInstances.end();
   }
   perf.gpuEnd();
   perf.end('render (cpu)');
@@ -6690,9 +6694,13 @@ perf.counter('fog quality', () => fog.quality + (fog.offscreen ? ` @${fog.render
 perf.counter('fog billows', () => (fog.visible ? fog.count.toLocaleString() : 'off'));
 perf.counter('fog mask uploads', () => fog.uploads ?? 0);
 perf.counter('grid cells', () => grid.cells.size);
-perf.counter('batched parts / draws', () => `${instancer.stats.parts} / ${instancer.stats.batches}`);
+perf.counter('batched parts / draws', () => {
+  const batches = view === 'rival' ? [rivalView.instancer] : [instancer, trafficInstances];
+  return `${batches.reduce((n, b) => n + b.stats.parts, 0)} / ${batches.reduce((n, b) => n + b.stats.batches, 0)}`;
+});
+perf.counter('instance transforms uploaded', () => view === 'rival' ? rivalView.instancer.stats.uploads : instancer.stats.uploads + trafficInstances.stats.uploads);
 perf.counter('sun shadow', () => shadowCache.stats.updated ? 'updated' : 'reused');
-perf.toggle({ label: 'Instanced buildings', get: () => instancer.enabled, set: (on) => { instancer.enabled = on; shadowCache.invalidate(); } });
+perf.toggle({ label: 'Instanced buildings', get: () => instancer.enabled, set: (on) => { instancer.enabled = rivalView.instancer.enabled = trafficInstances.enabled = on; shadowCache.invalidate(); } });
 perf.toggle({ label: 'Fog', get: () => fog.visible, set: (on) => fog.setVisible(on) });
 perf.toggle({ label: 'Fog veil', get: () => fog.veilOn, set: (on) => fog.setParts({ veil: on }) });
 perf.toggle({ label: 'Fog billows', get: () => fog.billowsOn, set: (on) => fog.setParts({ billows: on }) });

@@ -13,6 +13,7 @@ import { SCALE } from './scalingConfig.js';
 import { L } from './i18n.js';
 import { hexToWorld, hexRound, hexDistance, hexesAround, cellSeed, cellsCentre } from './grid.js';
 import { hexPrism } from './hexGeometry.js';
+import { installRigidBounds, nextBoundsFrame } from './rigidBounds.js';
 
 /**
  * Desert dieselpunk tile set. Flat colours only for now, detail comes later.
@@ -890,6 +891,7 @@ export class TileFactory {
 
   /** Loop every clip baked into the model (for example, the Capital's sky traffic), except cue clips (EVENT_CLIPS). */
   #animate(model) {
+    installRigidBounds(model);
     const mixer = new THREE.AnimationMixer(model);
     for (const clip of model.animations) {
       if (EVENT_CLIPS.has(clip.name)) continue;
@@ -1073,7 +1075,8 @@ export class TileFactory {
   }
 
   /** Advance tile animations. Copies that leave the scene (replaced, nuked, old ghosts) get dropped. */
-  update(dt) {
+  update(dt, activeScene = null) {
+    nextBoundsFrame();
     for (const entry of this.#mixers) {
       let node = entry.root;
       let frozen = false; // an idle building (no workers, main.js shadeIdle) holds still
@@ -1083,8 +1086,16 @@ export class TileFactory {
       }
       if (node.isScene) {
         entry.idle = 0;
+        // Hidden cities keep combat cues running; decorative loops accumulate time and catch up on return.
+        const background = activeScene && node !== activeScene && !entry.cues.length && !entry.rig?.active;
+        if (background) {
+          if (!frozen) entry.elapsed = (entry.elapsed ?? 0) + dt;
+          continue;
+        }
         // A cue (a magazine's launch) or a gun in action plays out even on an idle building.
-        if (!frozen || entry.cues.length || entry.rig?.active) entry.mixer.update(dt);
+        const catchUp = entry.cues.length || entry.rig?.active ? 0 : (entry.elapsed ?? 0);
+        if (!frozen || entry.cues.length || entry.rig?.active) entry.mixer.update(dt + catchUp);
+        entry.elapsed = 0;
         if (entry.cues.length) this.#runCues(entry, dt);
         entry.rig?.update(dt);
       } else if (++entry.idle > 120) {

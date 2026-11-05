@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { createInstancer } from '../src/instancer.js';
 import { createShadowCache } from '../src/shadowCache.js';
+import { installRigidBounds, nextBoundsFrame } from '../src/rigidBounds.js';
+import { flattenCurve, updateCurve } from '../src/curvature.js';
 
 function setup() {
   const scene = new THREE.Scene();
@@ -88,6 +90,115 @@ test('single materials and material arrays preserve their different geometry-gro
   batch.begin(camera);
   assert.equal(batch.stats.parts, 0);
   batch.end();
+});
+
+test('persistent batches upload only changes and track nested add/remove and material-array edits', () => {
+  const { camera, root, a, b, batch } = setup();
+  batch.begin(camera);
+  assert.equal(batch.stats.uploads, 2);
+  batch.end();
+  batch.begin(camera);
+  assert.equal(batch.stats.uploads, 0);
+  batch.end();
+  b.position.y += 0.5;
+  batch.begin(camera);
+  assert.equal(batch.stats.uploads, 1);
+  batch.end();
+  const parent = new THREE.Group();
+  root.add(parent);
+  const c = a.clone();
+  parent.add(c);
+  batch.begin(camera);
+  assert.equal(batch.stats.parts, 3);
+  batch.end();
+  root.remove(parent);
+  batch.begin(camera);
+  assert.equal(batch.stats.parts, 2);
+  batch.end();
+  const material = a.material;
+  a.material = [material];
+  b.material = [material];
+  batch.begin(camera);
+  assert.equal(batch.stats.parts, 2);
+  batch.end();
+  b.material[0] = material.clone();
+  batch.begin(camera);
+  assert.equal(batch.stats.parts, 0);
+  batch.end();
+  batch.dispose();
+  assert.equal(root._listeners.childadded.length, 0);
+  assert.equal(a._listeners.childremoved.length, 0);
+});
+
+test('an evicted batch can return after a long pan away without reusing a disposed GPU buffer', () => {
+  const { camera, root, batch } = setup();
+  batch.begin(camera);
+  const first = batch.group.children[0];
+  batch.end();
+  root.visible = false;
+  for (let i = 0; i < 125; i++) { batch.begin(camera); batch.end(); }
+  assert.equal(batch.group.children.length, 0);
+  root.visible = true;
+  batch.begin(camera);
+  assert.equal(batch.stats.parts, 2);
+  assert.equal(batch.stats.uploads, 2);
+  assert.notEqual(batch.group.children[0], first);
+  batch.end();
+});
+
+test('a material-array edit cannot change the material of other members left in the old pool', () => {
+  const { camera, root, a, b, batch } = setup();
+  const material = a.material;
+  a.material = [material];
+  b.material = [material];
+  const c = b.clone();
+  c.material = [material];
+  root.add(c);
+  batch.begin(camera);
+  batch.end();
+  a.material[0] = material.clone();
+  batch.begin(camera);
+  const mesh = batch.group.children.find(o => o.visible);
+  assert.equal(mesh.count, 2);
+  assert.equal(mesh.material[0], material);
+  batch.end();
+});
+
+test('rigid animated bounds follow bones and preserve both curved colour and flat shadow silhouettes', () => {
+  const root = new THREE.Group();
+  const bone = new THREE.Object3D();
+  root.add(bone);
+  const mesh = new THREE.SkinnedMesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial());
+  mesh.bind(new THREE.Skeleton([bone], [new THREE.Matrix4()]), new THREE.Matrix4());
+  mesh.userData.rigidPartBounds = [[0, 0, 0, 1]];
+  root.add(mesh);
+  installRigidBounds(root);
+  flattenCurve();
+  root.updateMatrixWorld(true);
+  nextBoundsFrame();
+  const around = (x, y, z) => new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().makeOrthographic(x-2,x+2,y+2,y-2,-z-2,-z+2));
+  assert.equal(mesh.intersectsFrustum(around(0, 0, 0)), true);
+  bone.position.set(20, 0, 0);
+  root.updateMatrixWorld(true);
+  nextBoundsFrame();
+  assert.equal(mesh.intersectsFrustum(around(0, 0, 0)), false);
+  assert.equal(mesh.intersectsFrustum(around(20, 0, 0)), true);
+  const camera = new THREE.PerspectiveCamera();
+  updateCurve(camera, new THREE.Vector3()); // at x=20, curve drop is 5
+  assert.equal(mesh.intersectsFrustum(around(20, -5, 0)), true);
+  assert.equal(mesh.intersectsFrustum(around(20, 0, 0)), true);
+  flattenCurve();
+  root.scale.set(4, 0.5, 1);
+  bone.rotation.z = Math.PI / 4;
+  root.updateMatrixWorld(true);
+  nextBoundsFrame();
+  let bound;
+  mesh.intersectsFrustum({ intersectsSphere(s) { bound = s.clone(); return true; } });
+  for (let i = 0; i < 100; i++) {
+    const a = i * Math.PI / 50;
+    const vertex = new THREE.Vector3(Math.cos(a), Math.sin(a), 0).applyMatrix4(bone.matrixWorld);
+    assert.ok(vertex.distanceTo(bound.center) <= bound.radius + 1e-8);
+  }
 });
 
 test('shader warm-up keeps all temporary objects detached even while compilation is pending', async () => {
