@@ -232,7 +232,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   function ensureFog() {
     if (fog) return fog;
     fog = new FogOfWar(scene, fogSettings());
-    fog.attachRenderer(renderer, scene, [root, instancer.group]);
+    fog.attachRenderer(renderer, scene, [root]);
     return fog;
   }
 
@@ -581,7 +581,9 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     scene.updateMatrixWorld(); // skeleton bind inverses and parents must be current before fog's depth pass
     try {
       instancer.begin(camera, true);
+      instancer.revealSources();
       fog?.render(camera);
+      instancer.concealSources();
       renderer.render(scene, camera);
     } finally {
       instancer.end();

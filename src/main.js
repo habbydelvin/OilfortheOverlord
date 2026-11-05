@@ -122,7 +122,7 @@ const fogCfg = loadFogConfig(); // saved Game Debug slider values
 const globeCfg = loadGlobeConfig(); // globe tuning (city size, spread), same panel
 const fog = new FogOfWar(scene, fogCfg);
 // Reduced-resolution fog (quality presets); the placed tiles still hide the fog behind them.
-fog.attachRenderer(renderer, scene, [tiles, instancer.group]);
+fog.attachRenderer(renderer, scene, [tiles]);
 const missileCfg = loadMissileConfig(); // Game Debug → Missiles
 // Recorded combat sounds (public/audio/combat-test). Until they have loaded, the synthesised sounds below play instead.
 const combatAudio = createCombatAudio();
@@ -7101,7 +7101,11 @@ function frame(now) {
   try {
     instancer.begin(camera, true);
     trafficInstances.begin(camera, true);
-    fog.render(camera); // the same batches also hide the fog behind buildings
+    // Depth-test the real meshes. The batches' own matrices stay at the origin, so drawing them
+    // here carved a giant scaffold into the dust. Shadows and the colour pass still use the batches.
+    instancer.revealSources();
+    fog.render(camera);
+    instancer.concealSources();
     crtPass.begin();
     renderer.render(scene, camera); // the sun's pass uses these batches too
     renderGhost();
