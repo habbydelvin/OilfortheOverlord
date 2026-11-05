@@ -1,7 +1,10 @@
 /**
- * Placeholder sound effects, synthesised in the browser, except the tile landing (thud): that one is a recording in
- * public/audio/sfx (several takes), rendered offline by tools/build-sfx.py to sit with the music. The recordings
- * download and decode as soon as this module loads (an OfflineAudioContext decodes without a click).
+ * Placeholder sound effects, synthesised in the browser, with some recordings:
+ * - the tile landing (thud): takes in public/audio/sfx, rendered offline by tools/build-sfx.py to sit with the music,
+ *   decoded as soon as this module loads (an OfflineAudioContext decodes without a click);
+ * - Wasteland and building landings, piece rotation and the War Map whooshes: public/audio/place, ui, transition
+ *   (loaded after unlock);
+ * - the characters' voices: public/audio/voice (tools/build-voices.py).
  *
  * The context is opened when the game starts, before the opening hand is dealt. If the
  * browser still refuses sound, that call does nothing until a click or key on the loading
@@ -155,6 +158,25 @@ let recMaster = null;
 let noiseBuf = null;
 /** Resolves once the browser is actually letting this context play. */
 let ready = null;
+/** Rock drops for a Wasteland tile hitting the sand. Loaded after unlock. */
+const WASTE_THUDS = ['/audio/place/wasteland-1.ogg', '/audio/place/wasteland-2.ogg', '/audio/place/wasteland-3.ogg'];
+let wasteBufs = [];
+let wasteLoad = null;
+let wasteLast = -1;
+/** Boulder and rubble hits for a building landing. Loaded after unlock. */
+const BUILD_THUDS = ['/audio/place/building-1.ogg', '/audio/place/building-2.ogg'];
+let buildBufs = [];
+let buildLoad = null;
+let buildLast = -1;
+/** Button clicks for rotating a piece (ZapSplat, Ogg Opus). Loaded after unlock. */
+const ROTATE_CLICKS = ['/audio/ui/rotate-click-001.ogg', '/audio/ui/rotate-click-002.ogg', '/audio/ui/rotate-click-003.ogg', '/audio/ui/rotate-click-005.ogg'];
+let rotateBufs = [];
+let rotateLoad = null;
+let rotateLast = -1;
+/** Whooshes for the cloud transition. [0] zooms out to the planet, [1] zooms into a city. */
+const ZOOM_WHOOSH = ['/audio/transition/zoom-out.ogg', '/audio/transition/zoom-in.ogg?v=2'];
+let zoomBufs = [null, null];
+let zoomLoad = false;
 /** @type {{ end: number, kill: () => void }[]} */
 const active = [];
 
@@ -223,9 +245,81 @@ export function bindCardHover(root) {
 }
 
 /** Create the context if needed and resume it. Call this inside the startup gesture when the browser blocks autoplay. Returns whether sound can be heard right now. */
+function loadWasteThuds() {
+  if (wasteLoad || !ctx) return;
+  wasteLoad = Promise.all(
+    WASTE_THUDS.map(async (file) => {
+      try {
+        const res = await fetch(file);
+        if (!res.ok) throw new Error(res.status);
+        return await ctx.decodeAudioData(await res.arrayBuffer());
+      } catch (err) {
+        console.warn(`[sfx] ${file} failed to load`, err);
+        return null;
+      }
+    }),
+  ).then((bufs) => {
+    wasteBufs = bufs.filter(Boolean);
+  });
+}
+
+function loadBuildThuds() {
+  if (buildLoad || !ctx) return;
+  buildLoad = Promise.all(
+    BUILD_THUDS.map(async (file) => {
+      try {
+        const res = await fetch(file);
+        if (!res.ok) throw new Error(res.status);
+        return await ctx.decodeAudioData(await res.arrayBuffer());
+      } catch (err) {
+        console.warn(`[sfx] ${file} failed to load`, err);
+        return null;
+      }
+    }),
+  ).then((bufs) => {
+    buildBufs = bufs.filter(Boolean);
+  });
+}
+
+function loadRotateClicks() {
+  if (rotateLoad || !ctx) return;
+  rotateLoad = Promise.all(
+    ROTATE_CLICKS.map(async (file) => {
+      try {
+        const res = await fetch(file);
+        if (!res.ok) throw new Error(res.status);
+        return await ctx.decodeAudioData(await res.arrayBuffer());
+      } catch (err) {
+        console.warn(`[sfx] ${file} failed to load`, err);
+        return null;
+      }
+    }),
+  ).then((bufs) => {
+    rotateBufs = bufs.filter(Boolean);
+  });
+}
+
+function loadZoomWhooshes() {
+  if (!ctx || zoomLoad) return;
+  zoomLoad = true;
+  ZOOM_WHOOSH.forEach(async (file, i) => {
+    try {
+      const res = await fetch(file);
+      if (!res.ok) throw new Error(res.status);
+      zoomBufs[i] = await ctx.decodeAudioData(await res.arrayBuffer());
+    } catch (err) {
+      console.warn(`[sfx] ${file} failed to load`, err);
+    }
+  });
+}
+
 export function unlockSfx() {
   if (!ensure()) return false;
   if (ctx.state === 'suspended') ctx.resume();
+  loadWasteThuds();
+  loadBuildThuds();
+  loadRotateClicks();
+  loadZoomWhooshes();
   return ctx.state === 'running';
 }
 
@@ -373,6 +467,85 @@ export function deal() {
 /** A tile hits the sand (recorded). `heavy` is a whole Wasteland piece. */
 export function thud(heavy = false) {
   sample(heavy ? 'thud-heavy' : 'thud', { vary: 0.05 });
+}
+
+/** Cloud transition. `inward` is planet → city; otherwise city → planet. */
+export function zoomWhoosh(inward = false) {
+  const buf = zoomBufs[inward ? 1 : 0];
+  if (!buf) return;
+  begin(buf.duration, (t, nodes) => {
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const g = ctx.createGain();
+    g.gain.value = 0.7;
+    src.connect(g).connect(master);
+    src.start(t);
+    nodes.push(src, g);
+  });
+}
+
+/** A building hits the sand: one of the recorded impacts, or the ordinary thud if they are not ready. */
+export function buildThud() {
+  if (!buildBufs.length) {
+    thud();
+    return;
+  }
+  let i = Math.floor(Math.random() * buildBufs.length);
+  if (buildBufs.length > 1 && i === buildLast) i = (i + 1) % buildBufs.length;
+  buildLast = i;
+  const buf = buildBufs[i];
+  begin(buf.duration, (t, nodes) => {
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const g = ctx.createGain();
+    g.gain.value = 0.5;
+    src.connect(g).connect(master);
+    src.start(t);
+    nodes.push(src, g);
+  });
+}
+
+/** A piece is rotated: one of the recorded button clicks, or the synthesised chirp if they are not ready. */
+export function rotateClick() {
+  if (!rotateBufs.length) {
+    chirp();
+    return;
+  }
+  let i = Math.floor(Math.random() * rotateBufs.length);
+  if (rotateBufs.length > 1 && i === rotateLast) i = (i + 1) % rotateBufs.length;
+  rotateLast = i;
+  const buf = rotateBufs[i];
+  begin(buf.duration, (t, nodes) => {
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = 1 + (Math.random() * 2 - 1) * 0.03;
+    const g = ctx.createGain();
+    g.gain.value = 0.8;
+    src.connect(g).connect(master);
+    src.start(t);
+    nodes.push(src, g);
+  });
+}
+
+/** A Wasteland tile hits the sand: one of the recorded rock drops, or the heavy thud if they are not ready. */
+export function wasteThud() {
+  if (!wasteBufs.length) {
+    thud(true);
+    return;
+  }
+  let i = Math.floor(Math.random() * wasteBufs.length);
+  if (wasteBufs.length > 1 && i === wasteLast) i = (i + 1) % wasteBufs.length;
+  wasteLast = i;
+  const buf = wasteBufs[i];
+  begin(buf.duration, (t, nodes) => {
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const g = ctx.createGain();
+    g.gain.value = 0.55;
+    src.connect(g).connect(master);
+    src.start(t);
+    nodes.push(src, g);
+  });
 }
 
 /** Illegal placement. */

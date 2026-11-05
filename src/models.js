@@ -313,6 +313,92 @@ function splitPadMissile(root) {
   if (parts) root.add(group);
 }
 
+/**
+ * The Refinery as modelled is small on its tile and its smokestacks short beside the other buildings. Before the
+ * merge, its building (not the ground plate) is scaled up around the tile centre and its stacks are stretched up
+ * above the main hall; the smoke rises from the new stack tops and the tanker's pad moves out with the building.
+ * Lengths are shares of the tile's half width (its footprint), so they don't depend on the file's units.
+ */
+const REFINERY = {
+  scale: 1.5, // the building, around the tile centre
+  base: 0.24, // stacks stretch above this height (the main hall's roof)
+  rise: 0.17, // how much taller the stacks get (their tops all rise by this)
+  // The two stack clusters (from above): the striped stacks by the tower, and the single stack at the back.
+  stacks: [
+    { x: -0.2, z: -0.04, r: 0.13, top: 0.52 },
+    { x: 0.06, z: -0.21, r: 0.09, top: 0.41 },
+  ],
+};
+
+function reshapeRefinery(root) {
+  const fp = root.userData.footprint;
+  if (!fp) return;
+  const half = (fp.max[0] - fp.min[0]) / 2;
+  const cx = (fp.min[0] + fp.max[0]) / 2;
+  const cz = (fp.min[2] + fp.max[2]) / 2;
+  const ground = fp.min[1];
+  const { scale: S } = REFINERY;
+  const base = ground + REFINERY.base * half;
+  const rise = REFINERY.rise * half;
+  const stacks = REFINERY.stacks.map((k) => ({
+    x: cx + k.x * half,
+    z: cz + k.z * half,
+    r: k.r * half,
+    stretch: 1 + rise / (ground + k.top * half - base), // every stack top rises by `rise`
+  }));
+  const reshape = (v) => {
+    if (v.y > base) {
+      for (const k of stacks) {
+        if ((v.x - k.x) ** 2 + (v.z - k.z) ** 2 > k.r ** 2) continue;
+        v.y = base + (v.y - base) * k.stretch;
+        break;
+      }
+    }
+    v.set(cx + (v.x - cx) * S, ground + (v.y - ground) * S, cz + (v.z - cz) * S);
+  };
+  root.updateMatrixWorld(true);
+  const toRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const building = root.getObjectByName('Refinery_HiveCity');
+  const box = new THREE.Box3();
+  const v = new THREE.Vector3();
+  building?.traverse((o) => {
+    if (!o.isMesh || o.isSkinnedMesh) return;
+    const m = new THREE.Matrix4().multiplyMatrices(toRoot, o.matrixWorld);
+    box.setFromObject(o, true).applyMatrix4(toRoot);
+    if (box.max.x - box.min.x > half * 1.4) return; // the ground plate keeps the tile's size
+    const inv = m.clone().invert();
+    const g = o.geometry.clone();
+    const pos = g.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      reshape(v.fromBufferAttribute(pos, i).applyMatrix4(m));
+      v.applyMatrix4(inv);
+      pos.setXYZ(i, v.x, v.y, v.z);
+    }
+    g.computeBoundingBox();
+    g.computeBoundingSphere();
+    o.geometry = g;
+  });
+  // Smoke: the same scale, lifted to the new stack tops (its puffs are animated inside this group).
+  const smoke = root.getObjectByName('Refinery_Smoke');
+  if (smoke) {
+    const t = new THREE.Matrix4()
+      .makeTranslation(cx, ground, cz)
+      .multiply(new THREE.Matrix4().makeScale(S, S, S))
+      .multiply(new THREE.Matrix4().makeTranslation(-cx, rise - ground, -cz));
+    smoke.applyMatrix4(t);
+  }
+  // Tanker: its pad moves out with the building; the ship keeps its size.
+  const ships = root.getObjectByName('Refinery_Ships');
+  const ship = ships?.getObjectByProperty('isMesh', true);
+  if (ships && ship) {
+    const track = root.animations.flatMap((c) => c.tracks).find((t) => t.name === `${ship.name}.position`);
+    const rest = track ? new THREE.Vector3().fromArray(track.values, 0) : ship.position.clone();
+    const p = rest.applyMatrix4(ship.parent.matrixWorld).applyMatrix4(toRoot);
+    ships.position.add(new THREE.Vector3((p.x - cx) * (S - 1), (p.y - ground) * (S - 1), (p.z - cz) * (S - 1)));
+  }
+  root.updateMatrixWorld(true);
+}
+
 export function mergeStaticMeshes(root) {
   const animated = new Set();
   for (const clip of root.animations ?? []) {
@@ -1161,6 +1247,7 @@ async function prepareFromFbx(keys, { track = false, parallel = false } = {}) {
       root.userData.groundMaterial = [root.getObjectByName(`${s.piece}_Ground`)?.material].flat()[0]?.name; // (splitPieceCells)
     }
     if (s.key === 'milfactory') splitPadMissile(root);
+    if (s.key === 'refinery') reshapeRefinery(root);
     // ?nomerge in the URL keeps the original meshes (for A/B checks).
     if (!new URLSearchParams(location.search).has('nomerge')) {
       try {

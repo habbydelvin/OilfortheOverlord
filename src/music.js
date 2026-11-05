@@ -49,8 +49,16 @@ const level = () => (settings.muted ? 0 : Math.min(2, (settings.volume / 100) **
 
 let ctx = null;
 let master = null;
+let lowpass = null;
+let distance = null;
+let muffled = false;
 let buffer = null;
 let download = null;
+
+/** Open on the board. On the War Map the highs are gone and the track sits much further back. */
+const AIR_HZ = 16000;
+const SPACE_HZ = 450;
+const SPACE_GAIN = 0.35;
 
 /** Plays one copy of the track from audio time `when`, fading in over `fadeIn` seconds and out at its end. */
 function playCopy(when, fadeIn) {
@@ -97,11 +105,28 @@ export function startMusic() {
     ctx = new AudioContext();
     master = ctx.createGain();
     master.gain.value = level();
-    master.connect(ctx.destination);
+    lowpass = ctx.createBiquadFilter();
+    lowpass.type = 'lowpass';
+    lowpass.frequency.value = muffled ? SPACE_HZ : AIR_HZ;
+    lowpass.Q.value = 0.5;
+    distance = ctx.createGain();
+    distance.gain.value = muffled ? SPACE_GAIN : 1;
+    master.connect(lowpass).connect(distance).connect(ctx.destination);
     ctx.addEventListener('statechange', beginPlayback);
   }
   if (ctx.state === 'suspended') ctx.resume();
   beginPlayback();
+}
+
+/** Muffle the track on the War Map, and open it again in a city. Glides, so the change is not a click. */
+export function setMusicMuffled(on) {
+  muffled = on;
+  if (!lowpass) return;
+  const now = ctx.currentTime;
+  lowpass.frequency.cancelScheduledValues(now);
+  lowpass.frequency.setTargetAtTime(on ? SPACE_HZ : AIR_HZ, now, 0.35);
+  distance.gain.cancelScheduledValues(now);
+  distance.gain.setTargetAtTime(on ? SPACE_GAIN : 1, now, 0.35);
 }
 
 /** Volume and mute changes glide over a fraction of a second instead of clicking. */

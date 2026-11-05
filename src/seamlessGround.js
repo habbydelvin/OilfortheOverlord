@@ -81,6 +81,8 @@ function paintSand(texture) {
 }
 
 const patches = new WeakMap(); // material -> { mode, mask, grid }
+/** Whether a material draws the seamless desert ground (a tile's sand, painted ground or decal). */
+export const isSeamless = (material) => patches.has(material);
 
 /** Clones lose onBeforeCompile (ghost previews, below-ground copies): put the same patch on the copy. */
 export function copySeam(from, to) {
