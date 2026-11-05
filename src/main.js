@@ -5,6 +5,8 @@ import './theme.css';
 import './themeShine.js';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
+import { createInstancer } from './instancer.js';
+import { createShadowCache } from './shadowCache.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
 import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws } from './sfx.js';
 import { CameraRig } from './controls.js';
@@ -95,6 +97,8 @@ let globe;
 const rivalView = createRivalView({ renderer, factory, rig, fogSettings: () => fogCfg, fogQuality: () => gfxCfg.fogQuality, keepMaxZoom: true });
 const tiles = new THREE.Group();
 scene.add(tiles);
+const instancer = createInstancer(tiles, scene);
+const shadowCache = createShadowCache(sun);
 const interceptCover = new THREE.Group();
 scene.add(interceptCover);
 const INTERCEPT_GLOW = 0x4cc8ff;
@@ -112,7 +116,7 @@ const fogCfg = loadFogConfig(); // saved Game Debug slider values
 const globeCfg = loadGlobeConfig(); // globe tuning (city size, spread), same panel
 const fog = new FogOfWar(scene, fogCfg);
 // Reduced-resolution fog (quality presets); the placed tiles still hide the fog behind them.
-fog.attachRenderer(renderer, scene, [tiles]);
+fog.attachRenderer(renderer, scene, [tiles, instancer.group]);
 const missileCfg = loadMissileConfig(); // Game Debug → Missiles
 const missiles = new MissileStrike(scene, camera, missileCfg);
 const shakeCfg = loadShakeConfig(); // Game Debug → Missile camera shake
@@ -6531,6 +6535,7 @@ function frame(now) {
   last = now;
   const time = now / 1000;
   perf.frameBegin(now);
+  if (view !== 'board') shadowCache.invalidate();
 
   perf.begin('camera');
   rig.update(dt);
@@ -6650,11 +6655,17 @@ function frame(now) {
   perf.begin('render (cpu)');
   perf.gpuBegin();
   updateCurve(camera, rig.target); // the small-planet bend, around where the camera looks
-  fog.render(camera); // offscreen fog pass (High/Medium/Low on high-DPI screens)
-  crtPass.begin(); // CRT: the scene goes into its off-screen image
-  renderer.render(scene, camera);
-  renderGhost();
-  crtPass.end(time); // CRT: the tube's picture onto the screen
+  shadowCache.update(scene, camera, renderer); // inspect the real casters before swapping their draw representation
+  try {
+    instancer.begin(camera);
+    fog.render(camera); // the same batches also hide the fog behind buildings
+    crtPass.begin();
+    renderer.render(scene, camera); // the sun's pass uses these batches too
+    renderGhost();
+    crtPass.end(time);
+  } finally {
+    instancer.end(); // picking, animation and material swaps always see the original objects
+  }
   perf.gpuEnd();
   perf.end('render (cpu)');
   perf.begin('payout');
@@ -6679,6 +6690,9 @@ perf.counter('fog quality', () => fog.quality + (fog.offscreen ? ` @${fog.render
 perf.counter('fog billows', () => (fog.visible ? fog.count.toLocaleString() : 'off'));
 perf.counter('fog mask uploads', () => fog.uploads ?? 0);
 perf.counter('grid cells', () => grid.cells.size);
+perf.counter('batched parts / draws', () => `${instancer.stats.parts} / ${instancer.stats.batches}`);
+perf.counter('sun shadow', () => shadowCache.stats.updated ? 'updated' : 'reused');
+perf.toggle({ label: 'Instanced buildings', get: () => instancer.enabled, set: (on) => { instancer.enabled = on; shadowCache.invalidate(); } });
 perf.toggle({ label: 'Fog', get: () => fog.visible, set: (on) => fog.setVisible(on) });
 perf.toggle({ label: 'Fog veil', get: () => fog.veilOn, set: (on) => fog.setParts({ veil: on }) });
 perf.toggle({ label: 'Fog billows', get: () => fog.billowsOn, set: (on) => fog.setParts({ billows: on }) });
@@ -6727,8 +6741,6 @@ function warmUpModels(models = factory.models) {
 
 /** Compile the construction dissolve shader once the extra models are in, so the first drop doesn't hitch. */
 async function prewarmBuildReveal() {
-  const hold = new THREE.Group();
-  tiles.add(hold);
   for (const terrain of ['missilelab', 'warhead']) {
     let mesh;
     try {
@@ -6736,19 +6748,16 @@ async function prewarmBuildReveal() {
     } catch {
       continue;
     }
-    mesh.position.set(0, -5, 0);
-    hold.add(mesh);
     const cell = { mesh, terrain, built: false };
     ensureBuildReveal(cell);
     try {
       await renderer.compileAsync(mesh, camera, scene);
     } catch {
-      renderer.compile(scene, camera);
+      renderer.compile(mesh, camera, scene);
+    } finally {
+      clearBuildReveal(cell);
     }
-    clearBuildReveal(cell);
-    hold.remove(mesh);
   }
-  tiles.remove(hold);
 }
 
 /**
@@ -6769,7 +6778,7 @@ async function warmUpModelsGradually(models) {
   }
   for (const model of models.values()) {
     try {
-      await renderer.compileAsync(model, camera, scene);
+      await instancer.warm(model, renderer, camera, (m) => [m, greyOf(m)], fog.depthScene.overrideMaterial);
     } catch {
       // compiles on first draw instead
     }
@@ -6780,11 +6789,19 @@ async function warmUpModelsGradually(models) {
 // Start once the models are in, so the Capital lands as the real city rather than a
 // stand-in block that swaps a second later. factory.ready also resolves if loading
 // fails (the game then runs on coloured blocks).
-factory.ready.then(() => {
+factory.ready.then(async () => {
   setTimeout(preloadCardArt, 0); // decode the card pictures in the background, so showing cards never waits
   clearInterval(loadTimer);
   $('loadingFill').style.width = '100%';
   warmUpModels();
+  // Core model shaders finish behind the loading screen, including the instanced and idle-grey variants.
+  for (const model of [...factory.models.values()]) {
+    try {
+      await instancer.warm(model, renderer, camera, (m) => [m, greyOf(m)], fog.depthScene.overrideMaterial);
+    } catch {
+      // A shader unsupported by this device gets the usual renderer diagnostics on first draw.
+    }
+  }
   // Sound has to be allowed before the opening hand is dealt, or that whoosh is skipped.
   // When the browser blocks autoplay, the loading screen stays up for one click or key.
   let started = false;
@@ -6853,4 +6870,4 @@ factory.extrasReady.then(async (extras) => {
 if (RELEASE) for (const id of ['debugDock', 'libraryLink']) document.getElementById(id)?.remove();
 
 // Handy for debugging in the console (dev builds only).
-if (!RELEASE) window.tileIsland = { tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, openCityStrike, drawStrikeHand, missileCount, _t: { openGlobe, globeCfg, clear: () => (eventOpen = false), war: { addMissile, queueDrawn, updateAimBar, runAttackPhase, rivals: () => rivals } } };
+if (!RELEASE) window.tileIsland = { instancer, shadowCache, tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, openCityStrike, drawStrikeHand, missileCount, _t: { openGlobe, globeCfg, clear: () => (eventOpen = false), war: { addMissile, queueDrawn, updateAimBar, runAttackPhase, rivals: () => rivals } } };
