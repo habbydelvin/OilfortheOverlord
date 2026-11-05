@@ -271,8 +271,36 @@ function ringLine(cx, cz, radius, mat) {
   return line;
 }
 
+// The gun's reach in the sky (INTERCEPT.reach, a sphere round the gun: interceptSim.js inReach), as a wire dome:
+// meridians from the ground up over the top, and a few latitude rings. Amber, apart from the green ground coverage.
+const GUN_Y = 0.35; // the turret's height in interceptSim.js
+function reachDome(cx, cz, radius, mat) {
+  const pts = [];
+  const seg = (a, b) => pts.push(a, b);
+  const at = (az, el) => new THREE.Vector3(cx + Math.cos(el) * Math.cos(az) * radius, GUN_Y + Math.sin(el) * radius, cz + Math.cos(el) * Math.sin(az) * radius);
+  const lowest = Math.asin(Math.max(-1, -GUN_Y / radius)); // down to the ground, just below the gun
+  const N = 48;
+  for (let m = 0; m < 12; m++) {
+    const az = (m / 12) * Math.PI * 2;
+    for (let i = 0; i < N; i++) seg(at(az, lowest + ((Math.PI / 2 - lowest) * i) / N), at(az, lowest + ((Math.PI / 2 - lowest) * (i + 1)) / N));
+  }
+  for (const el of [lowest, Math.PI / 12, Math.PI / 6, Math.PI / 4, Math.PI / 3, (5 * Math.PI) / 12]) {
+    for (let i = 0; i < 64; i++) seg(at((i / 64) * Math.PI * 2, el), at(((i + 1) / 64) * Math.PI * 2, el));
+  }
+  const lines = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), mat);
+  lines.renderOrder = 31;
+  lines.frustumCulled = false;
+  return lines;
+}
+const reachMat = (hot) =>
+  new THREE.LineBasicMaterial({ color: hot ? 0xffd27a : 0xffaa33, transparent: true, opacity: hot ? 0.75 : 0.22, depthTest: true, depthWrite: false, toneMapped: false, fog: false });
+let showReach = true;
+
 function drawRings() {
-  for (const o of rings.children) o.geometry !== fillGeo && o.geometry.dispose();
+  for (const o of rings.children) {
+    if (o.geometry !== fillGeo) o.geometry.dispose();
+    if (o.material !== fillMat && o.material !== fillHot) o.material.dispose();
+  }
   rings.clear();
   if (!showRings) return;
   const r = INTERCEPT.range;
@@ -282,6 +310,7 @@ function drawRings() {
     const hot = hotNet === key(c.x, c.z);
     const w = hexToWorld(c.x, c.z);
     rings.add(ringLine(w.x, w.z, r + 0.5, ringMat(hot ? 0xc8ffe8 : 0x6affc0, hot ? 1 : 0.6)));
+    if (showReach) rings.add(reachDome(w.x, w.z, INTERCEPT.reach, reachMat(hot)));
     for (const [x, z] of hexesAround(c.x, c.z, r)) covered.set(key(x, z), covered.get(key(x, z)) || hot);
   }
   for (const [k, hot] of covered) {
@@ -372,6 +401,10 @@ function buildTuning() {
 
 document.getElementById('showRings').addEventListener('change', (e) => {
   showRings = e.target.checked;
+  drawRings();
+});
+document.getElementById('showReach').addEventListener('change', (e) => {
+  showReach = e.target.checked;
   drawRings();
 });
 document.getElementById('resetTune').addEventListener('click', () => {

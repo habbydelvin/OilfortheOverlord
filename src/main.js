@@ -6,6 +6,8 @@ import './themeShine.js';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { createInstancer } from './instancer.js';
+import { createTitleScreen } from './titleScreen.js';
+import { createSandPlanet } from './sandPlanet.js';
 import { createShadowCache } from './shadowCache.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, setMusicMuffled, startMusic } from './music.js';
 import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws, wasteThud, buildThud, zoomWhoosh, sfxLoaded } from './sfx.js';
@@ -30,7 +32,7 @@ import { setupLegend } from './legend.js';
 import { Mysteries, siloFires } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
-import { computeEconomy, computeEconomyIf, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS, rebelsRise, WORKERS } from './economy.js';
+import { computeEconomy, computeEconomyIf, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS, rebelsRise, seasonParts, WORKERS } from './economy.js';
 import { FACTORY_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, blastExtra, isMilitaryLab, labOilCost, BASE_MISSILE_CAP, MAGAZINE_CAP } from './arsenal.js';
 import { pieceOf, pieceOffsets } from './pieces.js';
 import { findCiws } from './interceptMesh.js';
@@ -49,17 +51,19 @@ import { createDebugPanel } from './debugPanel.js';
 import { CameraShake, SHAKE_PARAMS, SHAKE_DEFAULTS, loadShakeConfig, saveShakeConfig, clearShakeConfig } from './cameraShake.js';
 import { SCALE, SCALE_PARAMS, SCALE_DEFAULTS, loadScaleConfig, saveScaleConfig, clearScaleConfig, eventPct, P } from './scalingConfig.js';
 import { Traffic } from './traffic.js';
+import { unlockAmbience, updateAmbience } from './ambience.js';
 import { LOD, buildLods, setLod, wantLod, lodStats } from './lod.js';
 import { ZoomIcons, MAP_ICONS, ICON_PARAMS, ICON_DEFAULTS, loadIconConfig, saveIconConfig, clearIconConfig } from './zoomIcons.js';
 import { Perf } from './perfOverlay.js';
 import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig, applyGfx } from './graphics.js';
 import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
 import { MissileStrike, MISSILE_PARAMS, MISSILE_DEFAULTS, MISSILE_TAIL, loadMissileConfig, saveMissileConfig, clearMissileConfig } from './missiles.js';
+import { LaserStrike } from './laserStrike.js';
 import { Tutorial, TUTORIAL_KEY, OPENING, tutorialDone, markTutorialDone } from './tutorial.js';
 import { L, both, isZh, toggleLang, onLangChange, applyStatic, textOf, retranslate } from './i18n.js';
 import { createRivals, advanceRivals, rivalStats, PLAYER_NODE } from './rivals.js';
 import { createRivalView } from './rivalView.js';
-import { createGlobeView, GLOBE_PARAMS, GLOBE_DEFAULTS, loadGlobeConfig, saveGlobeConfig, clearGlobeConfig } from './globeView.js';
+import { createGlobeView, GLOBE_RADIUS, GLOBE_PARAMS, GLOBE_DEFAULTS, loadGlobeConfig, saveGlobeConfig, clearGlobeConfig } from './globeView.js';
 import { createCloudTransition } from './cloudTransition.js';
 
 applyStatic(); // the page's own text in the saved language
@@ -120,7 +124,7 @@ const fogCfg = loadFogConfig(); // saved Game Debug slider values
 const globeCfg = loadGlobeConfig(); // globe tuning (city size, spread), same panel
 const fog = new FogOfWar(scene, fogCfg);
 // Reduced-resolution fog (quality presets); the placed tiles still hide the fog behind them.
-fog.attachRenderer(renderer, scene, [tiles, instancer.group]);
+fog.attachRenderer(renderer, scene, [tiles]);
 const missileCfg = loadMissileConfig(); // Game Debug → Missiles
 // Recorded combat sounds (public/audio/combat-test). Until they have loaded, the synthesised sounds below play instead.
 const combatAudio = createCombatAudio();
@@ -137,6 +141,30 @@ function missileWhoosh(t) {
   return end > 0.2 ? combatAudio.incoming(end) : null;
 }
 const missiles = new MissileStrike(scene, camera, missileCfg);
+const lasers = new LaserStrike(scene, camera, missileCfg);
+const OVERLORD_STRIKE_KEY = 'oto.overlordStrike';
+const LASER_COLOR_KEY = 'oto.laserColor';
+const LASER_COLOR_DEFAULT = '#24c5ff';
+/** Which strike the Overlord uses: the bottom-left button and a missed tribute. 'missile' or 'laser'. */
+function overlordStrikeKind() {
+  return localStorage.getItem(OVERLORD_STRIKE_KEY) === 'laser' ? 'laser' : 'missile';
+}
+function setOverlordStrikeKind(kind) {
+  localStorage.setItem(OVERLORD_STRIKE_KEY, kind === 'laser' ? 'laser' : 'missile');
+}
+function strikeLabel() {
+  return overlordStrikeKind() === 'laser' ? { en: 'Laser strike', zh: '激光打击' } : { en: 'Missile strike', zh: '导弹打击' };
+}
+function laserColor() {
+  const saved = localStorage.getItem(LASER_COLOR_KEY);
+  return /^#[0-9a-fA-F]{6}$/.test(saved ?? '') ? saved : LASER_COLOR_DEFAULT;
+}
+function setLaserColor(hex) {
+  const v = /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : LASER_COLOR_DEFAULT;
+  localStorage.setItem(LASER_COLOR_KEY, v);
+  lasers.setBeamColor(v);
+}
+lasers.setBeamColor(laserColor());
 const shakeCfg = loadShakeConfig(); // Game Debug → Missile camera shake
 const camShake = new CameraShake(camera, shakeCfg); // missile strikes only; tiles etc. use the small `shake` jolt
 const gfxCfg = loadGfxConfig();
@@ -223,6 +251,15 @@ const debug = RELEASE
     return 'Tutorial reset: guided first Spring started';
   },
   onMissiles: () => (tutorialBlocks() ? 'Not during the tutorial' : previewMissileStrike()),
+  overlordStrike: overlordStrikeKind,
+  onOverlordStrike: (kind) => {
+    setOverlordStrikeKind(kind);
+    const name = strikeLabel();
+    return L(name.en, name.zh);
+  },
+  laserColor,
+  laserColorDefault: LASER_COLOR_DEFAULT,
+  onLaserColor: setLaserColor,
   onShake: () => {
     camShake.add(missileCfg.shake);
     return 'Shake: one missile impact';
@@ -386,7 +423,7 @@ const tutorial = new Tutorial({
     modality: () => modality,
     isAction: (terrain) => Boolean(ACTIONS[terrain]),
     /** A reroll is possible now (free, or the oil for it). */
-    canReroll: () => !hand.isEmpty && (turn.freeRerolls > 0 || turn.stockpile >= rerollCost()),
+    canReroll: () => hand.rerollable > 0 && (turn.freeRerolls > 0 || turn.stockpile >= rerollCost()),
     /** This card could do something somewhere right now. */
     canPlay: (piece) => canPlay(piece),
     /** The Black Market walkthrough: this card's price taken off your oil, as a ghost (null: none). */
@@ -1060,12 +1097,123 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
 }
 
 /**
+ * 激光打击. No missile. The camera centres each building in a random order and stays on the last.
+ * Three thin columns spin inward, then a thick column and a bolt drop in one flash. The bolt
+ * touching the ground plays the missile impact (blast, shake, crater).
+ */
+async function playLaserStrike(targets, { convert = true, restoreCamera = true, onCover = null, holdAfter = null, free = false } = {}) {
+  const run = runId;
+  const lost = [];
+  const interceptUsed = new Set();
+  if (!targets.length) return lost;
+  const prevEvent = eventOpen;
+  if (!free) {
+    striking = true;
+    eventOpen = true;
+    hand.select(-1);
+    if (previewing) cancelPreview();
+    document.body.classList.add('striking');
+    rig.locked = true;
+  }
+  const saved = { goal: rig.goal.clone(), distance: rig.goalDistance };
+  const endStrike = (prev) => !free && endCinematic(prev);
+  const order = targets.slice();
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  const centre = (t) => {
+    const w = hexToWorld(t.x, t.z);
+    followCamera(new THREE.Vector3(w.x, 0, w.z), 16, 4.5);
+  };
+  const stop = () => {
+    lasers.abortGathers();
+    endStrike(prevEvent);
+  };
+  for (let i = 0; i < order.length; i++) {
+    const t = order[i];
+    centre(t);
+    await wait(i === 0 ? 0.7 : 0.55);
+    if (run !== runId) {
+      stop();
+      return lost;
+    }
+    const w = hexToWorld(t.x, t.z);
+    await lasers.gather(w.x, w.z, { onBolt: laserFlash });
+    if (run !== runId) {
+      stop();
+      return lost;
+    }
+    const hit = { x: w.x, z: w.z, cell: { x: t.x, z: t.z } };
+    lasers.impact(hit, {
+      onImpact: () => {
+        if (run !== runId) return;
+        explode('large');
+        dust.burst(t.x, t.z, 1.8);
+        fog.disturb(t.x, t.z);
+        camShake.add(missileCfg.shake);
+      },
+      onCover: () => {
+        if (run !== runId) return;
+        if (onCover) {
+          onCover({ x: t.x, z: t.z }, t);
+          return;
+        }
+        if (!convert) return;
+        if (tryIntercept(t.x, t.z, interceptUsed)) return;
+        const name = craterAt(t.x, t.z);
+        if (name) lost.push(name);
+      },
+    });
+    if (i < order.length - 1) await wait(0.45);
+    if (run !== runId) {
+      stop();
+      return lost;
+    }
+  }
+  await wait(holdAfter ?? missileCfg.holdAfter);
+  if (run !== runId) {
+    stop();
+    return lost;
+  }
+  if (restoreCamera && !free) {
+    rig.goal.copy(saved.goal);
+    rig.goalDistance = saved.distance;
+    await wait(0.7);
+    if (run !== runId) {
+      stop();
+      return lost;
+    }
+  }
+  endStrike(prevEvent);
+  return lost;
+}
+
+/** One white blink across the whole screen as the laser bolt falls. */
+function laserFlash() {
+  let el = document.getElementById('laserFlash');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'laserFlash';
+    document.body.appendChild(el);
+  }
+  el.classList.remove('on');
+  void el.offsetWidth;
+  el.classList.add('on');
+}
+
+/** The Overlord's strike: missile or laser, from Game Debug. */
+function playOverlordStrike(targets, opts) {
+  return overlordStrikeKind() === 'laser' ? playLaserStrike(targets, opts) : playMissileStrike(targets, opts);
+}
+
+/**
  * An attack-phase strike on your board (target.shots from war.js): each Intercept Network that fires opens up
  * with its CIWS turret as the missile comes down; a successful one shoots it out of the sky.
  */
 const CIWS_START = 0.22;
 const CIWS_GAP = 0.14;
-function fireDefences(t, u) {
+function fireDefences(t, u, sys = missiles) {
   // A simulated strike's guns play from setDefence. This list is the older cinematic path.
   if (typeof t.clock === 'function') return;
   const shots = t.shots;
@@ -1074,11 +1222,11 @@ function fireDefences(t, u) {
   while (t.fired < shots.length && u >= CIWS_START + CIWS_GAP * t.fired) {
     const shot = shots[t.fired++];
     const pad = hexToWorld(shot.x, shot.z);
-    missiles.fireCIWS(findCiws(grid.get(shot.x, shot.z)?.mesh), new THREE.Vector3(pad.x, 0.35, pad.z), () => missiles.position(t), {
+    sys.fireCIWS(findCiws(grid.get(shot.x, shot.z)?.mesh), new THREE.Vector3(pad.x, 0.35, pad.z), () => sys.position(t), {
       success: shot.success,
       onFire: (dur) => gunSnd(dur),
       onKill: () => {
-        if (missiles.destroy(t)) {
+        if (sys.destroy(t)) {
           camShake.add(missileCfg.shake * 0.35);
           explode('small');
         }
@@ -1330,11 +1478,11 @@ function landReveals(found, delay) {
 }
 
 /** Report line once the missiles have landed. */
-function reportStrike(lost) {
+function reportStrike(lost, label = { en: 'Missile strike', zh: '导弹打击' }) {
   if (!lost.length) return;
   $('report').innerHTML += L(
-    `<br /><span class="bad">Missile strike: your ${listLost(lost)} ${lost.length === 1 ? 'is now a Toxic Crater' : 'are now Toxic Craters'}.</span>`,
-    `<br /><span class="bad">导弹打击：你的${listLost(lost)}已化为毒坑。</span>`,
+    `<br /><span class="bad">${label.en}: your ${listLost(lost)} ${lost.length === 1 ? 'is now a Toxic Crater' : 'are now Toxic Craters'}.</span>`,
+    `<br /><span class="bad">${label.zh}：你的${listLost(lost)}已化为毒坑。</span>`,
   );
 }
 
@@ -1358,12 +1506,19 @@ function previewMissileStrike({ convert = missileCfg.previewCraters === 'yes', c
     targets.push({ x, z });
   }
   const run = runId;
-  playMissileStrike(targets, { convert }).then((lost) => {
+  playOverlordStrike(targets, { convert }).then((lost) => {
     if (run !== runId) return;
     eventOpen = false;
-    reportStrike(lost);
+    reportStrike(lost, strikeLabel());
     updateHUD();
-    if (lost.length) toast(() => L(`The Overlord's missiles destroyed your ${listLost(lost)}`, `霸主的导弹摧毁了你的${listLost(lost)}`), 'bad', 2600);
+    if (lost.length) {
+      const name = strikeLabel();
+      toast(
+        () => L(`The Overlord's ${name.en.toLowerCase()} destroyed your ${listLost(lost)}`, `霸主的${name.zh}摧毁了你的${listLost(lost)}`),
+        'bad',
+        2600,
+      );
+    }
   });
   return `Missile strike: ${targets.length} missile${targets.length === 1 ? '' : 's'}`;
 }
@@ -1409,7 +1564,7 @@ function debugRandomStrike() {
     targets.push({ x, z });
   }
   const run = runId;
-  playMissileStrike(targets, { convert: missileCfg.previewCraters === 'yes' }).then((lost) => {
+  playOverlordStrike(targets, { convert: missileCfg.previewCraters === 'yes' }).then((lost) => {
     if (run !== runId) return;
     eventOpen = false;
     updateHUD();
@@ -2161,8 +2316,8 @@ function updateDropAnims(dt) {
     if (!a.landed) {
       a.landed = true;
       for (const o of a.plates ?? []) o.castShadow = true; // on the ground again: the plate's shadow is its own edge
-      if (a.cells || a.waste) wasteThud();
-      else if (a.build) buildThud();
+      // Wasteland and every building land with the recorded dirt thuds (rock drops).
+      if (a.cells || a.waste || a.build) wasteThud();
       else thud();
       // The cells it landed on: a whole Wasteland piece knows its cells, a single tile's is under its position.
       const cells = a.cells ?? [worldToHex(a.mesh.position.x, a.mesh.position.z)];
@@ -2422,7 +2577,8 @@ function shadeIdle(e = economyNow()) {
     setGrey(cell.mesh, idle.has(`${cell.x},${cell.z}`) || blocked);
   }
   neonTiles.refresh(grid); // boosted buildings' tiles glow (not idle ones)
-  zoomIcons.setBoosts(e.boosts); // the boosters' "+n" map icons
+  zoomIcons.setBoosts(e.boosts); // tutorial: a booster started adding something
+  zoomIcons.setYields(e.yields); // zoomed-out hover: the card's season line
 }
 
 function missileHandCount() {
@@ -2602,7 +2758,7 @@ function updateHUD() {
   showStore(turn.food, e.foodCap);
 
   $('btnReroll').classList.toggle('hidden', hand.isEmpty);
-  $('btnReroll').classList.toggle('disabled', !turn.freeRerolls && turn.stockpile < rerollCost());
+  $('btnReroll').classList.toggle('disabled', !hand.rerollable || (!turn.freeRerolls && turn.stockpile < rerollCost()));
   $('btnRerollSub').innerHTML = turn.freeRerolls ? L(`free ×${turn.freeRerolls}`, `免费 ×${turn.freeRerolls}`) : `-${rerollCost()}${ICONS.oil}`;
   // Greyed out while Wasteland that still fits must be placed (endTurn refuses then, with a toast).
   const blocking = hand.placeableForced.length;
@@ -2924,21 +3080,11 @@ function grantText(g) {
 function seasonText(per) {
   const t = per.terrain;
   if (per.idle && (t === 'farm' || t === 'station' || t === 'refinery')) return { en: 'This season: idle', zh: '本季结算：闲置' };
-  if (t === 'pump' || t === 'oasis' || t === 'tarpit') {
-    const res = t === 'tarpit' ? 'oil' : 'food';
-    const n = (per.grants ?? []).reduce((s, g) => s + (g[res] || 0), 0);
-    const a = amountWords(n, res);
-    return { en: `Adds ${a.en} this season`, zh: `本季加成 ${a.zh}` };
-  }
-  const parts = [];
-  if (per.outFood > 0) parts.push(amountWords(per.outFood, 'food'));
-  if (per.food < 0) parts.push(amountWords(per.food, 'food'));
-  if (per.outOil > 0) parts.push(amountWords(per.outOil, 'oil'));
-  if (per.oil < 0) parts.push(amountWords(per.oil, 'oil'));
-  if (per.outManpower) parts.push(amountWords(per.outManpower, 'manpower'));
-  if (t === 'labourcamp' && !per.outManpower) parts.push(amountWords(0, 'manpower'));
-  if ((t === 'farm' || t === 'station' || t === 'refinery') && !parts.length) parts.push(amountWords(0, t === 'farm' ? 'food' : 'oil'));
+  const parts = seasonParts(per).map((p) => amountWords(p.n, p.res));
   if (!parts.length) return null;
+  if (t === 'pump' || t === 'oasis' || t === 'tarpit') {
+    return { en: `Adds ${parts[0].en} this season`, zh: `本季加成 ${parts[0].zh}` };
+  }
   return { en: `This season ${parts.map((p) => p.en).join(', ')}`, zh: `本季结算 ${parts.map((p) => p.zh).join('，')}` };
 }
 /** Neighbour effects under the card's own rule, then this season's settled yield. Empty when nothing changes by place. */
@@ -6192,7 +6338,7 @@ function fillRivalBar(rival) {
 }
 
 /** Back to the board from either the globe or a rival city. Safe during a reset. */
-function resetView() {
+function resetView({ keepClouds = false } = {}) {
   if (view === 'rival') {
     closeRivalHand();
     rivalView.exit();
@@ -6205,7 +6351,7 @@ function resetView() {
   rig.resetOverscroll();
   viewRun++; // drops a fade that is still running
   switching = false;
-  clouds.reset();
+  if (!keepClouds) clouds.reset(); // the title dive keeps its cover up through the reset
   document.body.classList.remove('globe-view', 'rival-view');
   setMusicMuffled(false);
 }
@@ -6331,6 +6477,7 @@ function globeHome() {
 globe = createGlobeView({
   renderer,
   root: $('globeUI'),
+  painted: true, // painted like the main screen's planet, hex lines on it (sandPlanet.js createPaintedGlobe)
   factory,
   playerBuildings: playerBuildingCount,
   playerHp: () => turn.capitalHp,
@@ -6344,10 +6491,102 @@ globe = createGlobeView({
   onApproach: (s) => approach(s),
   approachLead: () => missileCfg.followFlight,
 });
+// ---------- main screen ----------
+// Its own planet, apart from the War Map's: its own scene, camera and look (no hex grid, finer sand), so nothing
+// done here reaches the in-game planet. Its labels live in a detached element (the main screen shows none).
+const titleGlobeUI = document.createElement('div');
+titleGlobeUI.innerHTML = '<div class="globe-title"></div><div id="globeLabels"></div><div id="globeCard" class="hidden"></div>';
+const titleGlobe = createGlobeView({
+  renderer,
+  root: titleGlobeUI,
+  factory,
+  playerBuildings: () => 0,
+  playerHp: () => 5,
+  onVisit: () => {},
+});
+// Its planet is painted, not the hex world (sandPlanet.js); the star, nebula and moon stay from the War Map scene.
+titleGlobe.setLook({ hidePlanet: true });
+const titlePlanet = createSandPlanet(GLOBE_RADIUS, { renderer }); // baked once into cube maps: cheap to draw every frame
+titleGlobe.scene.add(titlePlanet.group);
+const titleScreen = createTitleScreen({
+  root: $('title'),
+  scene: titleGlobe.scene,
+  camera: titleGlobe.camera,
+  getModel: () => factory.models?.get('mothership'),
+  onStart: startFromTitle,
+  onOptions: () => debug.toggle(), // every Game Debug option, for now
+});
+
+/** The main screen: the planet from mid distance, the menu over it. */
+function showTitle() {
+  view = 'title';
+  setBoardFraming(false);
+  titleGlobe.enter([], 'player'); // pulls back from just above the planet to its usual distance
+  titleScreen.show();
+}
+
+/**
+ * Start: a new game from the very beginning, the full tutorial included. The camera dives from orbit into the
+ * planet (the Mothership stays behind in the world), punches through the clouds, and comes out above Hive City.
+ */
+const TITLE_DIVE = { duration: 2.4, cloudsAt: 1.9, fovKick: 14 }; // the cloud cover (0.55 s) closes as the camera reaches the surface
+let titleDive = null; // { t, d0, fov0, covering }
+
+function startFromTitle() {
+  if (switching || titleDive) return;
+  switching = true;
+  zoomWhoosh(true);
+  titleScreen.depart();
+  const cam = titleGlobe.camera;
+  titleDive = { t: 0, d0: cam.position.length(), fov0: cam.fov, covering: false };
+}
+
+/** Every title frame while diving: after the globe placed its camera, pull it down toward the planet. */
+function updateTitleDive(dt) {
+  const dv = titleDive;
+  const cam = titleGlobe.camera;
+  dv.t += dt;
+  const k = Math.min(1, dv.t / TITLE_DIVE.duration);
+  // A slow push that keeps accelerating: barely moving at first, then falling into the clouds.
+  const e = k ** 2.2;
+  const d1 = GLOBE_RADIUS * 1.006; // just under the cloud shell
+  cam.position.set(0, 0, dv.d0 + (d1 - dv.d0) * e);
+  cam.lookAt(0, 0, 0);
+  cam.fov = dv.fov0 + TITLE_DIVE.fovKick * Math.sin(Math.min(1, k * 1.15) * Math.PI * 0.5) ** 2; // speed: the view widens
+  cam.updateProjectionMatrix();
+  cam.updateMatrixWorld();
+  if (!dv.covering && dv.t >= TITLE_DIVE.cloudsAt) {
+    dv.covering = true;
+    clouds.cover().then(arriveFromTitle);
+  }
+}
+
+/** Behind the clouds: swap to the new city, then part them over it, the board camera still settling down. */
+function arriveFromTitle() {
+  const cam = titleGlobe.camera;
+  cam.fov = titleDive.fov0;
+  cam.updateProjectionMatrix();
+  titleDive = null;
+  titleScreen.hide();
+  titleGlobe.exit();
+  localStorage.removeItem(TUTORIAL_KEY);
+  resetIsland({ tutorial: true, keepClouds: true }); // back on the board, lessons start over
+  const home = rig.goalDistance;
+  rig.distance = rig.maxDistance; // out of the clouds high above the city, then down onto it
+  rig.goalDistance = home;
+  switching = true;
+  const run = viewRun;
+  clouds.uncover().then(() => {
+    if (run === viewRun) switching = false;
+  });
+}
+
 rig.onZoomPastMax = () => {
   if (view === 'board' || view === 'rival') openGlobe();
   if (!switching) rig.resetOverscroll(); // refused (another screen is up)
 };
+// The guided opening refuses the War Map. Holding the wheel on the far limit avoids the climb-and-snap.
+rig.allowZoomPastMax = () => tutorial.allows('globe');
 $('btnRivalBack').addEventListener('click', (e) => {
   e.currentTarget.blur();
   leaveRival();
@@ -6375,6 +6614,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (tgt.matches?.('input, select, textarea')) return; // typing in the debug panel
+  if (view === 'title') return; // the main screen: only its menu
   if (k === 'g' && !e.repeat) {
     if (view === 'globe') globeHome();
     else openGlobe();
@@ -6445,7 +6685,9 @@ window.addEventListener('keydown', (e) => {
 
 $('btnReroll').addEventListener('click', (e) => {
   e.currentTarget.blur();
-  if (hand.isEmpty || payout.active || turn.over || shopOpen || eventOpen || strikeOpen) return;
+  if (payout.active || turn.over || shopOpen || eventOpen || strikeOpen) return;
+  // Only produced Missiles (or nothing) in hand: a reroll would change nothing, so it costs nothing either.
+  if (!hand.rerollable) return toast(L('No cards to reroll', '没有可重抽的手牌'), 'bad');
   if (!tutorial.allows('reroll')) return tutorial.rejected({ code: 'early' }); // the guided opening plays its hand
   if (turn.freeRerolls > 0) {
     // Target reward: free, and doesn't raise the price of the next paid reroll.
@@ -6643,7 +6885,7 @@ $('btnReplayTutorial').addEventListener('click', (e) => {
  */
 function resetIsland(opts) {
   const tut = opts?.tutorial === true || !tutorialDone();
-  resetView();
+  resetView({ keepClouds: opts?.keepClouds });
   rivals = createRivals((Math.random() * 0x100000000) >>> 0);
   runId++; // stops a missile strike / failure speech still running
   combatAudio.endAttack(); // a reset must not leave the siren wailing
@@ -6821,8 +7063,8 @@ async function playTributeFailure({ quota, delivered, short, missiles: count, st
     if (!targets.length || !live()) return [];
     await dialogue.leave();
     if (!live()) return [];
-    const lost = await playMissileStrike(targets, opts);
-    if (live()) reportStrike(lost);
+    const lost = await playOverlordStrike(targets, opts);
+    if (live()) reportStrike(lost, strikeLabel());
     return lost;
   };
 
@@ -7039,14 +7281,31 @@ function frame(now) {
   const time = now / 1000;
   perf.frameBegin(now);
   if (view !== 'board') shadowCache.invalidate();
+  if (view === 'title') {
+    // The main screen: the planet scene (War Map) with the title ship, nothing of the board.
+    perf.begin('render (cpu)');
+    flattenCurve();
+    titleGlobe.update(dt);
+    if (titleDive) updateTitleDive(dt);
+    titlePlanet.update(dt);
+    titleScreen.update(dt);
+    titleGlobe.render();
+    perf.end('render (cpu)');
+    perf.frameEnd();
+    requestAnimationFrame(frame);
+    return;
+  }
 
   perf.begin('camera');
   rig.update(dt);
+  // Board ambience (traffic hum, nearby ship engines, rain): fades out with zoom and off the board.
+  updateAmbience({ ships: traffic.ships, target: rig.target, distance: rig.distance, camera, active: view === 'board' && !switching, dt });
   if (!switching && view !== 'globe') clouds.setPeek(rig.stretch ** 0.8 * 0.92);
   // The attack phase keeps time wherever you're looking: flights on the planet, strikes in every city.
   if (view !== 'globe') globe.tickWar(dt);
   if (view !== 'board') {
     missiles.update(dt);
+    lasers.update(dt);
     dust.update(dt);
   }
   syncDefence();
@@ -7105,6 +7364,7 @@ function frame(now) {
   perf.end('dust');
   perf.begin('missiles');
   missiles.update(dt);
+  lasers.update(dt);
   perf.end('missiles');
   perf.begin('tile anims');
   factory.update(dt, scene);
@@ -7160,7 +7420,11 @@ function frame(now) {
   try {
     instancer.begin(camera, true);
     trafficInstances.begin(camera, true);
-    fog.render(camera); // the same batches also hide the fog behind buildings
+    // Depth-test the real meshes. The batches' own matrices stay at the origin, so drawing them
+    // here carved a giant scaffold into the dust. Shadows and the colour pass still use the batches.
+    instancer.revealSources();
+    fog.render(camera);
+    instancer.concealSources();
     crtPass.begin();
     renderer.render(scene, camera); // the sun's pass uses these batches too
     renderGhost();
@@ -7174,7 +7438,7 @@ function frame(now) {
   // Anchor icons to the picture just drawn: current camera, planet bend and CRT projection (including camera shake).
   // DOM changes still reach the same browser paint; updating earlier used the preceding frame's projection state.
   perf.begin('map icons');
-  zoomIcons.update(grid);
+  zoomIcons.update(grid, cell);
   perf.end('map icons');
   perf.begin('payout');
   updatePayoutFx(dt); // after render so labels use this frame's camera
@@ -7333,10 +7597,11 @@ factory.ready.then(async () => {
   const go = () => {
     const sound = unlockSfx();
     combatAudio.unlock();
+    unlockAmbience();
     startMusic();
     if (started || !sound) return sound;
     started = true;
-    resetIsland(); // a first visit gets the guided Spring
+    showTitle(); // the main screen; Start begins the game
     last = performance.now();
     requestAnimationFrame(frame);
     $('loading').classList.add('done');
@@ -7396,4 +7661,4 @@ factory.extrasReady.then(async (extras) => {
 if (RELEASE) for (const id of ['debugDock', 'libraryLink']) document.getElementById(id)?.remove();
 
 // Handy for debugging in the console (dev builds only).
-if (!RELEASE) window.tileIsland = { lod: { LOD, lodStats, setLod }, instancer, shadowCache, tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, openCityStrike, drawStrikeHand, missileCount, _t: { openGlobe, globeCfg, clear: () => (eventOpen = false), war: { addMissile, queueDrawn, updateAimBar, runAttackPhase, rivals: () => rivals } } };
+if (!RELEASE) window.tileIsland = { titleScreen, lod: { LOD, lodStats, setLod }, instancer, shadowCache, tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, openCityStrike, drawStrikeHand, missileCount, _t: { openGlobe, globeCfg, clear: () => (eventOpen = false), war: { addMissile, queueDrawn, updateAimBar, runAttackPhase, rivals: () => rivals } } };

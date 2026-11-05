@@ -157,6 +157,16 @@ export function createInstancer(root, scene) {
     }
   }
 
+  /** Show this frame's batched meshes again. The fog depth pass reads them; the colour pass must not. */
+  function revealSources() {
+    for (const o of hidden) o.visible = true;
+  }
+
+  /** Hide them once more, so the shadow and colour passes draw the batches instead of a second copy. */
+  function concealSources() {
+    for (const o of hidden) o.visible = false;
+  }
+
   function end() {
     for (const o of hidden) o.visible = true;
     hidden.length = 0;
@@ -216,7 +226,7 @@ export function createInstancer(root, scene) {
   }
 
   return {
-    group, stats, begin, end, warm, dispose,
+    group, stats, begin, revealSources, concealSources, end, warm, dispose,
     get enabled() { return enabled; },
     set enabled(on) { enabled = on; },
   };

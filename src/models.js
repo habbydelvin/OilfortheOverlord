@@ -32,6 +32,7 @@ export const BLOCKOUTS = {
   warhead: 'WarheadInstitute.glb',
   missilelab: 'MissileRecipeLab.glb',
   intercept: 'InterceptNetwork.glb', // its gun is aimed by the attack phase (splitCiws below, tiles.js)
+  mothership: 'Mothership.glb', // not a tile: the main screen's ship (titleScreen.js), with its Idle hover
   // Camps: one model per camp, matched by its tent colour (TERRAINS[key].tent in tiles.js).
   raider: 'Camp04.fbx', // brown (rebels from starvation)
   bandit_raider: 'WasteCamp.glb', // red tents
@@ -68,6 +69,7 @@ const FINISHED = {
   warhead: { yaw: 0, fit: 'WarheadInstitute_HiveCity' },
   missilelab: { yaw: 0, fit: 'MissileRecipeLab_HiveCity' },
   intercept: { yaw: 0, fit: 'InterceptNetwork_HiveCity' },
+  mothership: { yaw: 0, fit: 'Mothership_HiveCity', free: true }, // free: kept at its own size and shape (no cell fit)
 };
 
 /**
@@ -1732,6 +1734,13 @@ function finishModel(root, spec) {
     if (!o.isMesh) return;
     for (const m of [o.material].flat()) for (const k of ['map', 'normalMap', 'emissiveMap']) if (m[k]) m[k].anisotropy = 8;
   });
+  // A free model (not a tile: the Mothership): its animated parts batched, nothing cut, blended or fitted to a cell.
+  if (spec.finished?.free) {
+    const batched = batchAnimatedParts(root);
+    if (batched) console.info(`[models] ${spec.key}: ${batched} animated draws batched`);
+    root.name = spec.key;
+    return root;
+  }
   // One-cell tiles become hexagons like the board cells (the Wasteland pieces are hexagons already).
   if (!spec.piece) {
     const t0 = performance.now();

@@ -97,7 +97,10 @@ const GLB_ONLY = {
   'WarheadInstitute.glb': 'WarheadInstitute',
   'MissileRecipeLab.glb': 'MissileRecipeLab',
   'InterceptNetwork.glb': 'InterceptNetwork', // Idle (with the gun's sweep) and Fire; the game aims the gun (tiles.js)
+  'Mothership.glb': 'Mothership', // the main screen's ship (titleScreen.js); Idle: its hover, propellers and plumes
 };
+/** Not board tiles: kept as modelled (no HEX_YAW turn), so their root may carry its own motion (the ship's hover). */
+const NO_TURN = new Set(['Mothership.glb']);
 /**
  * Wasteland pieces: every art/models/hex/WasteHex_<Name>.glb, one model per piece shape. The game matches each to its
  * piece shape by the cells its ground covers (measured here: pieceCells), not by the file name. They carry no
@@ -657,6 +660,11 @@ async function convertGlbOnly(file) {
   const wrap = doc.createNode(`${prefix}_Hex`);
   const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), HEX_YAW);
   for (const n of scene.listChildren()) {
+    if (NO_TURN.has(file)) {
+      scene.removeChild(n);
+      wrap.addChild(n);
+      continue;
+    }
     if (animated.has(n)) throw new Error(`${file}: top-level part ${n.getName()} is animated`);
     n.setTranslation(new THREE.Vector3(...n.getTranslation()).applyQuaternion(qy).toArray());
     n.setRotation(qy.clone().multiply(new THREE.Quaternion(...n.getRotation())).toArray());
@@ -781,13 +789,18 @@ async function writeImage(id, { bytes, use }) {
 }
 
 // ---- run ----
+// ONLY=Mothership.glb,... converts just those .glb-only models and adds their images; everything else stays as it is.
+const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : null;
+if (ONLY) for (const f of ONLY) if (!GLB_ONLY[f]) throw new Error(`ONLY: ${f} is not in GLB_ONLY`);
 fs.mkdirSync(OUT_GLB, { recursive: true });
-fs.rmSync(OUT_TEX, { recursive: true, force: true });
+if (!ONLY) {
+  fs.rmSync(OUT_TEX, { recursive: true, force: true });
+  for (const f of fs.readdirSync(OUT_GLB)) if (f.endsWith('.glb')) fs.rmSync(path.join(OUT_GLB, f));
+}
 fs.mkdirSync(OUT_TEX, { recursive: true });
-for (const f of fs.readdirSync(OUT_GLB)) if (f.endsWith('.glb')) fs.rmSync(path.join(OUT_GLB, f));
 
-const files = fs.readdirSync(SRC).filter((f) => f.toLowerCase().endsWith('.fbx')).sort();
-if (!files.length) throw new Error(`No FBX files in ${SRC}`);
+const files = ONLY ? [] : fs.readdirSync(SRC).filter((f) => f.toLowerCase().endsWith('.fbx')).sort();
+if (!files.length && !ONLY) throw new Error(`No FBX files in ${SRC}`);
 let srcBytes = 0;
 let glbBytes = 0;
 for (const f of files) {
@@ -797,7 +810,7 @@ for (const f of files) {
   glbBytes += r.bytes;
   console.log(`${f.padEnd(26)} -> ${r.name.padEnd(26)} ${(r.bytes / 1e6).toFixed(2).padStart(6)} MB  ${r.tracks} tracks${r.dust ? `, ${r.dust} dust parts removed` : ''}${r.note ? `  (${r.note})` : ''}`);
 }
-for (const f of Object.keys(GLB_ONLY)) {
+for (const f of Object.keys(GLB_ONLY).filter((f) => !ONLY || ONLY.has(f))) {
   srcBytes += fs.statSync(path.join(HEX_SRC, f)).size;
   const r = await convertGlbOnly(f);
   glbBytes += r.bytes;

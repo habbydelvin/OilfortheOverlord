@@ -157,7 +157,10 @@ export class CameraRig {
     // Already zoomed out: more scroll-out climbs past max into the clouds. Past COMMIT the globe opens and the
     // climb finishes by itself. Below it, a pause drains slowly (scrolling again resumes); only a deliberate
     // scroll back in cancels, so a stray reversed momentum tick does not.
-    if (this.onZoomPastMax && (this.#over > 0 || (e.deltaY > 0 && this.goalDistance >= this.maxDistance - 1e-3))) {
+    // allowZoomPastMax false (the guided opening): stop on the far limit. Starting the climb and then
+    // refusing the planet snaps the camera back, which reads as a jitter.
+    const pastLocked = this.allowZoomPastMax && !this.allowZoomPastMax();
+    if (!pastLocked && this.onZoomPastMax && (this.#over > 0 || (e.deltaY > 0 && this.goalDistance >= this.maxDistance - 1e-3))) {
       this.#overAt = now;
       if (e.deltaY < 0) {
         this.#back += Math.abs(units);
@@ -199,6 +202,8 @@ export class CameraRig {
   /** 0–1 build-up of the current overscroll (for the stretch). */
   overscroll = 0;
   onZoomPastMax = null;
+  /** When set, a false return keeps the wheel on maxDistance and skips the climb past it. */
+  allowZoomPastMax = null;
   /** Eased overscroll, 0–1 (drives the stretch and the edge clouds). */
   get stretch() {
     return this.#stretch;
@@ -241,6 +246,8 @@ export class CameraRig {
     this.yaw += (this.goalYaw - this.yaw) * (dt ? damp(9, dt) : 1);
 
     // Overscroll stretch: eases toward the build-up, which drains once the wheel stops.
+    // A lock that turns on mid-climb drops it, instead of finishing a trip the view will refuse.
+    if (this.allowZoomPastMax && !this.allowZoomPastMax() && (this.#over > 0 || this.#stretch > 0)) this.resetOverscroll();
     if (this.#committed) {
       // Committed: keep climbing into the clouds on its own.
       this.#over = Math.min(CameraRig.OVERSCROLL, this.#over + (dt * CameraRig.OVERSCROLL) / 0.6);

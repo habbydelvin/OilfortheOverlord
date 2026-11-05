@@ -244,10 +244,20 @@ export class Hand {
     return this.cards.filter(isForced);
   }
 
-  /** Redraw every card still in hand, Wasteland included; bought (pinned) cards are kept. */
+  /** Cards a reroll replaces: everything but produced Missiles (bought and reward cards included). */
+  get rerollable() {
+    return this.cards.filter((p) => !p.produced).length;
+  }
+
+  /**
+   * Redraw every card still in hand, Wasteland and bought / reward (pinned) cards included. Produced Missiles stay
+   * at the front and don't count toward the redraw. Returns false (nothing changes) when there is nothing to redraw.
+   */
   reroll() {
-    const pinned = this.cards.filter((p) => p.pinned).map((p) => p.terrain);
-    this.deal(this.cards.length, pinned);
+    const count = this.rerollable;
+    if (!count) return false;
+    this.deal(count, []); // no pinned list: every non-produced card is dealt fresh
+    return true;
   }
 
   /** Wasteland cards that still fit somewhere: these block the end of the turn. */

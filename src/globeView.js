@@ -3,6 +3,49 @@ import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { createGlobeBend } from './globeBend.js';
+import { createPaintedGlobe, bakeCube } from './sandPlanet.js';
+
+// The nebula's dust (3D value noise on the view direction), baked into a cube map in rgb.
+const NEBULA_BAKE = /* glsl */ `
+uniform int uFace;
+uniform float uSize;
+vec3 cubeDir() {
+  vec2 st = gl_FragCoord.xy / uSize * 2.0 - 1.0;
+  float s = st.x, t = st.y;
+  if (uFace == 0) return normalize(vec3(1.0, -t, -s));
+  if (uFace == 1) return normalize(vec3(-1.0, -t, s));
+  if (uFace == 2) return normalize(vec3(s, 1.0, t));
+  if (uFace == 3) return normalize(vec3(s, -1.0, -t));
+  if (uFace == 4) return normalize(vec3(s, -t, 1.0));
+  return normalize(vec3(-s, -t, -1.0));
+}
+float h3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+float n3(vec3 p) {
+  vec3 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(h3(i), h3(i + vec3(1, 0, 0)), u.x), mix(h3(i + vec3(0, 1, 0)), h3(i + vec3(1, 1, 0)), u.x), u.y),
+             mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), u.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), u.x), u.y), u.z);
+}
+float f3(vec3 p) {
+  float s = 0.0, a = 0.5;
+  for (int o = 0; o < 5; o++) { s += a * n3(p); p *= 2.03; a *= 0.5; }
+  return s;
+}
+void main() {
+  vec3 d = cubeDir() * 2.2;
+  float warp = f3(d + 5.3);
+  float n = f3(d + warp * 1.6);
+  float dust = smoothstep(0.42, 0.85, n);
+  float dark = smoothstep(0.55, 0.8, f3(d * 2.0 + 11.0)); // darker lanes through the glow
+  vec3 col = mix(vec3(0.16, 0.05, 0.03), vec3(0.42, 0.17, 0.09), smoothstep(0.6, 0.95, n));
+  gl_FragColor = vec4(col * dust * (1.0 - 0.6 * dark), 1.0);
+}
+`;
+const nebulaCubes = new WeakMap(); // renderer -> its baked nebula
+function nebulaCube(renderer) {
+  let cube = nebulaCubes.get(renderer);
+  if (!cube) nebulaCubes.set(renderer, (cube = bakeCube(renderer, NEBULA_BAKE, {}, 512)));
+  return cube;
+}
 import { WHEEL_GAP, wheelUnits } from './controls.js';
 import { L, onLangChange } from './i18n.js';
 import { PLAYER_NODE } from './rivals.js';
@@ -27,6 +70,7 @@ const PERIOD = new THREE.Vector2(COLS * SQ3 * HEX, ROWS * 1.5 * HEX);
 const RADIUS = PERIOD.x / (2 * Math.PI); // one full spin = one period
 
 const FOV = 38;
+export const GLOBE_RADIUS = RADIUS; // the planet's radius (scene units), for things placed around it
 const D_DEFAULT = RADIUS * 4.1;
 const D_MIN = RADIUS * 2.6;
 const D_MAX = RADIUS * 5.2;
@@ -83,11 +127,11 @@ const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
  */
 const HEX_SUB = 8; // cap subdivisions per edge
 const HEX_TOP = 0.93; // cap corner radius (× HEX); the shader scales it out to close the grid gaps
-function hexGeometry() {
+function hexGeometry(sub = HEX_SUB) {
   const top = HEX_TOP * HEX;
   const foot = 0.97 * HEX;
   const depth = -0.75; // deep enough to stay under the deepest crater
-  const R = HEX_SUB;
+  const R = sub;
   const corner = (i, rad) => {
     const a = THREE.MathUtils.degToRad(60 * i - 30);
     return new THREE.Vector2(Math.cos(a) * rad, Math.sin(a) * rad);
@@ -344,7 +388,12 @@ export function clearGlobeConfig() {
 }
 
 /** freeDuringWar: cities can still be visited mid attack phase (the playback keeps running: call tickWar). */
-export function createGlobeView({ renderer, root, factory, playerBuildings, playerHp = () => 5, lastFoe = () => null, onVisit, onDive = () => {}, freeDuringWar = false, onArrive = null, onApproach = null, approachLead = () => 0 }) {
+/**
+ * detail: per-planet quality (the main screen's planet is finer than the War Map's): hexSub (cap subdivisions per
+ * edge), heightRes (baked height map texels), cloudHeight (above the tiles; null = GLOBE.cloudHeight).
+ */
+export function createGlobeView({ renderer, root, factory, playerBuildings, playerHp = () => 5, lastFoe = () => null, onVisit, onDive = () => {}, freeDuringWar = false, onArrive = null, onApproach = null, approachLead = () => 0, detail = {}, painted = false }) {
+  const heightRes = detail.heightRes ?? HEIGHT_RES;
   const dom = renderer.domElement;
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(BG);
@@ -374,10 +423,11 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
   }
 
   // Nebula: dim reddish dust on a huge sphere behind the stars (3D value noise on the view direction).
+  // Its pattern never changes: baked once into a cube map (shared by every globe view), only strength stays live.
   const nebulaMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
-    uniforms: { uStrength: { value: GLOBE.nebula }, uBg: { value: new THREE.Color(BG) } },
+    uniforms: { uStrength: { value: GLOBE.nebula }, uBg: { value: new THREE.Color(BG) }, uNebula: { value: nebulaCube(renderer) } },
     vertexShader: /* glsl */ `
       varying vec3 vDir;
       void main() {
@@ -387,27 +437,10 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     fragmentShader: /* glsl */ `
       uniform float uStrength;
       uniform vec3 uBg;
+      uniform samplerCube uNebula;
       varying vec3 vDir;
-      float h3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
-      float n3(vec3 p) {
-        vec3 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
-        return mix(mix(mix(h3(i), h3(i + vec3(1, 0, 0)), u.x), mix(h3(i + vec3(0, 1, 0)), h3(i + vec3(1, 1, 0)), u.x), u.y),
-                   mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), u.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), u.x), u.y), u.z);
-      }
-      float f3(vec3 p) {
-        float s = 0.0, a = 0.5;
-        for (int o = 0; o < 5; o++) { s += a * n3(p); p *= 2.03; a *= 0.5; }
-        return s;
-      }
       void main() {
-        vec3 d = vDir * 2.2;
-        float warp = f3(d + 5.3);
-        float n = f3(d + warp * 1.6);
-        float dust = smoothstep(0.42, 0.85, n);
-        float dark = smoothstep(0.55, 0.8, f3(d * 2.0 + 11.0)); // darker lanes through the glow
-        vec3 col = mix(vec3(0.16, 0.05, 0.03), vec3(0.42, 0.17, 0.09), smoothstep(0.6, 0.95, n));
-        col *= dust * (1.0 - 0.6 * dark);
-        gl_FragColor = vec4(uBg + col * uStrength, 1.0);
+        gl_FragColor = vec4(uBg + texture(uNebula, vDir).rgb * uStrength, 1.0);
       }`,
   });
   const nebula = new THREE.Mesh(new THREE.SphereGeometry(300, 48, 24), nebulaMat);
@@ -531,7 +564,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
   // ---------- baked terrain height ----------
   // terrainHeight() is rendered once into a tileable texture (one wrap of the plane), then read by the tiles:
   // the vertices for the shape, every pixel for the slope lighting, so detail stays crisp at any Terrain detail.
-  const heightRT = new THREE.WebGLRenderTarget(HEIGHT_RES, HEIGHT_RES, {
+  const heightRT = new THREE.WebGLRenderTarget(heightRes, heightRes, {
     type: THREE.HalfFloatType,
     wrapS: THREE.RepeatWrapping,
     wrapT: THREE.RepeatWrapping,
@@ -593,6 +626,13 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     renderer.setRenderTarget(prev);
   }
 
+  // The main screen's look (setLook): no hex grid (no gaps, no rims, one shade) and a finer sand.
+  const lookUniforms = {
+    uSeamless: { value: 0 },
+    uDetail: { value: 0 },
+    uSeamTint: { value: TILE.clone().multiplyScalar(0.98) },
+  };
+  const look = { seamless: false, detail: 0, sandScale: null, hidePlanet: false };
   const tileMat = bend.patch(
     new THREE.MeshStandardMaterial({ map: sand, color: SAND.tint, vertexColors: true, roughness: SAND.roughness, metalness: 0 }),
   );
@@ -604,7 +644,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       shader.uniforms.uHexScale = { value: (1 - GLOBE.gridLine) / 0.93 };
       shader.uniforms.uRegionStrength = { value: GLOBE.regionStrength };
       shader.uniforms.uRegionScale = { value: Math.round(GLOBE.regionScale) };
-      Object.assign(shader.uniforms, terrainUniforms);
+      Object.assign(shader.uniforms, terrainUniforms, lookUniforms);
       tileMat.userData.shader = shader;
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nuniform float uSandRepeat;\nuniform float uHexScale;')
@@ -636,13 +676,20 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
         .replace('#include <fog_vertex>', '#include <fog_vertex>\nvMapUv = globePlane.xz / uSandRepeat;\nvRegion = globePlane.xz / uGlobePeriod;');
       // Large regions across the planet: pale dusty highlands, dark rust lowlands, greyish salt flats.
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', `#include <common>\nvarying vec2 vRegion;\nvarying vec3 vTuV, vTvV, vUpV;\nvarying float vCap;\nuniform float uRegionStrength, uRegionScale;\nuniform vec2 uGlobePeriod;\n${PERIODIC_NOISE}\n${HEIGHT_READ_GLSL}`)
+        .replace('#include <common>', `#include <common>\nvarying vec2 vRegion;\nvarying vec3 vTuV, vTvV, vUpV;\nvarying float vCap;\nuniform float uRegionStrength, uRegionScale;\nuniform float uSeamless, uDetail;\nuniform vec3 uSeamTint;\nuniform vec2 uGlobePeriod;\n${PERIODIC_NOISE}\n${HEIGHT_READ_GLSL}`)
+        // Seamless look (main screen): one even tint instead of each hex's own shade and its darker rim.
+        .replace(
+          '#include <color_fragment>',
+          `#if defined( USE_COLOR ) || defined( USE_INSTANCING_COLOR )
+            diffuseColor.rgb *= mix(vColor.rgb, uSeamTint, uSeamless);
+          #endif`,
+        )
         .replace(
           '#include <normal_fragment_begin>',
           `#include <normal_fragment_begin>
           if (vCap > 0.5 && uTerrainDepth > 0.0) {
             // Slope from the neighbouring texels, in height per plane unit; lit steeper than it is so relief reads.
-            vec2 px = vec2(1.0 / ${HEIGHT_RES}.0);
+            vec2 px = vec2(1.0 / ${heightRes}.0);
             float gx = (heightAt(vRegion + vec2(px.x, 0.0)) - heightAt(vRegion - vec2(px.x, 0.0))) / (2.0 * px.x * uGlobePeriod.x);
             float gz = (heightAt(vRegion + vec2(0.0, px.y)) - heightAt(vRegion - vec2(0.0, px.y))) / (2.0 * px.y * uGlobePeriod.y);
             normal = normalize(vUpV - 2.2 * (gx * vTuV + gz * vTvV));
@@ -661,6 +708,14 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
             float lum = dot(c, vec3(0.299, 0.587, 0.114));
             c = mix(c, vec3(lum) * vec3(1.02, 1.02, 1.05) * 1.12, smoothstep(0.58, 0.68, salt) * 0.8);
             diffuseColor.rgb = mix(diffuseColor.rgb, c, uRegionStrength);
+            // Detail (main screen): the sand again at a finer scale, turned, so close up the ground has grain.
+            if (uDetail > 0.0) {
+              vec2 duv = mat2(0.8, -0.6, 0.6, 0.8) * vMapUv * 4.3 + 0.37;
+              vec3 d = texture2D(map, duv).rgb;
+              vec3 d2 = texture2D(map, mat2(0.28, 0.96, -0.96, 0.28) * vMapUv * 11.0 + 0.71).rgb;
+              float g = dot(d, vec3(0.333)) * 0.65 + dot(d2, vec3(0.333)) * 0.35;
+              diffuseColor.rgb *= mix(1.0, 0.62 + 0.75 * g, uDetail);
+            }
             // Crater floors and canyon beds a shade darker, ridge tops a little lighter.
             if (uTerrainDepth > 0.0) {
               float hn = heightAt(vRegion) / uTerrainDepth;
@@ -671,7 +726,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     };
     tileMat.customProgramCacheKey = () => 'globe-bend-sand';
   }
-  const tiles = new THREE.InstancedMesh(hexGeometry(), tileMat, cells.length);
+  const tiles = new THREE.InstancedMesh(hexGeometry(detail.hexSub), tileMat, cells.length);
   tiles.frustumCulled = false;
   const baseColors = [];
   {
@@ -783,6 +838,16 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
   const clouds = new THREE.Mesh(new THREE.SphereGeometry(1, 128, 96), cloudMat);
   clouds.renderOrder = 3; // over the fog billows
   scene.add(clouds);
+
+  // painted: the planet painted like the main screen's (sandPlanet.js), one sphere with the hex lines drawn on it,
+  // in place of the hex tiles, their core, clouds and air. The cities, fog, picking and scrolling are unchanged.
+  const paint = painted
+    ? createPaintedGlobe({ renderer, radius: RADIUS, bend: bend.uniforms, cities: terrainUniforms, maxCities: MAX_CITIES })
+    : null;
+  if (paint) {
+    scene.add(paint.group);
+    for (const o of [tiles, core, clouds, atmo]) o.visible = false;
+  }
 
   // ---------- fog of war ----------
   // The board's fog-of-war billows (same shading and colour, fogOfWar.js) blanketing every hex but the cities'.
@@ -1283,18 +1348,29 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     // Live tuning: sand scale, fog look (colour and shading follow the board fog's settings).
     const sandShader = tileMat.userData.shader;
     if (sandShader) {
-      sandShader.uniforms.uSandRepeat.value = GLOBE.sandScale;
-      sandShader.uniforms.uHexScale.value = (1 - GLOBE.gridLine) / 0.93; // tile tops are 0.93 of a hex
+      sandShader.uniforms.uSandRepeat.value = look.sandScale ?? GLOBE.sandScale;
+      // Tile tops are 0.93 of a hex; seamless, they reach a little past it so neighbours overlap (no gap).
+      sandShader.uniforms.uHexScale.value = look.seamless ? 1.02 / 0.93 : (1 - GLOBE.gridLine) / 0.93;
       sandShader.uniforms.uRegionStrength.value = GLOBE.regionStrength;
       sandShader.uniforms.uRegionScale.value = Math.round(GLOBE.regionScale);
     }
-    {
+    if (!paint) {
       terrainUniforms.uTerrainDepth.value = GLOBE.terrainDepth;
       bakeTerrain(); // only re-renders when a setting or a city changed
     }
     if (fogMesh) fogMesh.visible = GLOBE.fog !== 'Off';
-    clouds.visible = GLOBE.clouds !== 'Off' && GLOBE.cloudOpacity > 0;
-    clouds.scale.setScalar(RADIUS + GLOBE.cloudHeight);
+    clouds.visible = !paint && GLOBE.clouds !== 'Off' && GLOBE.cloudOpacity > 0;
+    paint?.update(dt, {
+      gridLine: GLOBE.gridLine,
+      cloudsOn: GLOBE.clouds !== 'Off' && GLOBE.cloudOpacity > 0,
+      cloudOpacity: Math.min(1, GLOBE.cloudOpacity / GLOBE_DEFAULTS.cloudOpacity),
+      cloudClear: GLOBE.cloudCityClear,
+    });
+    // The main screen paints its own planet (sandPlanet.js): the hex world, its clouds, air and cities step aside.
+    if (look.hidePlanet) {
+      for (const o of [tiles, clouds, atmo, nodeRoot, fogMesh]) if (o) o.visible = false;
+    }
+    clouds.scale.setScalar(RADIUS + (detail.cloudHeight ?? GLOBE.cloudHeight));
     const cu = cloudMat.uniforms;
     cu.uTime.value = performance.now() / 1000;
     cu.uOpacity.value = GLOBE.cloudOpacity;
@@ -1975,6 +2051,12 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       if (war) war.paused = on;
     },
     renderLabels: () => renderLabels(),
+    /** Main screen look: { seamless (no hex grid), detail (0-1 finer sand grain), sandScale (null = GLOBE's) }. */
+    setLook(next = {}) {
+      Object.assign(look, { seamless: false, detail: 0, sandScale: null, hidePlanet: false }, next);
+      lookUniforms.uSeamless.value = look.seamless ? 1 : 0;
+      lookUniforms.uDetail.value = look.detail;
+    },
     scene,
     camera,
     enter,

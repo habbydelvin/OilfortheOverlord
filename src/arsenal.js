@@ -14,17 +14,17 @@ export const OVERTIME_OIL = 2;
  * Simulated for real in the attack phase (interceptSim.js).
  */
 export const INTERCEPT_DEFAULTS = {
-  range: 3, // cells: a network defends missiles aimed inside this ring
-  reach: 14, // world units: how far into the sky its gun reaches (3D)
+  range: 8, // cells: a network defends missiles aimed inside this ring
+  reach: 18, // world units: how far into the sky its gun reaches (3D)
   upkeep: 2, // oil per season per network, to keep it manned (it never runs out of rounds)
   turnSpeed: 4, // rad/s the turret swings
-  rate: 33, // rounds per second (one stream)
+  rate: 46, // rounds per second (one stream)
   roundSpeed: 24, // world units per second
-  spread: 0.33, // rad of scatter per round
-  hitRadius: 0.19, // a round this close to a missile hits it
+  spread: 0.23, // rad of scatter per round
+  hitRadius: 0.15, // a round this close to a missile hits it
   damage: 2, // HP per hit
-  hpMissile: 3,
-  hpWarhead: 6,
+  hpMissile: 2,
+  hpWarhead: 4,
   hitChanceEst: 0.14, // the rival AI's planning guess: share of rounds that hit
 };
 const INTERCEPT_KEY = 'oto.intercept';
@@ -38,7 +38,7 @@ try {
 }
 export const INTERCEPT_PARAMS = [
   { group: 'Intercept' },
-  { key: 'range', label: 'Coverage (cells)', min: 1, max: 5, step: 1, hint: '1 = adjacent hexes only' },
+  { key: 'range', label: 'Coverage (cells)', min: 1, max: 8, step: 1, hint: '1 = adjacent hexes only' },
   { key: 'chance', label: 'Stop chance', min: 0.1, max: 1, step: 0.05 },
 ];
 export const saveIntercept = () => localStorage.setItem(INTERCEPT_KEY, JSON.stringify(INTERCEPT));

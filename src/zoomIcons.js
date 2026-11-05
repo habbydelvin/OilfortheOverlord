@@ -5,8 +5,8 @@ import { ICONS } from './tiles.js';
 /**
  * Map icons: when the camera zooms out, a resource icon floats over each tile
  * (food / oil / manpower / missile, a crown on the Capital, a ruin over Pre-war Ruins).
- * Boosters (Water Pump, Oasis, Tar Pit, Refinery) get their own icon with a live "+n" tag: what they add to their
- * neighbours this season (for the Refinery, the extra oil its multiplier makes).
+ * Hover a tile while the icons are up and the hover card's season line floats above that icon, on top of every
+ * other map icon. It hides when the pointer leaves.
  * They fade out as you zoom back in. Tunable in Game Debug → Map icons.
  */
 export const ICON_DEFAULTS = {
@@ -138,9 +138,20 @@ export class ZoomIcons {
     this.camera = camera;
     this.rig = rig;
     this.cfg = cfg;
-    this.els = new Map(); // cell key -> { el, terrain, tag }
+    this.els = new Map(); // cell key -> { el, terrain, px, py }
     this.v = new THREE.Vector3();
-    this.boosts = new Map(); // booster cell key -> what it adds this season (computeEconomy's `boosts`)
+    this.boosts = new Map(); // booster cell key -> positive total, for the grey "adding nothing" state
+    this.yields = new Map(); // cell key -> seasonParts, the hover card's season line
+    this.yield = document.createElement('div');
+    this.yield.className = 'map-yield hidden';
+    this.yieldBody = document.createElement('div');
+    this.yieldBody.className = 'map-yield-body';
+    this.yield.appendChild(this.yieldBody);
+    this.yieldBody.addEventListener('animationend', (e) => this.#yieldSettled(e));
+    this.layer.appendChild(this.yield);
+    this._yieldKey = '';
+    this._yieldNext = null;
+    this._yieldGen = 0;
   }
 
   /** The boosters' current bonuses, from the latest economy (call whenever it's recalculated). */
@@ -148,7 +159,13 @@ export class ZoomIcons {
     this.boosts = boosts ?? new Map();
   }
 
-  update(grid) {
+  /** Season parts for every tile, from the latest economy (call whenever it's recalculated). */
+  setYields(yields) {
+    this.yields = yields ?? new Map();
+  }
+
+  /** `hover` is the cell under the pointer, `[x, z]`, or null. */
+  update(grid, hover = null) {
     const c = this.cfg;
     const near = Math.min(c.fadeNear, c.fadeFar);
     const far = Math.max(c.fadeNear, c.fadeFar);
@@ -178,27 +195,15 @@ export class ZoomIcons {
         const el = document.createElement('div');
         el.className = cell.terrain === 'ruins' ? 'map-icon map-icon-ruins' : 'map-icon';
         el.innerHTML = html;
-        // Boosters carry a "+n" tag with the resource they add (filled in below).
-        const booster = BOOSTERS[cell.terrain];
-        let tag = null;
-        if (booster) {
-          el.classList.add('map-icon-boost');
-          tag = document.createElement('span');
-          tag.className = 'map-boost';
-          tag.innerHTML = `<b></b>${ICONS[booster.res]}`;
-          el.appendChild(tag);
-        }
+        if (BOOSTERS[cell.terrain]) el.classList.add('map-icon-boost');
         this.layer.appendChild(el);
-        rec = { el, terrain: cell.terrain, tag };
+        rec = { el, terrain: cell.terrain };
         this.els.set(k, rec);
       }
-      if (rec.tag) {
+      if (BOOSTERS[cell.terrain]) {
         const amount = Math.round(this.boosts.get(k) ?? 0);
-        if (rec.amount !== amount) {
-          rec.amount = amount;
-          rec.tag.firstChild.textContent = `+${amount}`;
-          rec.el.classList.toggle('unused', amount === 0); // boosting nothing right now: greyed like an idle building
-        }
+        const unused = amount === 0;
+        if (rec.el._unused !== unused) rec.el.classList.toggle('unused', (rec.el._unused = unused));
       }
       // An idle building (no workers, greyed out on the board) shows a greyed-out icon too.
       const idle = cell.mesh?.userData.idle === true;
@@ -207,6 +212,8 @@ export class ZoomIcons {
       this.v.set(pos.x, c.height, pos.z).project(this.camera);
       const px = (this.v.x * 0.5 + 0.5) * w;
       const py = (-this.v.y * 0.5 + 0.5) * h;
+      rec.px = px;
+      rec.py = py;
       const tf = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px) translate(-50%, -50%)`;
       if (rec.el._tf !== tf) rec.el.style.transform = rec.el._tf = tf;
     }
@@ -215,5 +222,121 @@ export class ZoomIcons {
       rec.el.remove();
       this.els.delete(k);
     }
+    this.#placeYield(hover, alpha > 0);
+  }
+
+  /** Season total above the hovered tile. One element, painted over every map icon. */
+  #placeYield(hover, iconsOn) {
+    const pop = this.yield;
+    const k = hover ? `${hover[0]},${hover[1]}` : '';
+    const parts = iconsOn ? this.yields.get(k) : null;
+    const show = Boolean(parts?.length);
+    const rec = show ? this.els.get(k) : null;
+    const at = show ? (rec?.px != null ? rec : this.#pointAt(hover[0], hover[1])) : null;
+    const open = !pop.classList.contains('hidden');
+    const leaving = pop.classList.contains('out');
+
+    // Same icon, still up: keep it there. Do not restart the spring.
+    if (show && open && k === this._yieldKey && !leaving) {
+      this.#yieldContent(k);
+      this.#yieldPos(at);
+      return;
+    }
+    // Pointer came back before the shrink finished.
+    if (show && k === this._yieldKey && leaving) {
+      this._yieldNext = null;
+      this.#yieldContent(k);
+      this.#yieldPos(at);
+      this.#yieldIn();
+      return;
+    }
+    if (show && !open) {
+      this._yieldNext = null;
+      this._yieldKey = k;
+      this.#yieldContent(k);
+      this.#yieldPos(at);
+      this.#yieldIn();
+      return;
+    }
+    if (show && leaving) {
+      this._yieldNext = { k, at }; // shrink into the old one, then spring from the new
+      return;
+    }
+    if (!show) {
+      this._yieldNext = null;
+      if (open && !leaving) this.#yieldOut();
+      return;
+    }
+    this._yieldNext = { k, at };
+    this.#yieldOut();
+  }
+
+  #yieldContent(k) {
+    const parts = this.yields.get(k) ?? [];
+    const sig = parts.map((p) => `${p.n}:${p.res}`).join('|');
+    const pop = this.yield;
+    if (pop._sig === sig) return;
+    pop._sig = sig;
+    this.yieldBody.innerHTML = parts
+      .map((p) => `<span class="map-yield-part"><b>${p.n > 0 ? '+' : ''}${p.n}</b>${ICONS[p.res]}</span>`)
+      .join('');
+    pop.classList.toggle('unused', parts.every((p) => p.n === 0));
+  }
+
+  /** Screen point of a cell that has no map icon, using the same projection as the icons. */
+  #pointAt(x, z) {
+    const pos = hexToWorld(x, z);
+    this.v.set(pos.x, this.cfg.height, pos.z).project(this.camera);
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    return { px: (this.v.x * 0.5 + 0.5) * w, py: (-this.v.y * 0.5 + 0.5) * h };
+  }
+
+  #yieldPos(rec) {
+    const tf = `translate(${rec.px.toFixed(1)}px, ${rec.py.toFixed(1)}px) translate(-50%, -100%) translateY(calc(var(--map-ico) * -0.725 - 4px))`;
+    if (this.yield._tf !== tf) this.yield.style.transform = this.yield._tf = tf;
+  }
+
+  #yieldIn() {
+    const pop = this.yield;
+    this._yieldGen += 1;
+    pop.dataset.gen = String(this._yieldGen);
+    pop.classList.remove('hidden', 'out');
+    pop.classList.remove('in');
+    void pop.offsetWidth; // let the class removal land before the spring starts
+    pop.classList.add('in');
+  }
+
+  #yieldOut() {
+    const pop = this.yield;
+    this._yieldGen += 1;
+    pop.dataset.gen = String(this._yieldGen);
+    pop.classList.remove('in');
+    void pop.offsetWidth;
+    pop.classList.add('out');
+  }
+
+  #yieldSettled(e) {
+    if (e.target !== this.yieldBody) return;
+    if (e.animationName !== 'map-yield-in' && e.animationName !== 'map-yield-out') return;
+    if (this.yield.dataset.gen !== String(this._yieldGen)) return; // a newer spring replaced this one
+    const pop = this.yield;
+    if (e.animationName === 'map-yield-in') {
+      pop.classList.remove('in'); // hold at the resting size; the spring is done
+      return;
+    }
+    pop.classList.remove('out');
+    const next = this._yieldNext;
+    this._yieldNext = null;
+    if (!next) {
+      pop.classList.add('hidden');
+      this._yieldKey = '';
+      pop._sig = '';
+      return;
+    }
+    this.#yieldContent(next.k);
+    this.#yieldPos(next.at);
+    this._yieldKey = next.k;
+    this.#yieldIn();
   }
 }
