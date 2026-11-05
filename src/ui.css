@@ -3869,6 +3869,10 @@ body.rival-view #btnWarMap {
 .float-btn.hidden {
   display: none;
 }
+/* Touch only: with a mouse, R / right-click rotate and C recenters. */
+body:not(.touch) .float-btn {
+  display: none;
+}
 #btnRotate {
   left: calc((100% - var(--panel-w)) / 2 + 40px);
 }

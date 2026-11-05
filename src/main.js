@@ -6103,7 +6103,7 @@ function ghostPrice(i) {
 /** The rotate button over the board: there while a piece of 2+ cells is held (touch has no R key). */
 function updateRotateButton() {
   const p = hand.piece;
-  const multi = Boolean(p && !ACTIONS[p.terrain] && pieceOffsets(p).length > 1);
+  const multi = Boolean(p && (ACTIONS[p.terrain] ? ACTIONS[p.terrain].size : pieceOffsets(p).length > 1)); // (the Wrecking Crew's area turns too)
   $('btnRotate').classList.toggle('hidden', !multi || view !== 'board');
 }
 
