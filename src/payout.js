@@ -117,19 +117,11 @@ export class Payout {
           (tile.zero ? '<div class="row zero"><b>0</b></div>' : '') +
           // Raider camps produce nothing; they just stir unrest.
           (tile.terrain === 'raider' || tile.terrain === 'bandit_raider' ? `<div class="row neg" style="--c:#e0533f"><b>${L('unrest', '动乱')}</b></div>` : '');
-      let el = null;
-      if (rows) {
-        el = document.createElement('div');
-        el.className = 'floater';
-        el.innerHTML = rows;
-        el.style.opacity = 0;
-        this.layer.appendChild(el);
-      }
       // A second trigger of the same tile waits for its first hop to land, and pushes the rest back.
       const prev = this.items[this.items.length - 1];
       if (!tile.finale && prev && prev.tile.mesh === tile.mesh) delay += c.hopDuration;
       const start = tile.finale ? finaleAt + delay + (i - (tiles.length - finale.length)) * FINALE_GAP : i * stagger + delay;
-      this.items.push({ tile, el, start, fired: false });
+      this.items.push({ tile, rows, el: null, pos: hexToWorld(tile.x, tile.z), start, fired: false, landed: false });
     });
     if (!this.items.length) this.#finish();
   }
@@ -169,14 +161,16 @@ export class Payout {
     this.time += dt;
     const w = window.innerWidth;
     const h = window.innerHeight;
-    let alive = false;
+    let remaining = 0;
+    const at = this.anchor?.();
 
     for (const it of this.items) {
       const t = this.time - it.start;
       if (t < 0) {
-        alive = true;
+        this.items[remaining++] = it;
         continue;
       }
+      let alive = false;
 
       // Tile hop. Every tile's ground surface sits at y = 0 (its pivot), so squashing about
       // the pivot flattens it on the sand instead of sinking it, whatever its height.
@@ -186,9 +180,10 @@ export class Payout {
         m.scale.set(sx, sy, sx);
         m.position.y = y;
         alive = true;
-      } else {
+      } else if (!it.landed) {
         m.scale.set(1, 1, 1);
         m.position.y = 0;
+        it.landed = true;
       }
 
       if (!it.fired && t >= c.labelDelay) {
@@ -197,13 +192,26 @@ export class Payout {
       }
 
       // Floating label: punch in, drift up, fade out.
-      if (it.el) {
+      if (it.rows) {
         const a = t - c.labelDelay;
         if (a < 0) {
-          alive = true;
+          this.items[remaining++] = it;
           continue;
         }
-        if (a < c.labelLife) alive = true;
+        if (a >= c.labelLife) {
+          it.el?.remove();
+          it.el = null;
+          it.rows = '';
+          if (alive) this.items[remaining++] = it;
+          continue;
+        }
+        alive = true;
+        if (!it.el) {
+          it.el = document.createElement('div');
+          it.el.className = 'floater';
+          it.el.innerHTML = it.rows;
+          this.layer.appendChild(it.el);
+        }
         const p = Math.min(a / c.labelLife, 1);
         const pt = c.labelPopTime;
         const scale =
@@ -212,14 +220,13 @@ export class Payout {
             : lerp(c.labelPop, 1, Math.min((a - pt) / 0.2, 1));
         const rise = c.labelStartY + c.labelRise * easeOut(p);
         // anchor(): a screen point every label rises from instead (the city on the War Map), or null for the board.
-        const at = this.anchor?.();
         let px;
         let py;
         if (at) {
           px = at[0];
           py = at[1] - 60 - (rise - c.labelStartY) * 40;
         } else {
-          const pos = hexToWorld(it.tile.x, it.tile.z); // not `w`: that is the screen width used just below
+          const pos = it.pos;
           this.v.set(pos.x, rise, pos.z).project(this.camera);
           px = (this.v.x * 0.5 + 0.5) * w;
           py = (-this.v.y * 0.5 + 0.5) * h;
@@ -230,8 +237,11 @@ export class Payout {
         const fs = Math.min(c.fadeStart, 0.999);
         it.el.style.opacity = p > fs ? 1 - (p - fs) / (1 - fs) : 1;
       }
+      // A label-less entry must still fire even if labelDelay is tuned beyond the hop duration.
+      if (alive || !it.fired) this.items[remaining++] = it;
     }
 
-    if (!alive) this.#finish();
+    this.items.length = remaining;
+    if (!remaining) this.#finish();
   }
 }

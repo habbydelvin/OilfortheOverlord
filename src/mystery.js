@@ -8,8 +8,12 @@ export const MYSTERY_POOL = [
   ['refinery', 2],
   ['pump', 2],
   ['ruins', 4], // Pre-war Ruins: build next to them to clear and refill your hand
-  ['missile', 1], // Unexploded Missile: an old Missile Magazine surfaces (and stays) and fires at your nearest building
+  ['missile', 1], // Unexploded Missile: an old Missile Magazine surfaces (and stays); its missile fires or is recovered
 ];
+
+/** Chance an Unexploded Missile's silo fires at you; otherwise its missile is recovered into your stockpile. */
+export const SILO_FIRE_CHANCE = 0.5;
+export const siloFires = (rand = Math.random) => rand() < SILO_FIRE_CHANCE;
 
 /**
  * Sites per distance band, filled from the inside out. A band covers plots (7-hex flowers, grid.js) whose distance

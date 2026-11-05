@@ -4,6 +4,7 @@
  * fill (OilFlights), and only fills it on arrival: a slosh, a flash, and a knock that rises as the tribute fills.
  */
 import { ICONS } from './tiles.js';
+import { payoutPulse } from './payoutAnimations.js';
 
 const MAX_BARRELS = 20;
 const FLIGHT = 0.7; // seconds from the tile to the barrel
@@ -41,8 +42,8 @@ export class BarrelGauge {
       s.oil.style.height = `${(level * 100).toFixed(1)}%`;
       s.el.classList.toggle('full', level === 1);
       if (hit && amount > before) {
-        restart(s.el, 'hit');
-        if (filled) restart(s.el, 'filled');
+        payoutPulse(s.el, filled ? 'filled' : 'hit');
+        payoutPulse(s.oil, filled ? 'fullGlow' : 'glow');
       }
     });
     this.el.classList.toggle('met', amount >= quota && quota > 0);
@@ -65,13 +66,6 @@ export class BarrelGauge {
   }
 }
 
-/** Retrigger a one-shot CSS animation class. */
-function restart(el, cls) {
-  el.classList.remove(cls);
-  void el.offsetWidth;
-  el.classList.add(cls);
-}
-
 /**
  * Oil barrels flying from the board to the gauge. launch() sends a tile's oil; each barrel adds its share to the
  * gauge when it lands (onLand(amountShownNow, slotElement)).
@@ -79,6 +73,8 @@ function restart(el, cls) {
 export class OilFlights {
   #flights = [];
   #idle = [];
+  #pool = [];
+  #targets = new Map();
 
   constructor(layer, gauge, onLand) {
     this.layer = layer;
@@ -101,10 +97,14 @@ export class OilFlights {
       const share = Math.floor(oil / n) + (k < oil % n ? 1 : 0);
       if (!share) continue;
       total += share;
-      const el = document.createElement('div');
-      el.className = 'oil-flight';
-      el.innerHTML = ICONS.oil;
+      let el = this.#pool.pop();
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'oil-flight';
+        el.innerHTML = ICONS.oil;
+      }
       el.style.opacity = '0';
+      el.style.transform = '';
       this.layer.append(el);
       this.#flights.push({ el, from, value: total, age: -k * STAGGER, side: (k % 2 ? 1 : -1) * (20 + k * 9) });
     }
@@ -112,20 +112,30 @@ export class OilFlights {
 
   /** Every frame. */
   update(dt) {
+    // Read each moving HUD destination once, before flight styles or landing callbacks write to the DOM.
+    const targets = this.#targets;
+    targets.clear();
+    for (const f of this.#flights) {
+      f.age += dt;
+      if (f.age < 0 || f.age >= FLIGHT) continue;
+      const slot = this.gauge.slotFor(f.value);
+      if (!targets.has(slot)) {
+        const r = slot.getBoundingClientRect();
+        targets.set(slot, [r.left + r.width / 2, r.top + r.height / 2]);
+      }
+      f.to = targets.get(slot);
+    }
     for (let i = this.#flights.length - 1; i >= 0; i--) {
       const f = this.#flights[i];
-      f.age += dt;
       if (f.age < 0) continue;
-      // Aim at the barrel this share fills, read every frame (the HUD may move).
-      const r = this.gauge.slotFor(f.value).getBoundingClientRect();
-      const to = [r.left + r.width / 2, r.top + r.height / 2];
       const t = Math.min(1, f.age / FLIGHT);
       if (t >= 1) {
-        f.el.remove();
+        this.#release(f.el);
         this.#flights.splice(i, 1);
         this.onLand(f.value);
         continue;
       }
+      const to = f.to;
       // An arc: up and a little sideways first, then a dive into the barrel (accelerating).
       const e = t * t * (3 - 2 * t) * 0.35 + t * t * 0.65;
       const [x0, y0] = f.from;
@@ -138,6 +148,12 @@ export class OilFlights {
       f.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -50%) scale(${s.toFixed(3)}) rotate(${(t * 200 * Math.sign(f.side)).toFixed(0)}deg)`;
     }
     if (!this.#flights.length) this.#flushIdle();
+  }
+
+  #release(el) {
+    el.remove();
+    // Bound retained, detached DOM only; there is no limit on visible flights.
+    if (this.#pool.length < 256) this.#pool.push(el);
   }
 
   /** Run `cb` once every barrel in the air has landed (or immediately if none). */
@@ -154,7 +170,7 @@ export class OilFlights {
   /** Land everything now (the payout was skipped). */
   finish() {
     for (const f of this.#flights) {
-      f.el.remove();
+      this.#release(f.el);
       this.onLand(f.value);
     }
     this.#flights = [];
@@ -163,8 +179,9 @@ export class OilFlights {
 
   /** Drop everything without landing it (a reset). */
   clear() {
-    for (const f of this.#flights) f.el.remove();
+    for (const f of this.#flights) this.#release(f.el);
     this.#flights = [];
+    this.#targets.clear();
     this.#idle.length = 0;
   }
 }

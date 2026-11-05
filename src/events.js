@@ -32,7 +32,7 @@ const now = (n, unit, zhUnit) => {
  *            info = { quota, camps, sites, settlements, cliffs } (see eventInfo in main.js)
  * when:    (info) => false to skip this event in the draw (nothing for it to act on)
  * apply:   one-off effect when the event starts: (ctx) => report line or ''
- *            ctx = { turn, p, info, spawnRaider, clearAllCamps, prospect, earthquake, showOfForce }
+ *            ctx = { turn, p, info, spawnRaider, clearAllCamps, prospect, earthquake }
  * choices: [{ label, text, say, retort, mods?, apply?, disabled?(info) }], the player picks one
  *
  * Dialogue (the Overlord introduces every event, see dialogue.js):
@@ -250,38 +250,6 @@ export const EVENTS = {
   },
   // (The Overlord's Offer event was replaced by the yearly tribute target, see targets.js.)
 
-  showOfForce: {
-    get name() {
-      return L('Show of Force', '武力示威');
-    },
-    kind: 'pressure',
-    weight: 1,
-    text: () =>
-      L(
-        'Your diggers uncover Pre-war Ruins. A dormant missile inside wakes and strikes one of your buildings.',
-        '你的挖掘队挖出了战前遗迹。里面一枚沉睡的导弹苏醒过来，击中了你的一座建筑。',
-      ),
-    when: (info) => info.buildings > 0 && info.open > 0,
-    get lines() {
-      return [
-        L(
-          'Your diggers struck something old beneath the sand. Pre-war ruins, and a silo.',
-          '你的挖掘队在沙下挖到了古老的东西。战前遗迹，还有一座导弹井。',
-        ),
-        L(
-          'Its last missile still knows where to fly. Consider it a reminder of what I keep in mine.',
-          '它的最后一枚导弹依然记得该飞往何处。就当是提醒你，我自己的导弹井里藏着什么。',
-        ),
-      ];
-    },
-    get replies() {
-      return [
-        { say: L('Stop it! Disarm it!', '快阻止它！拆掉它！'), retort: L('Too late, Overseer. Watch the sky.', '太迟了，总督。看看天上吧。') },
-        { say: L('Can you stop it?', '你能阻止它吗？'), retort: L("I could. Consider why I don't.", '我能。好好想想我为什么不。') },
-      ];
-    },
-    apply: ({ showOfForce }) => showOfForce(),
-  },
   drought: {
     get name() {
       return L('Drought', '干旱');

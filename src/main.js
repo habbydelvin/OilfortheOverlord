@@ -26,7 +26,7 @@ import { setupCrt } from './crt.js';
 import { CrtPass } from './crtPass.js';
 import { BoostHints } from './boostHints.js';
 import { setupLegend } from './legend.js';
-import { Mysteries } from './mystery.js';
+import { Mysteries, siloFires } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
 import { computeEconomy, computeEconomyIf, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS, rebelsRise, WORKERS } from './economy.js';
@@ -38,6 +38,8 @@ import { CAPITAL_HP, resolve as resolveWar, applyToRival, footprint, spreadFrom 
 import { chooseStrikes, noteAttacks, idleOf } from './rivalAI.js';
 import { INTERCEPT, INTERCEPT_DEFAULTS, INTERCEPT_PARAMS, saveIntercept, clearIntercept, DECOY, BOOST, isBoosted } from './arsenal.js';
 import { Payout, tileHop } from './payout.js';
+import { PayoutHud } from './payoutHud.js';
+import { payoutPulse } from './payoutAnimations.js';
 import { EVENTS, KIND_LABEL, drawEvent } from './events.js';
 import { Dialogue } from './dialogue.js';
 import { TIERS, TIER_ORDER, REWARDS, LOW_STREAK_LIMIT, rollReward, scaledQuota } from './targets.js';
@@ -300,10 +302,11 @@ hand.perf = perf;
 const $ = (id) => document.getElementById(id);
 // The tribute gauge (barrels that fill with oil) and the oil flying into it at payout.
 const gauge = new BarrelGauge($('quotaBarrels'));
+const payoutHud = new PayoutHud(drawOil, drawStore);
 const seasonClock = new SeasonClock($('seasonClock'), latch); // the four-season dial right of the tribute plate
 setupCrt($('crt')); // the old CRT monitor the world is seen through
 const oilFlights = new OilFlights(document.body, gauge, (value) => {
-  if (value <= gauge.amount) return; // the season already settled (a skipped payout): nothing to add
+  if (value <= payoutHud.oilAmount(gauge.amount)) return; // includes arrivals already queued this frame
   showOil(value, true);
   barrel(Math.min(1, value / Math.max(1, turn.quota)));
 });
@@ -1102,8 +1105,7 @@ function followCamera(pos, distance, rate) {
 }
 
 /**
- * A missile launches from the ground at `spot` and hits `target` (Show of Force's ruins, and the old Missile
- * Magazine of a "?" site). silo: a Missile Magazine cell on the spot, which opens and fires it (otherwise the
+ * A missile launches from the ground at `spot` and hits `target` (the old Missile Magazine of a "?" site). silo: a Missile Magazine cell on the spot, which opens and fires it (otherwise the
  * missile stands upright on the spot). Resolves with the names of the tiles lost, or null if the run was reset meanwhile.
  */
 async function groundStrike(spot, target, lostText = (l) => L(`The silo's missile destroyed your ${l}`, `发射井的导弹摧毁了你的${l}`), silo = null) {
@@ -1157,11 +1159,12 @@ function nearestBuilding(x, z) {
 
 /**
  * A "?" site was an old Missile Magazine with a missile still in it (an Unexploded Missile). The magazine surfaces on
- * the site and stays there, a working one like one you build; it opens and fires at `target` (default: your nearest
- * building). With nothing to hit, the missile gets stuck in the silo's mouth and a second later blows up there,
- * harming nothing.
+ * the site and stays there, a working one like one you build. A coin flip (siloFires) decides the rest: it opens and
+ * fires at `target` (default: your nearest building), or its missile is recovered into your stockpile. Firing with
+ * nothing to hit, the missile gets stuck in the silo's mouth and a second later blows up there, harming nothing.
  */
-async function unexplodedMissile(site, target = nearestBuilding(site.x, site.z)) {
+async function unexplodedMissile(site, target = nearestBuilding(site.x, site.z), fires = siloFires()) {
+  if (!fires) return recoveredMissile(site);
   const run = runId;
   if (target) {
     eventOpen = true; // locked through the magazine's landing, then the strike
@@ -1190,6 +1193,45 @@ async function unexplodedMissile(site, target = nearestBuilding(site.x, site.z))
     groundStrike({ x: site.x, z: site.z }, target, (l) => L(`The old magazine's missile destroyed your ${l}`, `旧储弹仓的导弹摧毁了你的${l}`), silo);
   } else if (silo) siloDud(silo);
   else uprightDud(site);
+}
+
+/**
+ * The silo held fire: the magazine surfaces with its missile intact and it goes into your stockpile. If the stockpile
+ * is full, the missile waits in this magazine (cell.heldMissile) and moves in once there is room (storeHeldMissiles).
+ */
+function recoveredMissile(site) {
+  addTile(site.x, site.z, 'magazine', 0.1);
+  dust.burst(site.x, site.z, 1.4);
+  frontier.rebuild(grid);
+  placement.cell = null; // force ghost revalidation
+  const cell = grid.get(site.x, site.z);
+  if (cell) cell.heldMissile = true;
+  const stored = storeHeldMissiles();
+  shadeIdle();
+  updateHUD();
+  toast(
+    stored
+      ? L('Uncovered an old Missile Magazine. Its missile is yours: +1 missile', '发现一座旧储弹仓。里面的导弹归你了：+1 导弹')
+      : L('Uncovered an old Missile Magazine. Its missile waits inside until you have room', '发现一座旧储弹仓。导弹暂存其中，等你有空位再入库'),
+    'good',
+    2600,
+  );
+}
+
+/** Missiles recovered from old silos, waiting for room: into the stockpile while it has space. Returns how many moved. */
+function storeHeldMissiles() {
+  let moved = 0;
+  for (const cell of grid.cells.values()) {
+    if (!cell.heldMissile) continue;
+    if (cell.terrain !== 'magazine') {
+      delete cell.heldMissile; // the magazine was destroyed: its missile went with it
+      continue;
+    }
+    if (!tryStoreMissile('missile')) break;
+    delete cell.heldMissile;
+    moved++;
+  }
+  return moved;
 }
 
 /** How long a missile with nothing to hit sits in place before it blows up (seconds). */
@@ -2407,6 +2449,7 @@ function updateHUD() {
   $('resOilD').className = e.oil > 0 ? 'up' : '';
   const cap = currentMissileCap(idleKeySet(e));
   trimMissiles(cap);
+  storeHeldMissiles(); // recovered silo missiles move in once there's room
   const missiles = missileHandCount();
   if ($('resMissile')) {
     $('resMissile').textContent = `${missiles} / ${cap}`;
@@ -2446,7 +2489,7 @@ function updateHUD() {
   if (tipKind) renderResTip(e);
 }
 
-/** Each reroll costs 1 more barrel of oil than the last (1, 2, 3, …) for the whole run; only a new game resets it. */
+/** Each reroll costs 1 more barrel than the last this year (1, 2, 3, …). A new year starts again at 1. */
 const rerollCost = () => turn.rerolls + 1;
 
 // ---------- resource breakdown tooltips ----------
@@ -2828,14 +2871,16 @@ function endTurn() {
   // it never starts a second turn on the same season.
   if (turnRunning && !payout.active) {
     if (document.body.classList.contains('homeward')) return toast(L("Return to Hive City to gather the season's oil", '返回蜂巢城以收集本季石油'));
-    oilFlights.finish();
+    payoutHud.batch(() => oilFlights.finish());
     return;
   }
   if (payout.active) {
     if (previewing) cancelPreview();
     else {
-      oilFlights.finish();
-      payout.skip(); // pressing again fast-forwards
+      payoutHud.batch(() => {
+        oilFlights.finish();
+        payout.skip(); // pressing again fast-forwards
+      });
       return;
     }
   }
@@ -2919,8 +2964,10 @@ function previewPayout() {
   if (tutorialBlocks()) return;
   if (payout.active) {
     if (!previewing) {
-      oilFlights.finish();
-      payout.skip(); // a real turn is playing: just finish it
+      payoutHud.batch(() => {
+        oilFlights.finish();
+        payout.skip(); // a real turn is playing: just finish it
+      });
       return;
     }
     cancelPreview(); // restart the preview
@@ -2939,6 +2986,10 @@ function cancelPreview() {
 
 /** Draw the food store bar (clamped to the capacity; glows when full, red when empty). */
 function showStore(amount, cap, bumpIt = false) {
+  payoutHud.showStore(amount, cap, bumpIt);
+}
+
+function drawStore(amount, cap, bumpIt = false) {
   const shown = Math.max(0, Math.min(cap, Math.round(amount)));
   $('popFill').style.width = `${cap ? Math.min(1, shown / cap) * 100 : 0}%`;
   $('popFill').classList.toggle('full', cap > 0 && shown >= cap);
@@ -2946,7 +2997,10 @@ function showStore(amount, cap, bumpIt = false) {
   $('popText').textContent =
     L(`Food stores ${shown} / ${cap}`, `粮仓 ${shown} / ${cap}`) +
     (turn.population ? L(` · population ${turn.population}`, ` · 人口 ${turn.population}`) : '');
-  if (bumpIt) bump($('popText'));
+  if (bumpIt) {
+    $('popText').style.display = 'inline-block'; // same formatting as the former .bump class
+    payoutPulse($('popText'), 'food');
+  }
 }
 
 function bump(el) {
@@ -2959,6 +3013,10 @@ function bump(el) {
 /** While the first tribute is carried off (tutorial.tribute): the gauge still shows what was delivered, of what. */
 let tributeHeld = null; // { amount, quota }
 function showOil(amount, bump = false) {
+  payoutHud.showOil(tributeHeld?.amount ?? amount, bump);
+}
+
+function drawOil(amount, bump = false) {
   if (tributeHeld) amount = tributeHeld.amount;
   const quota = tributeHeld?.quota ?? turn.quota;
   $('oilStock').textContent = amount;
@@ -2966,8 +3024,8 @@ function showOil(amount, bump = false) {
   $('quotaCount').textContent = L(`${amount} / ${quota} barrels`, `${amount} / ${quota} 桶`);
   gauge.show(amount, quota, bump);
   if (bump) {
-    pop($('oilStock'));
-    pop($('quotaCount'));
+    payoutPulse($('oilStock'), 'oil');
+    payoutPulse($('quotaCount'), 'quota');
   }
 }
 
@@ -3541,6 +3599,7 @@ let eventOpen = false;
  */
 async function startNewYear(then, { continued = false } = {}) {
   eventOpen = true;
+  turn.rerolls = 0; // the year's first paid hand reroll costs 1 again
   hand.select(-1);
   let talking = continued; // the dialogue is already up
   if (turn.season === 0 && turn.round >= 2) {
@@ -3698,7 +3757,7 @@ async function startYearEvent(then, { continued = false, force = null } = {}) {
   const choice = await playEventDialogue(key, ev, continued);
   await dialogue.leave();
   const later = applyYearEvent(key, ev, choice);
-  for (const fn of later) await fn(); // e.g. Show of Force: the missile cinematic (board stays locked)
+  for (const fn of later) await fn(); // e.g. Prospectors' Unexploded Missile: the missile cinematic (board stays locked)
   eventOpen = false;
   await playPendingScenes(); // turned-away refugees: the Rebel Leader speaks
   then();
@@ -3845,17 +3904,6 @@ function applyYearEvent(key, ev, choiceIdx) {
       return cells.length
         ? L(`${cells.length} cell${cells.length === 1 ? '' : 's'} turned into Cliffs.`, `${cells.length} 个格子变成了悬崖。`)
         : '';
-    },
-    showOfForce: () => {
-      // Ruins surface on an empty cell next to your land; a missile from their silo hits a building.
-      const [spot] = shuffled(emptyEdgeCells());
-      const [target] = pickStrikeTargets(1);
-      if (!spot || !target) return '';
-      addTile(spot[0], spot[1], 'ruins', 0.1);
-      dust.burst(spot[0], spot[1], 1.4);
-      frontier.rebuild(grid);
-      later.push(() => groundStrike({ x: spot[0], z: spot[1] }, target));
-      return L('Pre-war Ruins surfaced, and their missile launched.', '战前遗迹破土而出，其中的导弹随即发射。');
     },
   };
   const extraParts = [ev.apply?.(ctx), choice?.apply?.(ctx)].filter(Boolean);
@@ -4661,7 +4709,7 @@ function tryPlace() {
   if (view !== 'board') return;
   if (turn.over || shopOpen || eventOpen) return;
   if (payout.active) {
-    payout.skip(); // clicking the board during the payout fast-forwards it
+    payoutHud.batch(() => payout.skip()); // clicking the board during the payout fast-forwards it
     return;
   }
   if (expansion.active) {
@@ -5895,8 +5943,8 @@ $('btnRivalBack').addEventListener('click', (e) => {
 });
 
 /**
- * Dev-testing hotkeys (Space, `, -, N, M, P, V, T, X). Off for players; set true to use them again.
- * The Game Debug panel (its button, top left) still has the same tools.
+ * Dev-testing hotkeys (Space, `, N, M, P, V, T, X). Off for players; set true to use them again.
+ * `-` still opens the performance overlay in dev builds. The Game Debug panel still has the same tools.
  */
 const DEV_HOTKEYS = false && !RELEASE; // never in the release build
 
@@ -5917,6 +5965,10 @@ window.addEventListener('keydown', (e) => {
     else openGlobe();
     return;
   }
+  if (!RELEASE && k === '-' && !e.repeat) {
+    perf.setOpen(!perf.enabled); // performance overlay
+    return;
+  }
   if (k === 'escape' && view === 'rival') {
     leaveRival();
     return;
@@ -5931,10 +5983,6 @@ window.addEventListener('keydown', (e) => {
   }
   if (dev && k === '`') {
     debug.toggle();
-    return;
-  }
-  if (dev && k === '-') {
-    perf.setOpen(!perf.enabled); // performance overlay
     return;
   }
   if (striking) return; // the missile strike cinematic owns the screen
@@ -6531,6 +6579,16 @@ function renderGhost() {
 }
 
 let last = performance.now();
+function updatePayoutFx(dt) {
+  payoutHud.batch(() => {
+    payout.update(dt);
+    updateFactoryHops(dt);
+    updatePadMissiles(dt);
+    updateFactoryFloaters(dt);
+    oilFlights.update(dt);
+  });
+}
+
 function frame(now) {
   const dt = Math.min((now - last) / 1000, 0.05);
   last = now;
@@ -6552,11 +6610,7 @@ function frame(now) {
   updateWarTimer();
   if (view !== 'board') {
     // The payout keeps paying out wherever you're looking (on the board it runs after the render, below).
-    payout.update(dt);
-    updateFactoryHops(dt);
-    updatePadMissiles(dt);
-    updateFactoryFloaters(dt);
-    oilFlights.update(dt);
+    updatePayoutFx(dt);
   }
   if (view === 'globe') {
     perf.end('camera');
@@ -6675,11 +6729,7 @@ function frame(now) {
   zoomIcons.update(grid);
   perf.end('map icons');
   perf.begin('payout');
-  payout.update(dt); // after render so labels use this frame's camera
-  updateFactoryHops(dt);
-  updatePadMissiles(dt);
-  updateFactoryFloaters(dt);
-  oilFlights.update(dt);
+  updatePayoutFx(dt); // after render so labels use this frame's camera
   perf.end('payout');
   perf.frameEnd();
   requestAnimationFrame(frame);
