@@ -724,7 +724,7 @@ export const shopReady = (key, unlocked) => {
  * Card pictures: front renders of each tile model (public/cards/snapshots, made by tools/card-snapshots.html).
  * Card key -> image; the four Wasteland colours share one. Bump SNAPSHOT_VERSION after re-rendering.
  */
-const SNAPSHOT_VERSION = '20261104-launchers';
+const SNAPSHOT_VERSION = '20261105-booster';
 const SNAPSHOTS = {
   capital: 'capital', settlement: 'settlement', farm: 'farm', pump: 'pump', station: 'station', refinery: 'refinery',
   oasis: 'oasis', tarpit: 'tarpit', labourcamp: 'labourcamp', cliffs: 'cliffs', ruins: 'ruins', crater: 'crater',
@@ -867,7 +867,7 @@ export class TileFactory {
     if (terrain === 'labourcamp' && !this.models?.has('labourcamp')) return tagSoil(buildLabourCamp(this.soilGeo, this.soilMat));
     // Intercept Network: the code-built CIWS bunker until a model file exists.
     if (terrain === 'intercept' && !this.models?.has('intercept')) return tagSoil(buildInterceptBunker(this.soilGeo, this.soilMat));
-    // Decoy Builder / Launch Accelerator: code-built stand-ins until model files exist.
+    // Decoy Builder / Launch Accelerator: code-built stand-ins, only if their models fail to load.
     if (terrain === 'decoyworks' && !this.models?.has(terrain)) return tagSoil(buildDecoyWorks(this.soilGeo, this.soilMat, rot));
     if (terrain === 'booster' && !this.models?.has(terrain)) return tagSoil(buildAccelerator(this.soilGeo, this.soilMat, rot));
     const source = this.models?.get(terrain);

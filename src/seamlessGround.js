@@ -10,8 +10,8 @@ import * as THREE from 'three';
  * on identical sand. Edges between two cells of one Wasteland piece don't fade: the piece's picture carries on.
  */
 export const SAND = {
-  url: '/textures/sand10.jpg?v=20261105-1740', // Poly Haven 'Dry Ground 01' (CC0), recoloured to the planet's palette; bump when the texture file changes, so browsers drop the cached copy
-  tile: 4, // world units per texture repeat (just over one 3×3 plot)
+  url: '/textures/sand10.jpg?v=20261105-2025', // Poly Haven 'Dry Ground 01' (CC0), recoloured to the planet's palette; bump when the texture file changes, so browsers drop the cached copy
+  tile: 6, // world units per texture repeat (about two 3×3 plots)
   // The board lights (hemisphere 1.3 + sun 2.2, ACES) push the painted sand to bright orange.
   // This tint brings it back to about the texture's own muted brown.
   tint: 0xe4e4e6,

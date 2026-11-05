@@ -636,3 +636,45 @@ export function createPaintedGlobe({ renderer, radius, bend, cities, maxCities, 
     },
   };
 }
+
+// ---------- the moon, painted the same way ----------
+// The planet's style in greys (globeView.js): pale dusty plains, darker grey basins, fine cracks and grain, lit by
+// the planet's sun with the same soft terminator and night side, and a faint cool haze on the rim. Small on screen,
+// so it is painted live.
+const MOON_FRAG = /* glsl */ `
+uniform vec3 uSun;
+varying vec3 vPos;
+varying vec3 vNormalW;
+varying vec3 vViewW;
+${NOISE}
+void main() {
+  vec3 p = normalize(vPos);
+  vec3 q = p * 1.6 + 8.3;
+  vec3 warp = vec3(fbm(q + 3.1, 3), fbm(q + 7.3, 3), fbm(q + 11.9, 3));
+  float h = fbm(q + warp * 0.9, 6) + 0.18;
+  float region = fbm(p * 2.4 + 4.1, 4) * 0.5 + 0.5;
+  float grain = fbm(p * 18.0 + 2.0, 4) * 0.5 + 0.5;
+  float cracks = ridged(p * 9.0 + 1.3, 4);
+  vec3 col = mix(vec3(0.78, 0.76, 0.73), vec3(0.66, 0.64, 0.62), smoothstep(0.35, 0.65, region));
+  col = mix(col, vec3(0.5, 0.48, 0.47), smoothstep(0.08, -0.05, h) * 0.8);   // basins
+  col = mix(col, vec3(0.34, 0.33, 0.33), smoothstep(-0.05, -0.3, h) * 0.85);
+  col *= 0.9 + 0.16 * grain;
+  col *= 1.0 - smoothstep(0.86, 0.99, cracks) * 0.3;
+  col = pow(col, vec3(2.2));
+  vec3 n = normalize(vNormalW);
+  vec3 sun = normalize(uSun);
+  float light = smoothstep(-0.12, 0.75, dot(n, sun));
+  vec3 lit = col * (0.012 + 1.05 * light);
+  float rim = pow(1.0 - max(dot(n, vViewW), 0.0), 2.4);
+  lit = mix(lit, vec3(0.8, 0.8, 0.82) * (0.03 + 0.9 * light), rim * 0.45);
+  gl_FragColor = vec4(lit, 1.0);
+  #include <colorspace_fragment>
+}
+`;
+
+/** The moon's painted material (on a unit sphere that turns on its own). */
+export function createPaintedMoonMaterial({ sun = new THREE.Vector3(0.62, 0.42, 0.66) } = {}) {
+  const m = new THREE.ShaderMaterial({ uniforms: { uSun: { value: sun.clone().normalize() } }, vertexShader: SURFACE_VERT, fragmentShader: MOON_FRAG });
+  m.userData.flat = true;
+  return m;
+}
