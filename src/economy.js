@@ -322,10 +322,8 @@ export function computeEconomy(grid, state = {}) {
   shareOut(perCell, 'rawFood', 'food', Math.round(foodBalance) - upkeep);
 
   // What each booster adds this season, in whole food / oil: its share of the building it boosts (never more
-  // than that building made). The payout shows it over the booster instead of the building (`shares`), and the
-  // map icons show the same number (`boosts`). A refinery's is simply the oil it makes itself.
+  // than that building made). The payout shows that share over the booster instead of the building (`shares`).
   const shares = []; // { from: building cell key, to: booster cell key, food?, oil? }
-  const boosts = new Map(); // booster cell key -> amount
   const left = new Map(); // building's perCell entry -> output not yet given to a booster
   for (const c of credits) {
     const total = Math.max(0, c.from[c.res]);
@@ -334,9 +332,7 @@ export function computeEconomy(grid, state = {}) {
     left.set(c.from, rest - n);
     if (n <= 0) continue;
     shares.push({ from: `${c.from.x},${c.from.z}`, to: c.to, [c.res]: n });
-    boosts.set(c.to, (boosts.get(c.to) ?? 0) + n);
   }
-  for (const per of refineries) if (per.oil > 0) boosts.set(`${per.x},${per.z}`, per.oil);
 
   // Own yield (whole numbers that add up): food grown, and oil after hunger, before tax and theft
   // are spread across the city. The payout below still uses `food` / `oil` for the hop numbers.
@@ -371,6 +367,18 @@ export function computeEconomy(grid, state = {}) {
         oil: g.res === 'oil' ? Math.round(g.amount) : 0,
       }))
       .filter((g) => g.food || g.oil);
+  }
+  // Map icons show this total, the same one the hover card prints. Refineries have no grants:
+  // the card's season line is their own outOil.
+  const boosts = new Map();
+  for (const per of perCell) {
+    if (per.terrain === 'pump' || per.terrain === 'oasis' || per.terrain === 'tarpit') {
+      const res = per.terrain === 'tarpit' ? 'oil' : 'food';
+      per.added = (per.grants ?? []).reduce((s, g) => s + (g[res] || 0), 0);
+      if (per.added > 0) boosts.set(`${per.x},${per.z}`, per.added);
+    } else if (per.terrain === 'refinery' && per.outOil > 0) {
+      boosts.set(`${per.x},${per.z}`, per.outOil);
+    }
   }
 
   for (const per of perCell) {

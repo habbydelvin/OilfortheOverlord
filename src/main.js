@@ -2342,7 +2342,7 @@ function shadeIdle(e = economyNow()) {
     setGrey(cell.mesh, idle.has(`${cell.x},${cell.z}`) || blocked);
   }
   neonTiles.refresh(grid); // boosted buildings' tiles glow (not idle ones)
-  zoomIcons.setBoosts(e.boosts); // the boosters' "+n" map icons
+  zoomIcons.setBoosts(e.boosts); // "+n" on the zoomed-out icons: the hover card's season total
 }
 
 function missileHandCount() {
@@ -2724,7 +2724,7 @@ function seasonText(per) {
   if (per.idle && (t === 'farm' || t === 'station' || t === 'refinery')) return { en: 'This season: idle', zh: '本季结算：闲置' };
   if (t === 'pump' || t === 'oasis' || t === 'tarpit') {
     const res = t === 'tarpit' ? 'oil' : 'food';
-    const n = (per.grants ?? []).reduce((s, g) => s + (g[res] || 0), 0);
+    const n = per.added ?? 0;
     const a = amountWords(n, res);
     return { en: `Adds ${a.en} this season`, zh: `本季加成 ${a.zh}` };
   }
@@ -6854,7 +6854,7 @@ function frame(now) {
   // Anchor icons to the picture just drawn: current camera, planet bend and CRT projection (including camera shake).
   // DOM changes still reach the same browser paint; updating earlier used the preceding frame's projection state.
   perf.begin('map icons');
-  zoomIcons.update(grid);
+  zoomIcons.update(grid, cell);
   perf.end('map icons');
   perf.begin('payout');
   updatePayoutFx(dt); // after render so labels use this frame's camera
