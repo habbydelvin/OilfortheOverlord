@@ -2391,7 +2391,7 @@ body.striking #mapIcons {
   background: rgba(232, 191, 104, 0.2);
 }
 
-/* Above the HUD and hand, below the dialogue (z 60). Clicks pass through to the game except on the bubble. */
+/* Above the HUD and hand, below the dialogue (z 60). Clicks pass through to the game except on the skip button. */
 #coach {
   position: absolute;
   inset: 0;

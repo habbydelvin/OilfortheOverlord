@@ -717,7 +717,7 @@
   opacity: 0.9;
 }
 
-/* ---------- Year 0 tutorial ---------- */
+/* ---------- the wordless tutorial (tutorial.js) ---------- */
 /* Spotlight: a brass frame instead of a rounded glow. */
 .coach-ring {
   border-radius: 0;

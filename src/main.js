@@ -425,7 +425,7 @@ const tutorial = new Tutorial({
     },
   },
 });
-// While it runs, only the card, cells and buttons the advisor asks for respond.
+// While the guided opening runs, only what it allows responds (tutorial.allows).
 // In a rival city with the missile hand out, missile cards can be picked (and dragged onto a tile to aim them).
 hand.guard = (action, piece) =>
   (view === 'rival' && rivalHand && isPlayerMissile(piece?.terrain) && !screenBusy()) || (!busy() && tutorial.allows(action, piece));
@@ -2701,7 +2701,8 @@ new ResizeObserver(() => {
 }).observe($('inspect'));
 
 function updateInspect(cell) {
-  const c = cell ? grid.get(cell[0], cell[1]) : null;
+  // (Not during the guided opening: the tutorial shows what a building does on the board itself.)
+  const c = cell && !tutorial.guiding ? grid.get(cell[0], cell[1]) : null;
   const el = $('inspect');
   if (!c) {
     inspectKey = '';
@@ -3510,7 +3511,7 @@ function settleTurn(e) {
   if (yearEnds) turn.round++;
   tickBlackMarket();
   growRivals();
-  toast(() => msg.map(textOf).join(''), kind, 3200);
+  if (!tutorial.active) toast(() => msg.map(textOf).join(''), kind, 3200); // (the guided opening shows the payout itself)
   // A new year opens with the shop; the hand is dealt when it closes.
   if (turn.season === 0) {
     updateHUD();
@@ -3875,6 +3876,12 @@ function dealNewHand() {
   // Dust Storm: extra Wasteland dealt on top of the normal hand.
   const waste = turn.event?.mods?.extraWaste ?? 0;
   hand.deal(handSize() + waste, [...turn.pinned, ...lessonCards(), ...Array(waste).fill('wasteland')]);
+  // The guided opening's hand to play on your own: one Wasteland at most, so the Farm decision isn't crowded out.
+  if (tutorial.active) {
+    let seen = 0;
+    hand.cards = hand.cards.map((p) => (p.terrain.startsWith('wasteland') && !p.pinned && ++seen > 1 ? pieceOf(seen % 2 ? 'station' : 'farm') : p));
+    hand.render();
+  }
   turn.pinned = [];
   holdingPurchases = false;
   updateHUD();
@@ -3893,8 +3900,7 @@ function lessonCards() {
   const e = economyNow();
   // The military lesson, from Autumn of the first year: a Missile Magazine card (kept until it's placed). Its missile
   // comes loaded in it, so the first strike has somewhere to come from.
-  const magazine = !turn.gifted && tutorial.lessons.open('war') && (turn.round > 1 || turn.season >= 2) && !hasMagazine();
-  if (magazine) cards.push('magazine');
+  const magazine = magazineDue(); // (handed over once this hand is played out: offerMagazine)
   // Housing, once, when the workers are about to run out (the Magazine needs two): a Settlement, and a Farm if the
   // food couldn't carry it.
   const need = magazine ? WORKERS.magazine : 1;
@@ -3907,6 +3913,24 @@ function lessonCards() {
 }
 
 const hasMagazine = () => [...grid.cells.values()].some((c) => c.terrain === 'magazine');
+/** A tutorial run's military lesson is due (from Autumn of the first year) and its Magazine not yet given. */
+const magazineDue = () =>
+  turn.guided && !turn.gifted && tutorial.lessons.open('war') && (turn.round > 1 || turn.season >= 2) && !hasMagazine() && !hand.cards.some((p) => p.terrain === 'magazine');
+
+/**
+ * The military lesson's Missile Magazine comes as an extra card once the season's hand is played out (no Wasteland
+ * left to place, and the hand empty or left alone a while), so Next turn is free when the lesson gets to it.
+ */
+let magazineCheck = 0;
+function offerMagazine(dt) {
+  magazineCheck -= dt;
+  if (magazineCheck > 0) return;
+  magazineCheck = 0.5;
+  if (!magazineDue() || tutorial.active || view !== 'board' || screenBusy() || turnRunning || warPending) return;
+  if (hand.placeableForced.length || hand.piece || hand.dragging) return;
+  if (!hand.isEmpty && tutorial.clock - tutorial.lastInput < 5) return;
+  hand.addPinned('magazine');
+}
 
 /**
  * A tutorial run's Missile Magazine is down: its missile loads into it (a missile rises from it into the Missiles
@@ -5593,6 +5617,7 @@ async function runAttackPhase() {
  */
 let following = null; // { to } while a flight waits for you
 const FOLLOW_ETA = 3.4; // seconds left when it's held (more than the 2.2 s the incoming flight takes)
+const FOLLOW_SPEED = 0.3; // its pace on the War Map while you follow it (3.4 s of flight: about 11 s to dive in)
 async function holdForFollow(run, to) {
   const hold = (on) => run === runId && globe.pauseAttack(on);
   const mineInAir = () => globe.inFlight().find((f) => f.s.from === 'player' && f.s.to === to);
@@ -5612,17 +5637,21 @@ async function holdForFollow(run, to) {
   }
   if (run !== runId || !mineInAir()) return;
   // ...and held there until you're in that city (a dialogue unpausing it doesn't count: re-held every tick).
+  // Held while you're still home; once you're out on the War Map it flies on, slowly, so you can watch it and dive
+  // into its city in time; there (or if you never come) it's back to full speed.
   following = { to };
   // (Wall time: the wait is for the player, not for the frames. Arriving there ends it; skipping the lesson too.)
   const t1 = performance.now();
-  while (run === runId && following) {
+  while (run === runId && following && mineInAir()) {
     const there = view === 'rival' && rivalShown?.id === to && !switching;
     if (there || performance.now() - t1 > 90000) break;
-    hold(true);
+    hold(view === 'board');
+    if (view !== 'board') globe.setAttackSpeed(FOLLOW_SPEED);
     await wait(0.1);
   }
   following = null;
   hold(false);
+  if (run === runId) globe.setAttackSpeed(1);
 }
 
 /** Incoming! A banner naming who is firing at Hive City, before the missiles fly. */
@@ -6613,6 +6642,7 @@ function frame(now) {
   if (busy() && hand.selected >= 0 && !payout.active) hand.select(-1);
   placement.update(expansion.active || busy() ? null : cell, dt, time);
   updateForecast(expansion.active || busy() ? null : cell);
+  offerMagazine(dt);
   updateRecenter(dt);
   perf.end('placement');
   tutorial.update(time);

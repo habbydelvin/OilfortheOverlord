@@ -1653,6 +1653,11 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     });
   }
 
+  /** The flights' pace (1 normal): the tutorial slows them while you follow one to its city. */
+  function setAttackSpeed(k) {
+    if (war) war.speed = k;
+  }
+
   function skipAttack() {
     if (war) war.speed = 8;
   }
@@ -1896,6 +1901,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     },
     setQueued,
     skipAttack,
+    setAttackSpeed,
     /** The payout pays `amount` oil: it gushes out of Hive City on the planet (only while the planet is shown). */
     pulseOil,
     /** Where a city sits on screen ([x, y] px), or null when the planet isn't shown or it's round the far side. */
