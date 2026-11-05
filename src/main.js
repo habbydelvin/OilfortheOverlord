@@ -6283,6 +6283,8 @@ rig.onZoomPastMax = () => {
   if (view === 'board' || view === 'rival') openGlobe();
   if (!switching) rig.resetOverscroll(); // refused (another screen is up)
 };
+// The guided opening refuses the War Map. Holding the wheel on the far limit avoids the climb-and-snap.
+rig.allowZoomPastMax = () => tutorial.allows('globe');
 $('btnRivalBack').addEventListener('click', (e) => {
   e.currentTarget.blur();
   leaveRival();
