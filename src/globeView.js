@@ -3,6 +3,7 @@ import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { createGlobeBend } from './globeBend.js';
+import { createGlobeCrater } from './globeCrater.js';
 import { createPaintedGlobe, bakeCube, createPaintedMoonMaterial } from './sandPlanet.js';
 
 // The nebula's dust (3D value noise on the view direction), baked into a cube map in rgb.
@@ -1011,6 +1012,9 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     return pts;
   }
 
+  /** A fallen city's mark: an impact crater a little wider than its hex (globeCrater.js), in the city group's units. */
+  const fallenCity = () => createGlobeCrater({ radius: 1.6 * HEX, scale: GLOBE.cityScale, planetRadius: RADIUS });
+
   /** What the attack playback has shown landing on each city so far (id -> { hp, dead }), until the phase ends. */
   const warShown = new Map();
   function applyShown(n) {
@@ -1020,7 +1024,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     if (seen.dead && !n.deadShown) {
       n.deadShown = true;
       n.group.clear();
-      n.group.add(factory.create('crater'));
+      n.group.add(fallenCity());
     }
   }
 
@@ -1052,7 +1056,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
 
       const group = new THREE.Group();
       group.matrixAutoUpdate = false; // placeNode sets the matrix
-      group.add(factory.create(def.rival?.alive === false ? 'crater' : 'capital')); // a fallen city: its crater
+      group.add(def.rival?.alive === false ? fallenCity() : factory.create('capital')); // a fallen city: its crater
       nodeRoot.add(group);
 
       const el = document.createElement('button');

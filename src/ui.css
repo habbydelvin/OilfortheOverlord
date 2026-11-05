@@ -2913,6 +2913,28 @@ body.striking #mapIcons {
 #globeUI.hidden {
   display: none;
 }
+/* Debug: destroy a random rival Hive (main.js); top left, under the Game Debug buttons. */
+#globeUI .globe-debug {
+  position: absolute;
+  top: 190px;
+  left: 22px;
+  padding: 7px 12px;
+  border: 1px solid #c9a35c;
+  border-radius: 3px;
+  background: rgba(20, 14, 10, 0.85);
+  color: #f0d79a;
+  font: 600 13px/1.2 var(--dp-serif, serif);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  pointer-events: auto;
+}
+#globeUI .globe-debug:hover {
+  background: rgba(70, 40, 18, 0.9);
+}
+#globeUI .globe-debug[hidden] {
+  display: none;
+}
 .globe-title {
   position: absolute;
   bottom: 60px; /* above the hint: the HUD keeps the top of the screen */

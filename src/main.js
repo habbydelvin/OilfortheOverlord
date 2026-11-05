@@ -6497,6 +6497,23 @@ globe = createGlobeView({
 // done here reaches the in-game planet. Its labels live in a detached element (the main screen shows none).
 const titleGlobeUI = document.createElement('div');
 titleGlobeUI.innerHTML = '<div class="globe-title"></div><div id="globeLabels"></div><div id="globeCard" class="hidden"></div>';
+// Debug (not in release): destroy a random living rival Hive, to check how a fallen city looks on the War Map.
+if (!RELEASE) {
+  const btn = $('btnGlobeDestroy');
+  btn.hidden = false;
+  btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const alive = rivals.filter((r) => r.alive !== false);
+    if (!alive.length) return toast(L('Every rival Hive is already destroyed', '所有敌方蜂巢都已被摧毁'));
+    const r = alive[Math.floor(Math.random() * alive.length)];
+    r.alive = false;
+    r.capitalHp = 0;
+    r.version = (r.version ?? 0) + 1;
+    globe.relayout();
+    toast(L(`${r.def.name} destroyed (debug)`, `${r.def.zh} 已摧毁（调试）`));
+  });
+}
 const titleGlobe = createGlobeView({
   renderer,
   root: titleGlobeUI,
@@ -6578,7 +6595,9 @@ function arriveFromTitle() {
   switching = true;
   const run = viewRun;
   clouds.uncover().then(() => {
-    if (run === viewRun) switching = false;
+    if (run !== viewRun) return;
+    switching = false;
+    tutorial.begin(); // the commission plays once the city is in view, not behind the clouds
   });
 }
 
@@ -7008,8 +7027,9 @@ function resetIsland(opts) {
     tutorial.begin();
   } else if (turn.guided) {
     // The commission (wordless, a few seconds) replaces the spoken opening; the first card is usable at once.
+    // Arriving from the main screen, it waits until the arrival clouds have parted (arriveFromTitle begins it).
     tutorial.start();
-    tutorial.begin();
+    if (!opts?.keepClouds) tutorial.begin();
   } else if (opts?.intro !== false) playIntro();
   if (ALL_TILES || (!tut && knewMarket())) revealBlackMarket(false);
 }
