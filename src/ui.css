@@ -2214,7 +2214,69 @@ body.dialogue #inspect {
   border-color: rgba(255, 255, 255, 0.1);
 }
 
-/* Boosters (Water Pump, Oasis, Tar Pit): a "+n" tag with the resource they add, on the icon's lower right. */
+/* Season total for the booster under the pointer: above its icon, over every other map icon.
+   The chip itself is 1.2×; it springs up out of the icon and snaps back down into it. */
+#mapIcons .map-yield {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+#mapIcons .map-yield.hidden {
+  display: none;
+}
+#mapIcons .map-yield-body {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--map-ico) * 0.2);
+  padding: 1px calc(var(--map-ico) * 0.16) 1px calc(var(--map-ico) * 0.2);
+  border-radius: 999px;
+  background: rgba(20, 16, 12, 0.94);
+  border: 1px solid rgba(232, 191, 104, 0.55);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+  color: #f3e6c8;
+  font-size: calc(var(--map-ico) * 0.5);
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+  transform: scale(1.2);
+  transform-origin: 50% 100%;
+}
+#mapIcons .map-yield.in .map-yield-body {
+  animation: map-yield-in 0.08s linear both;
+}
+#mapIcons .map-yield.out .map-yield-body {
+  animation: map-yield-out 0.045s linear both;
+}
+@keyframes map-yield-in {
+  0% { transform: translateY(80%) scale(0.15); }
+  42% { transform: translateY(-28%) scale(1.55); }
+  64% { transform: translateY(10%) scale(1.02); }
+  82% { transform: translateY(-8%) scale(1.32); }
+  100% { transform: translateY(0) scale(1.2); }
+}
+@keyframes map-yield-out {
+  0% { transform: translateY(0) scale(1.2); }
+  28% { transform: translateY(-18%) scale(1.46); }
+  100% { transform: translateY(85%) scale(0.12); }
+}
+#mapIcons .map-yield-part {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+#mapIcons .map-yield .ico {
+  width: calc(var(--map-ico) * 0.55);
+  height: calc(var(--map-ico) * 0.55);
+  margin: 0;
+}
+#mapIcons .map-yield.unused .map-yield-body {
+  color: rgba(255, 255, 255, 0.45);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* Legend only: the same "+n" drawn on the booster's lower right, as a key for the hover total. */
 .map-icon .map-boost {
   position: absolute;
   left: calc(100% - var(--map-ico) * 0.3);

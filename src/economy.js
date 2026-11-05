@@ -322,10 +322,8 @@ export function computeEconomy(grid, state = {}) {
   shareOut(perCell, 'rawFood', 'food', Math.round(foodBalance) - upkeep);
 
   // What each booster adds this season, in whole food / oil: its share of the building it boosts (never more
-  // than that building made). The payout shows it over the booster instead of the building (`shares`), and the
-  // map icons show the same number (`boosts`). A refinery's is simply the oil it makes itself.
+  // than that building made). The payout shows that share over the booster instead of the building (`shares`).
   const shares = []; // { from: building cell key, to: booster cell key, food?, oil? }
-  const boosts = new Map(); // booster cell key -> amount
   const left = new Map(); // building's perCell entry -> output not yet given to a booster
   for (const c of credits) {
     const total = Math.max(0, c.from[c.res]);
@@ -334,9 +332,7 @@ export function computeEconomy(grid, state = {}) {
     left.set(c.from, rest - n);
     if (n <= 0) continue;
     shares.push({ from: `${c.from.x},${c.from.z}`, to: c.to, [c.res]: n });
-    boosts.set(c.to, (boosts.get(c.to) ?? 0) + n);
   }
-  for (const per of refineries) if (per.oil > 0) boosts.set(`${per.x},${per.z}`, per.oil);
 
   // Own yield (whole numbers that add up): food grown, and oil after hunger, before tax and theft
   // are spread across the city. The payout below still uses `food` / `oil` for the hop numbers.
@@ -372,6 +368,24 @@ export function computeEconomy(grid, state = {}) {
       }))
       .filter((g) => g.food || g.oil);
   }
+  for (const per of perCell) {
+    if (per.terrain === 'pump' || per.terrain === 'oasis' || per.terrain === 'tarpit') {
+      const res = per.terrain === 'tarpit' ? 'oil' : 'food';
+      per.added = (per.grants ?? []).reduce((s, g) => s + (g[res] || 0), 0);
+    }
+  }
+  // One season line per tile (`seasonParts`): the hover card prints it, and the zoomed-out icon shows the same
+  // parts. `boosts` stays the positive total of pumps, oases, tar pits and refineries, for the tutorial.
+  const yields = new Map();
+  const boosts = new Map();
+  for (const per of perCell) {
+    const parts = seasonParts(per);
+    if (parts.length) yields.set(`${per.x},${per.z}`, parts);
+    if (per.terrain === 'pump' || per.terrain === 'oasis' || per.terrain === 'tarpit' || per.terrain === 'refinery') {
+      const n = parts.reduce((s, p) => s + p.n, 0);
+      if (n > 0) boosts.set(`${per.x},${per.z}`, n);
+    }
+  }
 
   for (const per of perCell) {
     delete per.rawFood;
@@ -383,6 +397,7 @@ export function computeEconomy(grid, state = {}) {
     perCell,
     shares,
     boosts,
+    yields,
     cap,
     used,
     needed,
@@ -462,6 +477,30 @@ export function computeEconomyIf(grid, state, terrain, cells) {
     map.set(`${x},${z}`, { x, z, terrain, onRuins: old?.terrain === 'ruins' || Boolean(old?.onRuins) });
   }
   return computeEconomy({ cells: map, get: (x, z) => map.get(`${x},${z}`) }, state);
+}
+
+/**
+ * The hover card's season line, as numbers: the same parts `seasonText` prints.
+ * Empty when that line is "idle" or the tile has nothing to settle.
+ * Each part is `{ res: 'food' | 'oil' | 'manpower', n }`.
+ */
+export function seasonParts(per) {
+  if (!per) return [];
+  const t = per.terrain;
+  if (per.idle && (t === 'farm' || t === 'station' || t === 'refinery')) return [];
+  if (t === 'pump' || t === 'oasis' || t === 'tarpit') {
+    const res = t === 'tarpit' ? 'oil' : 'food';
+    return [{ res, n: per.added ?? 0 }];
+  }
+  const parts = [];
+  if (per.outFood > 0) parts.push({ res: 'food', n: per.outFood });
+  if (per.food < 0) parts.push({ res: 'food', n: per.food });
+  if (per.outOil > 0) parts.push({ res: 'oil', n: per.outOil });
+  if (per.oil < 0) parts.push({ res: 'oil', n: per.oil });
+  if (per.outManpower) parts.push({ res: 'manpower', n: per.outManpower });
+  if (t === 'labourcamp' && !per.outManpower) parts.push({ res: 'manpower', n: 0 });
+  if ((t === 'farm' || t === 'station' || t === 'refinery') && !parts.length) parts.push({ res: t === 'farm' ? 'food' : 'oil', n: 0 });
+  return parts;
 }
 
 function counts0(grid, terrain) {
