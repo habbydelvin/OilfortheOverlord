@@ -10,7 +10,7 @@ import { createTitleScreen } from './titleScreen.js';
 import { createSandPlanet } from './sandPlanet.js';
 import { createShadowCache } from './shadowCache.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, setMusicMuffled, startMusic } from './music.js';
-import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws, wasteThud, buildThud, zoomWhoosh } from './sfx.js';
+import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws, wasteThud, zoomWhoosh } from './sfx.js';
 import { createCombatAudio } from './combatAudio.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed, hexesAround } from './grid.js';
@@ -389,7 +389,7 @@ const tutorial = new Tutorial({
     modality: () => modality,
     isAction: (terrain) => Boolean(ACTIONS[terrain]),
     /** A reroll is possible now (free, or the oil for it). */
-    canReroll: () => !hand.isEmpty && (turn.freeRerolls > 0 || turn.stockpile >= rerollCost()),
+    canReroll: () => hand.rerollable > 0 && (turn.freeRerolls > 0 || turn.stockpile >= rerollCost()),
     /** This card could do something somewhere right now. */
     canPlay: (piece) => canPlay(piece),
     /** The Black Market walkthrough: this card's price taken off your oil, as a ghost (null: none). */
@@ -2164,8 +2164,8 @@ function updateDropAnims(dt) {
     if (!a.landed) {
       a.landed = true;
       for (const o of a.plates ?? []) o.castShadow = true; // on the ground again: the plate's shadow is its own edge
-      if (a.cells || a.waste) wasteThud();
-      else if (a.build) buildThud();
+      // Wasteland and every building land with the recorded dirt thuds (rock drops).
+      if (a.cells || a.waste || a.build) wasteThud();
       else thud();
       // The cells it landed on: a whole Wasteland piece knows its cells, a single tile's is under its position.
       const cells = a.cells ?? [worldToHex(a.mesh.position.x, a.mesh.position.z)];
@@ -2605,7 +2605,7 @@ function updateHUD() {
   showStore(turn.food, e.foodCap);
 
   $('btnReroll').classList.toggle('hidden', hand.isEmpty);
-  $('btnReroll').classList.toggle('disabled', !turn.freeRerolls && turn.stockpile < rerollCost());
+  $('btnReroll').classList.toggle('disabled', !hand.rerollable || (!turn.freeRerolls && turn.stockpile < rerollCost()));
   $('btnRerollSub').innerHTML = turn.freeRerolls ? L(`free ×${turn.freeRerolls}`, `免费 ×${turn.freeRerolls}`) : `-${rerollCost()}${ICONS.oil}`;
   // Greyed out while Wasteland that still fits must be placed (endTurn refuses then, with a toast).
   const blocking = hand.placeableForced.length;
@@ -6377,7 +6377,9 @@ window.addEventListener('keydown', (e) => {
 
 $('btnReroll').addEventListener('click', (e) => {
   e.currentTarget.blur();
-  if (hand.isEmpty || payout.active || turn.over || shopOpen || eventOpen || strikeOpen) return;
+  if (payout.active || turn.over || shopOpen || eventOpen || strikeOpen) return;
+  // Only produced Missiles (or nothing) in hand: a reroll would change nothing, so it costs nothing either.
+  if (!hand.rerollable) return toast(L('No cards to reroll', '没有可重抽的手牌'), 'bad');
   if (!tutorial.allows('reroll')) return tutorial.rejected({ code: 'early' }); // the guided opening plays its hand
   if (turn.freeRerolls > 0) {
     // Target reward: free, and doesn't raise the price of the next paid reroll.

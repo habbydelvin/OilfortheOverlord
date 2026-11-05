@@ -1680,6 +1680,7 @@ body.shopping .ruin-btn {
 #factoryBars {
   position: absolute;
   inset: 0;
+  z-index: -2; /* in the world, like #ruinBtns: under the top bar and every other HUD panel */
   overflow: hidden;
   pointer-events: none;
 }
