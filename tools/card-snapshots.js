@@ -49,8 +49,9 @@ const VIEWS = {
   // A low silo: looked down on a little to show its closed hatch, and closer (its thin fence hardly shows on a card);
   // its shaft below the ground is cut away.
   magazine: { elevation: 30, closeUp: 0.72, underground: false },
+  // Its hangar, antenna tower and decoys on their stands: raised like the Magazine so the yard reads.
+  decoyworks: { elevation: 30, closeUp: 0.86, underground: false },
   // Code-built (src/launcherMeshes.js): a little raised so the pad, gantry and rail read.
-  decoyworks: { elevation: 18, closeUp: 0.9, underground: false },
   booster: { elevation: 18, closeUp: 0.9, underground: false },
 };
 

@@ -32,6 +32,7 @@ export const BLOCKOUTS = {
   warhead: 'WarheadInstitute.glb',
   missilelab: 'MissileRecipeLab.glb',
   intercept: 'InterceptNetwork.glb', // its gun is aimed by the attack phase (splitCiws below, tiles.js)
+  decoyworks: 'DecoyBuilder.glb', // hangar, antenna tower and cargo yard (no animation)
   mothership: 'Mothership.glb', // not a tile: the main screen's ship (titleScreen.js), with its Idle hover
   // Camps: one model per camp, matched by its tent colour (TERRAINS[key].tent in tiles.js).
   raider: 'Camp04.fbx', // brown (rebels from starvation)
@@ -69,6 +70,7 @@ const FINISHED = {
   warhead: { yaw: 0, fit: 'WarheadInstitute_HiveCity' },
   missilelab: { yaw: 0, fit: 'MissileRecipeLab_HiveCity' },
   intercept: { yaw: 0, fit: 'InterceptNetwork_HiveCity' },
+  decoyworks: { yaw: 0, fit: 'DecoyBuilder_HiveCity' },
   mothership: { yaw: 0, fit: 'Mothership_HiveCity', free: true }, // free: kept at its own size and shape (no cell fit)
 };
 
@@ -81,7 +83,7 @@ const USE_FBX = typeof location !== 'undefined' && new URLSearchParams(location.
 const MODEL_URL = USE_FBX ? '/art/models/' : '/models/glb/';
 const TEX_URL = '/models/tex/';
 // Bump after re-running the conversion (or re-exporting a model under the same name), so browsers drop cached copies.
-const MODEL_VERSION = '20261103-2100';
+const MODEL_VERSION = '20261105-decoy';
 const ATLAS_URL = '/models/Atlas.jpg?v=20261026-1640';
 // Footprints measure about 96 × 97 cm. One board cell is 1 unit across.
 const CELL = 1; // full cell: the seam between tiles is TILE.gap, applied live by applyTileGap (tiles.js)

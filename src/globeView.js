@@ -3,7 +3,7 @@ import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { createGlobeBend } from './globeBend.js';
-import { createPaintedGlobe, bakeCube } from './sandPlanet.js';
+import { createPaintedGlobe, bakeCube, createPaintedMoonMaterial } from './sandPlanet.js';
 
 // The nebula's dust (3D value noise on the view direction), baked into a cube map in rgb.
 const NEBULA_BAKE = /* glsl */ `
@@ -515,13 +515,8 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
   );
   sun.add(sunGlow);
   const moon = new THREE.Group();
-  {
-    // NASA moon colour map (via the three.js examples), wrapped round the sphere.
-    const map = new THREE.TextureLoader().load('/textures/moon.jpg');
-    map.colorSpace = THREE.SRGBColorSpace;
-    map.anisotropy = renderer.capabilities.getMaxAnisotropy();
-    moon.add(new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), new THREE.MeshStandardMaterial({ map, emissive: 0xffffff, emissiveMap: map, emissiveIntensity: 0.35, roughness: 1 })));
-  }
+  // Painted grey in the planet's style (sandPlanet.js).
+  moon.add(new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32), createPaintedMoonMaterial()));
   const moonGlow = new THREE.Sprite(glowMat(glowTexture([[0, 'rgba(210,225,255,0.7)'], [0.3, 'rgba(170,190,235,0.25)'], [1, 'rgba(140,160,220,0)']])));
   moon.add(moonGlow);
   scene.add(sun, moon);

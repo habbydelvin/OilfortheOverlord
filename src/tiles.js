@@ -724,7 +724,7 @@ export const shopReady = (key, unlocked) => {
  * Card pictures: front renders of each tile model (public/cards/snapshots, made by tools/card-snapshots.html).
  * Card key -> image; the four Wasteland colours share one. Bump SNAPSHOT_VERSION after re-rendering.
  */
-const SNAPSHOT_VERSION = '20261104-launchers';
+const SNAPSHOT_VERSION = '20261105-decoy';
 const SNAPSHOTS = {
   capital: 'capital', settlement: 'settlement', farm: 'farm', pump: 'pump', station: 'station', refinery: 'refinery',
   oasis: 'oasis', tarpit: 'tarpit', labourcamp: 'labourcamp', cliffs: 'cliffs', ruins: 'ruins', crater: 'crater',
