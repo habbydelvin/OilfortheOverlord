@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { MeshoptSimplifier } from 'meshoptimizer/simplifier';
 import { breathe } from './models.js';
+import { isSeamless } from './seamlessGround.js';
 
 export const LOD = {
   mode: 'Auto', // Auto (by zoom), Off (always full), On (always light): Performance overlay A/B
@@ -51,15 +52,37 @@ function simplified(g) {
   return lod;
 }
 
-/** Make the light copies for these models (Map key -> root), a slice at a time. Returns true if any was added. */
-export async function buildLods(models) {
+/**
+ * The ground stays exact: a tile's sand and painted ground meet the desert plane and the next tile edge to edge, and
+ * the fog of war hides behind the tiles' depth, so a simplified ground plate showed seams, gaps and fog holes. Flat
+ * parts lying on the ground (roads, pools, decals) and parts drawn in the ground's order count too. All cheap anyway.
+ */
+function isGround(o, ground, height) {
+  if (isSeamless(o.material) || o.renderOrder !== 0) return true;
+  const box = new THREE.Box3().setFromObject(o);
+  const s = box.getSize(new THREE.Vector3());
+  // Flat and lying on the ground (a flat roof or silo lid higher up is part of the building).
+  return s.y < Math.max(s.x, s.z) * 0.05 && box.max.y - ground < height * 0.05;
+}
+
+/**
+ * Make the light copies for these models (Map key -> root), a slice at a time; only for the keys `include` accepts.
+ * Returns true if any was added.
+ */
+export async function buildLods(models, include = () => true) {
   await MeshoptSimplifier.ready;
   let added = false;
-  for (const root of models.values()) {
+  for (const [key, root] of models) {
+    if (!include(key)) continue;
+    root.updateMatrixWorld(true);
+    const all = new THREE.Box3().setFromObject(root);
+    const ground = all.min.y;
+    const height = all.max.y - all.min.y;
     root.traverse((o) => {
       // Skinned parts (the batched smoke and flames) move by bone: their triangles must stay with their bones.
       if (!o.isMesh || o.isSkinnedMesh || Array.isArray(o.material) || done.has(o.geometry) || full.has(o.geometry)) return;
       done.add(o.geometry);
+      if (isGround(o, ground, height)) return;
       const lod = simplified(o.geometry);
       if (!lod) return;
       light.set(o.geometry, lod);

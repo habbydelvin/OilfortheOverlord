@@ -19,7 +19,7 @@ import { hasBlockout, loadProgress, breathe, decodeImage, PAD_MISSILE } from './
 import { Frontier } from './frontier.js';
 import { Placement, GHOST_LAYER, PREVIEW_PARAMS, PREVIEW_DEFAULTS, loadPreviewConfig, savePreviewConfig, clearPreviewConfig } from './placement.js';
 import { Hand, pieceCost } from './hand.js';
-import { copySeam } from './seamlessGround.js';
+import { copySeam, isSeamless } from './seamlessGround.js';
 import { NeonTiles, createGlow, LIFT } from './neonGlow.js';
 import { BarrelGauge, OilFlights } from './barrelGauge.js';
 import { SeasonClock } from './seasonClock.js';
@@ -2050,6 +2050,22 @@ const DROP = {
   settle: 0.42, // seconds after impact until the tile is at rest
 };
 
+/**
+ * A falling tile's ground plate (its sand and painted ground) casts no shadow until it lands: from up high that shadow
+ * fell far from the tile, a dark hexagonal slab sliding over the sand. The building on it keeps its shadow.
+ * Returns the parts turned off, to turn back on at the impact.
+ */
+function hideFallingPlates(mesh) {
+  const plates = [];
+  mesh.traverse((o) => {
+    if (!o.isMesh || !o.castShadow) return;
+    if (![o.material].flat().some((m) => isSeamless(m)) && !isGroundMesh(o)) return;
+    o.castShadow = false;
+    plates.push(o);
+  });
+  return plates;
+}
+
 function updateDropAnims(dt) {
   for (let i = anims.length - 1; i >= 0; i--) {
     const a = anims[i];
@@ -2057,6 +2073,7 @@ function updateDropAnims(dt) {
     if (a.t < 0) continue;
     a.mesh.visible = true;
     if (a.t < DROP.fall) {
+      if (!a.plates) a.plates = hideFallingPlates(a.mesh);
       // Free fall: y follows gravity (quadratic), so it is fastest at the moment of impact.
       const p = a.t / DROP.fall;
       a.mesh.position.y = DROP.height * (1 - p * p);
@@ -2067,6 +2084,7 @@ function updateDropAnims(dt) {
     const u = a.t - DROP.fall; // time since impact
     if (!a.landed) {
       a.landed = true;
+      for (const o of a.plates ?? []) o.castShadow = true; // on the ground again: the plate's shadow is its own edge
       thud(Boolean(a.cells));
       // The cells it landed on: a whole Wasteland piece knows its cells, a single tile's is under its position.
       const cells = a.cells ?? [worldToHex(a.mesh.position.x, a.mesh.position.z)];
@@ -6672,6 +6690,9 @@ const lodState = new WeakMap(); // scene root -> { on, sweep }
 const LOD_DISTANCE_KEY = 'oto.lodDistance';
 LOD.distance = Number(localStorage.getItem(LOD_DISTANCE_KEY)) || LOD.distance; // Performance overlay slider, kept across reloads
 const lodDistance = () => LOD.distance;
+// Light copies for buildings only: land tiles (pits, pools, cliffs, ruins, camps) are mostly ground, where a simplified
+// shape opens gaps in the sand and the fog, and they hold few triangles anyway.
+const lodKeys = (key) => TERRAINS[key]?.category === 'building';
 function updateLod(root, dt) {
   let st = lodState.get(root);
   if (!st) lodState.set(root, (st = { on: false, sweep: 0 }));
@@ -6982,7 +7003,7 @@ factory.ready.then(async () => {
       // A shader unsupported by this device gets the usual renderer diagnostics on first draw.
     }
   }
-  buildLods(factory.models).catch((e) => console.warn('[lod] skipped', e)); // in the background
+  buildLods(factory.models, lodKeys).catch((e) => console.warn('[lod] skipped', e)); // in the background
   // Sound has to be allowed before the opening hand is dealt, or that whoosh is skipped.
   // When the browser blocks autoplay, the loading screen stays up for one click or key.
   let started = false;
@@ -7044,7 +7065,7 @@ factory.extrasReady.then(async (extras) => {
   if (!extras) return;
   await warmUpModelsGradually(extras);
   adoptBlockouts();
-  buildLods(extras).catch((e) => console.warn('[lod] skipped', e));
+  buildLods(extras, lodKeys).catch((e) => console.warn('[lod] skipped', e));
   rivalView.refresh(true);
   await prewarmBuildReveal();
 });
