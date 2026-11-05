@@ -10,7 +10,7 @@
  *   dialogue.close()
  */
 
-import { choiceClick, choiceHover, click as clickSfx, hasVoice, speak, voiceLine } from './sfx.js';
+import { choiceClick, choiceHover, click as clickSfx, speak } from './sfx.js';
 import { L, onLangChange, textOf } from './i18n.js';
 
 /** Portrait per speaker. A string starting with '<svg' is inlined; anything else is used as an image URL. */
@@ -97,7 +97,6 @@ export class Dialogue {
 
   /** The speaker exits: portrait slides away, then the overlay closes. Resolves when gone. */
   leave(ms = 600) {
-    this.#stopVoice(0.3);
     this.$('.dlg-choices').innerHTML = '';
     this.root.classList.add('leaving');
     return new Promise((r) =>
@@ -114,7 +113,6 @@ export class Dialogue {
     this.skip = false;
     this.skippable = true;
     this.#stopTyping();
-    this.#stopVoice();
     this.source = undefined;
     this.banner = null;
     this.root.classList.add('hidden');
@@ -194,26 +192,11 @@ export class Dialogue {
     this.$('.dlg-next').classList.add('hidden');
     this.#syncSkip();
     this.source = text;
-    // The speaker says the line in their own tongue (not while a skip is racing through the lines), and the words
-    // type out over the speech, so the text and the voice finish together.
-    this.#stopVoice();
-    if (!(this.skip && this.skippable)) this.voice = voiceLine(speaker, textOf(text));
-    this.lineSecs = this.voice ? this.voice.speech : null;
     this.#type(textOf(text));
   }
 
-  /** The current line's voice fades out (the line was advanced, or the dialogue closed). */
-  #stopVoice(fade) {
-    this.voice?.stop(fade);
-    this.voice = null;
-  }
-
-  /**
-   * Type `text` out, starting `from` characters in (a language switch mid-line carries on where it was). A voiced
-   * line types over its speech (lineSecs for the whole line), anything else at CHARS_PER_SEC.
-   */
+  /** Type `text` out, starting `from` characters in (a language switch mid-line carries on where it was). */
   #type(text, from = 0) {
-    const cps = this.lineSecs ? Math.max(4, text.length / this.lineSecs) : CHARS_PER_SEC;
     this.#stopTyping();
     const el = this.$('.dlg-text');
     this.full = text;
@@ -226,7 +209,7 @@ export class Dialogue {
     let voiced = 0;
     const step = (now) => {
       start ??= now;
-      const next = Math.max(from, Math.min(text.length, from + Math.floor(((now - start) / 1000) * cps)));
+      const next = Math.max(from, Math.min(text.length, from + Math.floor(((now - start) / 1000) * CHARS_PER_SEC)));
       let talk = false;
       for (let i = this.shown; i < next; i++) {
         if (text[i] === ' ') continue;
@@ -235,7 +218,7 @@ export class Dialogue {
       }
       this.shown = next;
       el.textContent = text.slice(0, this.shown);
-      if (talk && !hasVoice(this.speaker)) speak();
+      if (talk) speak();
       if (this.shown < text.length) this.raf = requestAnimationFrame(step);
       else this.#finishTyping();
     };
@@ -302,14 +285,12 @@ export class Dialogue {
       }
       if (this.choices[this.selected]?.disabled) return;
       if (sound) choiceClick();
-      this.#stopVoice();
-    const done = this.resolve;
+      const done = this.resolve;
       this.resolve = null;
       done(this.selected);
       return;
     }
     if (sound) clickSfx();
-    this.#stopVoice();
     const done = this.resolve;
     this.resolve = null;
     done();

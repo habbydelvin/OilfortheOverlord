@@ -7324,7 +7324,7 @@ factory.ready.then(async () => {
     }
   }
   buildLods(factory.models, lodKeys).catch((e) => console.warn('[lod] skipped', e)); // in the background
-  // The opening hand's landing and the first lines should be heard: give the recordings a moment to decode (never more than 4 s).
+  // The opening hand's landing should be heard: give the recorded sound effects a moment to decode (never more than 4 s).
   await Promise.race([sfxLoaded(), new Promise((r) => setTimeout(r, 4000))]);
   // Sound has to be allowed before the opening hand is dealt, or that whoosh is skipped.
   // When the browser blocks autoplay, the loading screen stays up for one click or key.
