@@ -48,6 +48,7 @@ import { createDebugPanel } from './debugPanel.js';
 import { CameraShake, SHAKE_PARAMS, SHAKE_DEFAULTS, loadShakeConfig, saveShakeConfig, clearShakeConfig } from './cameraShake.js';
 import { SCALE, SCALE_PARAMS, SCALE_DEFAULTS, loadScaleConfig, saveScaleConfig, clearScaleConfig, eventPct, P } from './scalingConfig.js';
 import { Traffic } from './traffic.js';
+import { LOD, buildLods, setLod, wantLod, lodStats } from './lod.js';
 import { ZoomIcons, MAP_ICONS, ICON_PARAMS, ICON_DEFAULTS, loadIconConfig, saveIconConfig, clearIconConfig } from './zoomIcons.js';
 import { Perf } from './perfOverlay.js';
 import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig, applyGfx } from './graphics.js';
@@ -6578,6 +6579,25 @@ function renderGhost() {
   renderer.shadowMap.autoUpdate = shadows;
 }
 
+/**
+ * Zoomed out (the map icons fully in), buildings draw their light copies (lod.js); close up, the full models.
+ * Each scene keeps its own state; while light, it is swept again now and then for tiles placed or rebuilt since.
+ */
+const lodState = new WeakMap(); // scene root -> { on, sweep }
+const LOD_DISTANCE_KEY = 'oto.lodDistance';
+LOD.distance = Number(localStorage.getItem(LOD_DISTANCE_KEY)) || LOD.distance; // Performance overlay slider, kept across reloads
+const lodDistance = () => LOD.distance;
+function updateLod(root, dt) {
+  let st = lodState.get(root);
+  if (!st) lodState.set(root, (st = { on: false, sweep: 0 }));
+  const on = wantLod(rig.distance, lodDistance(), st.on);
+  st.sweep -= dt;
+  if (on === st.on && (!on || st.sweep > 0)) return;
+  st.sweep = 0.5;
+  st.on = on;
+  setLod(root, on);
+}
+
 let last = performance.now();
 function updatePayoutFx(dt) {
   payoutHud.batch(() => {
@@ -6638,6 +6658,7 @@ function frame(now) {
     camShake.update(dt, rig.distance);
     rivalView.update(dt, camera); // fog and targeting animations; render() owns the depth/colour passes
     updateAimHover();
+    updateLod(rivalView.scene, dt);
     rivalView.render(camera);
     tutorial.update(time); // the guided trip: back to the War Map from here
     perf.gpuEnd();
@@ -6707,6 +6728,7 @@ function frame(now) {
   perf.begin('render (cpu)');
   perf.gpuBegin();
   updateCurve(camera, rig.target); // the small-planet bend, around where the camera looks
+  updateLod(scene, dt);
   scene.updateMatrixWorld(); // once for culling, fog depth and shadow inspection, including when shadows are off
   shadowCache.update(scene, camera, renderer, true);
   try {
@@ -6751,6 +6773,19 @@ perf.counter('batched parts / draws', () => {
   return `${batches.reduce((n, b) => n + b.stats.parts, 0)} / ${batches.reduce((n, b) => n + b.stats.batches, 0)}`;
 });
 perf.counter('instance transforms uploaded', () => view === 'rival' ? rivalView.instancer.stats.uploads : instancer.stats.uploads + trafficInstances.stats.uploads);
+perf.counter('LOD triangles (full → light)', () => `${Math.round(lodStats.before).toLocaleString()} → ${Math.round(lodStats.after).toLocaleString()} in ${lodStats.meshes} meshes`);
+perf.toggle({ label: 'LOD models', options: ['Auto', 'On', 'Off'], get: () => LOD.mode, set: (v) => (LOD.mode = v) });
+// Where Auto switches to the light models (camera distance).
+perf.toggle({
+  label: 'LOD distance',
+  range: [6, 48, 0.5],
+  get: () => lodDistance(),
+  set: (v) => {
+    LOD.distance = v;
+    localStorage.setItem(LOD_DISTANCE_KEY, String(v));
+  },
+});
+perf.counter('camera distance', () => rig.distance.toFixed(1));
 perf.counter('sun shadow', () => shadowCache.stats.updated ? 'updated' : 'reused');
 perf.toggle({ label: 'Instanced buildings', get: () => instancer.enabled, set: (on) => { instancer.enabled = rivalView.instancer.enabled = trafficInstances.enabled = on; shadowCache.invalidate(); } });
 perf.toggle({ label: 'Fog', get: () => fog.visible, set: (on) => fog.setVisible(on) });
@@ -6862,6 +6897,7 @@ factory.ready.then(async () => {
       // A shader unsupported by this device gets the usual renderer diagnostics on first draw.
     }
   }
+  buildLods(factory.models).catch((e) => console.warn('[lod] skipped', e)); // in the background
   // Sound has to be allowed before the opening hand is dealt, or that whoosh is skipped.
   // When the browser blocks autoplay, the loading screen stays up for one click or key.
   let started = false;
@@ -6922,6 +6958,7 @@ factory.extrasReady.then(async (extras) => {
   if (!extras) return;
   await warmUpModelsGradually(extras);
   adoptBlockouts();
+  buildLods(extras).catch((e) => console.warn('[lod] skipped', e));
   rivalView.refresh(true);
   await prewarmBuildReveal();
 });
@@ -6930,4 +6967,4 @@ factory.extrasReady.then(async (extras) => {
 if (RELEASE) for (const id of ['debugDock', 'libraryLink']) document.getElementById(id)?.remove();
 
 // Handy for debugging in the console (dev builds only).
-if (!RELEASE) window.tileIsland = { instancer, shadowCache, tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, openCityStrike, drawStrikeHand, missileCount, _t: { openGlobe, globeCfg, clear: () => (eventOpen = false), war: { addMissile, queueDrawn, updateAimBar, runAttackPhase, rivals: () => rivals } } };
+if (!RELEASE) window.tileIsland = { lod: { LOD, lodStats, setLod }, instancer, shadowCache, tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, openCityStrike, drawStrikeHand, missileCount, _t: { openGlobe, globeCfg, clear: () => (eventOpen = false), war: { addMissile, queueDrawn, updateAimBar, runAttackPhase, rivals: () => rivals } } };

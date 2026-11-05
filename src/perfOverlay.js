@@ -65,7 +65,7 @@ export class Perf {
   #lastUi = 0;
   #capture = null; // { until, frames: [] }
   #counters = {}; // name -> fn returning a number/string, shown in the overlay
-  #toggles = []; // { label, get, set } or { label, options, get, set }
+  #toggles = []; // { label, get, set }, { label, options, get, set } or { label, range: [min, max, step], get, set }
 
   constructor(renderer) {
     this.renderer = renderer;
@@ -290,7 +290,9 @@ export class Perf {
 #perf button { padding: 3px 8px; cursor: pointer; }
 #perf .acts { display: flex; gap: 6px; margin-top: 6px; }
 #perf .st { color: #9fd49a; min-height: 14px; margin-top: 4px; white-space: normal; }
-#perf .warn { color: #e2a35a; }`;
+#perf .warn { color: #e2a35a; }
+#perf label.range { flex-wrap: wrap; }
+#perf label.range input { width: 100%; margin: 2px 0 4px; }`;
     document.head.appendChild(style);
     const root = document.createElement('div');
     root.id = 'perf';
@@ -328,10 +330,19 @@ export class Perf {
         this.#gpuTotal = new Series();
       } else if (act === 'close') this.setOpen(false);
     });
+    // Sliders apply while dragging, their value shown beside the label.
+    root.addEventListener('input', (e) => {
+      const i = Number(e.target.dataset.t);
+      const t = this.#toggles[i];
+      if (!t?.range) return;
+      t.set(Number(e.target.value));
+      const v = root.querySelector(`[data-v="${i}"]`);
+      if (v) v.textContent = t.get();
+    });
     root.addEventListener('change', (e) => {
       const i = Number(e.target.dataset.t);
       const t = this.#toggles[i];
-      if (!t) return;
+      if (!t || t.range) return;
       t.set(e.target.type === 'checkbox' ? e.target.checked : e.target.value);
       e.target.blur();
     });
@@ -349,7 +360,9 @@ export class Perf {
     if (!el) return;
     el.innerHTML = this.#toggles
       .map((t, i) =>
-        t.options
+        t.range
+          ? `<label class="range">${t.label} <b data-v="${i}">${t.get()}</b><input type="range" data-t="${i}" min="${t.range[0]}" max="${t.range[1]}" step="${t.range[2]}" value="${t.get()}" /></label>`
+          : t.options
           ? `<label>${t.label}<select data-t="${i}">${t.options.map((o) => `<option${String(o) === String(t.get()) ? ' selected' : ''}>${o}</option>`).join('')}</select></label>`
           : `<label>${t.label}<input type="checkbox" data-t="${i}"${t.get() ? ' checked' : ''} /></label>`,
       )
