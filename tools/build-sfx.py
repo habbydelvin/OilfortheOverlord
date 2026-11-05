@@ -1,8 +1,8 @@
 """
 Renders the game's sound effects (public/audio/sfx/*.wav), played by src/sfx.js.
 
-For now there is one: a tile landing on the board. The rest of the game's sound hooks are silent until each gets a sound
-that fits (see src/sfx.js).
+The tile landing is synthesised here. Rotating a piece and an illegal placement are recordings (Kenney, CC0; originals in
+art/audio-src/kenney), trimmed, pitched, darkened and given a little room here. Needs ffmpeg for those.
 
 Sounds are synthesised here, offline, with physical models rather than plain oscillators, so they sit with the music
 (OverlordIsWatching: G minor, slow, dark, nearly all of its energy under 800 Hz) and the picture (sand, rusted iron):
@@ -15,7 +15,7 @@ dBFS) with at least 1 dB headroom, in several takes; sfx.js picks between them a
 Needs numpy and scipy:  python3 -m venv /tmp/sfxenv && /tmp/sfxenv/bin/pip install numpy scipy
 Run:                    /tmp/sfxenv/bin/python tools/build-sfx.py [name ...]
 """
-import json, os, sys, wave
+import json, os, subprocess, sys, wave
 import numpy as np
 from scipy import signal
 
@@ -152,19 +152,20 @@ def grains(d, rate, lo, hi, dur=(0.002, 0.012), amp=(0.2, 1.0), shape=None):
 
 
 # ---------- reverb ----------
-def make_ir(length, decay, lo_cut=200, hi_cut=4000, predelay=0.01, early=6):
+def make_ir(length, decay, lo_cut=200, hi_cut=4000, predelay=0.01, early=6, gen=None):
+    rng_ = gen or rng
     n = secs(length)
     t = np.arange(n) / SR
-    ir = rng.normal(0, 1, n) * np.exp(-6.9 * t / decay)
+    ir = rng_.normal(0, 1, n) * np.exp(-6.9 * t / decay)
     # Darker as it decays: blend a low-passed copy in over time.
     dark = lp(ir, hi_cut * 0.4)
     w = np.clip(t / decay, 0, 1)
     ir = (1 - w) * lp(ir, hi_cut) + w * dark
     ir = hp(ir, lo_cut, 1)
     for i in range(early):
-        k = secs(predelay + rng.uniform(0.004, 0.03))
+        k = secs(predelay + rng_.uniform(0.004, 0.03))
         if k < n:
-            ir[k] += rng.uniform(0.3, 0.7) * rng.choice([-1, 1]) * np.max(np.abs(ir[:200]))
+            ir[k] += rng_.uniform(0.3, 0.7) * rng_.choice([-1, 1]) * np.max(np.abs(ir[:200]))
     pd = secs(predelay)
     ir = np.concatenate([np.zeros(pd), ir])
     return ir / np.sqrt(np.sum(ir ** 2))
@@ -242,10 +243,66 @@ def s_thud(heavy=False):
     return finish(mix((body, 0), (puff, 0), (hush, 0.005)), BOARD + (2 if heavy else 0), top=4000, ir=IR_YARD, wet=0.04)
 
 
-# name: (builder, takes)
+# ---- recorded foley (Kenney "Impact Sounds" / "Interface Sounds", CC0; originals in art/audio-src/kenney) ----
+KENNEY = os.path.join(ROOT, 'art/audio-src/kenney')
+# Its own random source and room, so adding recordings never changes how the synthesised sounds above render.
+IR_ROOM = make_ir(0.5, 0.3, hi_cut=4500, predelay=0.004, gen=np.random.default_rng(23))
+
+
+def load(path):
+    """Any audio file -> mono float at SR (decoded by ffmpeg)."""
+    raw = subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-f', 'f32le', '-ac', '1', '-ar', str(SR), '-'], capture_output=True, check=True).stdout
+    return np.frombuffer(raw, dtype='<f4').astype(float)
+
+
+def recorded(file, target, pitch=1.0, keep=0.4, top=5000, wet=0.08, peak_db=None):
+    """A recording: leading silence cut (it must sound the instant it's played), pitched (`pitch` < 1 is lower and
+    heavier), at most `keep` seconds, darkened to sit with the music, a touch of small iron room.
+    `file` may be (name, start, end) to use only that stretch of it. `peak_db` levels by peak instead (for clicks a few
+    milliseconds long, which an RMS target would blow up)."""
+    span = None
+    if isinstance(file, tuple):
+        file, *span = file
+    x = load(os.path.join(KENNEY, file))
+    if span:
+        x = x[secs(span[0]) : secs(span[1])]
+    a = np.abs(x)
+    on = max(0, int(np.argmax(a > a.max() * 0.15)) - secs(0.002))
+    x = x[on:]
+    if pitch != 1.0:
+        from fractions import Fraction
+
+        fr = Fraction(1 / pitch).limit_denominator(40)
+        x = signal.resample_poly(x, fr.numerator, fr.denominator)
+    x = x[: secs(keep)].copy()
+    fo = min(secs(0.04), len(x) // 3)
+    x[-fo:] *= np.linspace(1, 0, fo) ** 2
+    x = finish(x, target, top=top, low=60, ir=IR_ROOM, wet=wet)
+    if peak_db is not None:
+        x *= 10 ** (peak_db / 20) / (np.abs(x).max() + 1e-12)
+    return x
+
+
+def takes(files, **kw):
+    """One builder per take: call with the take's index."""
+    return lambda i: recorded(files[i], **kw)
+
+
+# Rotate a piece: one very short, dry tick (10-15 ms), left as it is: no pitch, no room. (A ringing metal knock sounded
+# like a ceramic cup, and a ratchet was still too much.)
+ROTATE = ['click_002.ogg', 'click_003.ogg', 'click_001.ogg']
+# Illegal placement: a dull, heavy iron clunk (blocked), not a buzzer.
+BUZZ = [f'impactMetal_heavy_00{i}.ogg' for i in range(5)]
+# Alternative to compare: a dull heavy wooden knock.
+BUZZ_ALT = [f'impactWood_heavy_00{i}.ogg' for i in range(5)]
+
+# name: (builder, takes). A builder may take the take's index.
 SOUNDS = {
     'thud': (lambda: s_thud(False), 4),
     'thud-heavy': (lambda: s_thud(True), 3),
+    'rotate': (takes(ROTATE, target=BOARD, keep=0.05, top=6000, wet=0, peak_db=-12), len(ROTATE)),
+    'buzz': (takes(BUZZ, target=BOARD - 2, pitch=0.85, keep=0.3, top=3500), len(BUZZ)),
+    'buzz-alt': (takes(BUZZ_ALT, target=BOARD - 2, pitch=1.0, keep=0.3, top=3000), len(BUZZ_ALT)),
 }
 
 
@@ -257,7 +314,7 @@ def main():
             manifest[name] = n
             continue
         for i in range(n):
-            x = fn()
+            x = fn(i) if fn.__code__.co_argcount else fn()
             write(f'{name}-{i + 1}', x)
         manifest[name] = n
         print(f'{name}: {n} × ~{len(x) / SR:.2f}s')

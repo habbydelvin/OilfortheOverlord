@@ -1,4 +1,7 @@
 {
 "thud": 4,
-"thud-heavy": 3
+"thud-heavy": 3,
+"rotate": 3,
+"buzz": 5,
+"buzz-alt": 5
 }

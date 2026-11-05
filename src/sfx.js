@@ -2,8 +2,8 @@
  * Placeholder sound effects, synthesised in the browser, with some recordings:
  * - the tile landing (thud): takes in public/audio/sfx, rendered offline by tools/build-sfx.py to sit with the music,
  *   decoded as soon as this module loads (an OfflineAudioContext decodes without a click);
- * - Wasteland and building landings, piece rotation and the War Map whooshes: public/audio/place, ui, transition
- *   (loaded after unlock).
+ * - rotating a piece and an illegal placement: also public/audio/sfx (Kenney foley, processed by build-sfx.py);
+ * - Wasteland and building landings and the War Map whooshes: public/audio/place, transition (loaded after unlock).
  *
  * The context is opened when the game starts, before the opening hand is dealt. If the
  * browser still refuses sound, that call does nothing until a click or key on the loading
@@ -81,11 +81,6 @@ const BUILD_THUDS = ['/audio/place/building-1.ogg', '/audio/place/building-2.ogg
 let buildBufs = [];
 let buildLoad = null;
 let buildLast = -1;
-/** Button clicks for rotating a piece (ZapSplat, Ogg Opus). Loaded after unlock. */
-const ROTATE_CLICKS = ['/audio/ui/rotate-click-001.ogg', '/audio/ui/rotate-click-002.ogg', '/audio/ui/rotate-click-003.ogg', '/audio/ui/rotate-click-005.ogg'];
-let rotateBufs = [];
-let rotateLoad = null;
-let rotateLast = -1;
 /** Whooshes for the cloud transition. [0] zooms out to the planet, [1] zooms into a city. */
 const ZOOM_WHOOSH = ['/audio/transition/zoom-out.ogg', '/audio/transition/zoom-in.ogg?v=2'];
 let zoomBufs = [null, null];
@@ -194,24 +189,6 @@ function loadBuildThuds() {
   });
 }
 
-function loadRotateClicks() {
-  if (rotateLoad || !ctx) return;
-  rotateLoad = Promise.all(
-    ROTATE_CLICKS.map(async (file) => {
-      try {
-        const res = await fetch(file);
-        if (!res.ok) throw new Error(res.status);
-        return await ctx.decodeAudioData(await res.arrayBuffer());
-      } catch (err) {
-        console.warn(`[sfx] ${file} failed to load`, err);
-        return null;
-      }
-    }),
-  ).then((bufs) => {
-    rotateBufs = bufs.filter(Boolean);
-  });
-}
-
 function loadZoomWhooshes() {
   if (!ctx || zoomLoad) return;
   zoomLoad = true;
@@ -231,7 +208,6 @@ export function unlockSfx() {
   if (ctx.state === 'suspended') ctx.resume();
   loadWasteThuds();
   loadBuildThuds();
-  loadRotateClicks();
   loadZoomWhooshes();
   return ctx.state === 'running';
 }
@@ -334,6 +310,11 @@ function sample(name, { gain = 1, vary = 0.03 } = {}) {
   });
 }
 
+/** Any recording in public/audio/sfx by name (the preview page uses it to compare alternatives). */
+export function playTake(name) {
+  sample(name, { vary: 0.04 });
+}
+
 /** Pointer entered a card. Quieter and higher than the select tick. */
 export function hover() {
   begin(0.04, (t, nodes) => tone(nodes, t, 'sine', 1280, 0.03, 0.1));
@@ -418,26 +399,9 @@ export function buildThud() {
   });
 }
 
-/** A piece is rotated: one of the recorded button clicks, or the synthesised chirp if they are not ready. */
+/** A piece is rotated: one very short, dry tick (recorded, public/audio/sfx/rotate-*). */
 export function rotateClick() {
-  if (!rotateBufs.length) {
-    chirp();
-    return;
-  }
-  let i = Math.floor(Math.random() * rotateBufs.length);
-  if (rotateBufs.length > 1 && i === rotateLast) i = (i + 1) % rotateBufs.length;
-  rotateLast = i;
-  const buf = rotateBufs[i];
-  begin(buf.duration, (t, nodes) => {
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.playbackRate.value = 1 + (Math.random() * 2 - 1) * 0.03;
-    const g = ctx.createGain();
-    g.gain.value = 0.8;
-    src.connect(g).connect(master);
-    src.start(t);
-    nodes.push(src, g);
-  });
+  sample('rotate', { vary: 0.04 });
 }
 
 /** A Wasteland tile hits the sand: one of the recorded rock drops, or the heavy thud if they are not ready. */
@@ -461,9 +425,9 @@ export function wasteThud() {
   });
 }
 
-/** Illegal placement. */
+/** Illegal placement: a dull, blocked iron clunk (recorded, public/audio/sfx/buzz-*). */
 export function buzz() {
-  begin(0.14, (t, nodes) => tone(nodes, t, 'square', 220, 0.12, 0.1, 110));
+  sample('buzz', { vary: 0.04 });
 }
 
 /** A bad toast that is not already a placement buzz. */
