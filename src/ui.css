@@ -32,6 +32,24 @@ body {
   inset: 0;
 }
 
+/* Whole-screen blink when a laser bolt drops. One instant, then gone. */
+#laserFlash {
+  position: fixed;
+  inset: 0;
+  z-index: 96;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+}
+#laserFlash.on {
+  animation: laser-flash 0.14s linear;
+}
+@keyframes laser-flash {
+  0% { opacity: 0; }
+  12% { opacity: 0.92; }
+  100% { opacity: 0; }
+}
+
 #app canvas {
   display: block;
 }

@@ -58,6 +58,7 @@ import { Perf } from './perfOverlay.js';
 import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig, applyGfx } from './graphics.js';
 import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
 import { MissileStrike, MISSILE_PARAMS, MISSILE_DEFAULTS, MISSILE_TAIL, loadMissileConfig, saveMissileConfig, clearMissileConfig } from './missiles.js';
+import { LaserStrike } from './laserStrike.js';
 import { Tutorial, TUTORIAL_KEY, OPENING, tutorialDone, markTutorialDone } from './tutorial.js';
 import { L, both, isZh, toggleLang, onLangChange, applyStatic, textOf, retranslate } from './i18n.js';
 import { createRivals, advanceRivals, rivalStats, PLAYER_NODE } from './rivals.js';
@@ -140,6 +141,30 @@ function missileWhoosh(t) {
   return end > 0.2 ? combatAudio.incoming(end) : null;
 }
 const missiles = new MissileStrike(scene, camera, missileCfg);
+const lasers = new LaserStrike(scene, camera, missileCfg);
+const OVERLORD_STRIKE_KEY = 'oto.overlordStrike';
+const LASER_COLOR_KEY = 'oto.laserColor';
+const LASER_COLOR_DEFAULT = '#24c5ff';
+/** Which strike the Overlord uses: the bottom-left button and a missed tribute. 'missile' or 'laser'. */
+function overlordStrikeKind() {
+  return localStorage.getItem(OVERLORD_STRIKE_KEY) === 'laser' ? 'laser' : 'missile';
+}
+function setOverlordStrikeKind(kind) {
+  localStorage.setItem(OVERLORD_STRIKE_KEY, kind === 'laser' ? 'laser' : 'missile');
+}
+function strikeLabel() {
+  return overlordStrikeKind() === 'laser' ? { en: 'Laser strike', zh: '激光打击' } : { en: 'Missile strike', zh: '导弹打击' };
+}
+function laserColor() {
+  const saved = localStorage.getItem(LASER_COLOR_KEY);
+  return /^#[0-9a-fA-F]{6}$/.test(saved ?? '') ? saved : LASER_COLOR_DEFAULT;
+}
+function setLaserColor(hex) {
+  const v = /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : LASER_COLOR_DEFAULT;
+  localStorage.setItem(LASER_COLOR_KEY, v);
+  lasers.setBeamColor(v);
+}
+lasers.setBeamColor(laserColor());
 const shakeCfg = loadShakeConfig(); // Game Debug → Missile camera shake
 const camShake = new CameraShake(camera, shakeCfg); // missile strikes only; tiles etc. use the small `shake` jolt
 const gfxCfg = loadGfxConfig();
@@ -226,6 +251,15 @@ const debug = RELEASE
     return 'Tutorial reset: guided first Spring started';
   },
   onMissiles: () => (tutorialBlocks() ? 'Not during the tutorial' : previewMissileStrike()),
+  overlordStrike: overlordStrikeKind,
+  onOverlordStrike: (kind) => {
+    setOverlordStrikeKind(kind);
+    const name = strikeLabel();
+    return L(name.en, name.zh);
+  },
+  laserColor,
+  laserColorDefault: LASER_COLOR_DEFAULT,
+  onLaserColor: setLaserColor,
   onShake: () => {
     camShake.add(missileCfg.shake);
     return 'Shake: one missile impact';
@@ -1063,12 +1097,123 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
 }
 
 /**
+ * 激光打击. No missile. The camera centres each building in a random order and stays on the last.
+ * Three thin columns spin inward, then a thick column and a bolt drop in one flash. The bolt
+ * touching the ground plays the missile impact (blast, shake, crater).
+ */
+async function playLaserStrike(targets, { convert = true, restoreCamera = true, onCover = null, holdAfter = null, free = false } = {}) {
+  const run = runId;
+  const lost = [];
+  const interceptUsed = new Set();
+  if (!targets.length) return lost;
+  const prevEvent = eventOpen;
+  if (!free) {
+    striking = true;
+    eventOpen = true;
+    hand.select(-1);
+    if (previewing) cancelPreview();
+    document.body.classList.add('striking');
+    rig.locked = true;
+  }
+  const saved = { goal: rig.goal.clone(), distance: rig.goalDistance };
+  const endStrike = (prev) => !free && endCinematic(prev);
+  const order = targets.slice();
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  const centre = (t) => {
+    const w = hexToWorld(t.x, t.z);
+    followCamera(new THREE.Vector3(w.x, 0, w.z), 16, 4.5);
+  };
+  const stop = () => {
+    lasers.abortGathers();
+    endStrike(prevEvent);
+  };
+  for (let i = 0; i < order.length; i++) {
+    const t = order[i];
+    centre(t);
+    await wait(i === 0 ? 0.7 : 0.55);
+    if (run !== runId) {
+      stop();
+      return lost;
+    }
+    const w = hexToWorld(t.x, t.z);
+    await lasers.gather(w.x, w.z, { onBolt: laserFlash });
+    if (run !== runId) {
+      stop();
+      return lost;
+    }
+    const hit = { x: w.x, z: w.z, cell: { x: t.x, z: t.z } };
+    lasers.impact(hit, {
+      onImpact: () => {
+        if (run !== runId) return;
+        explode('large');
+        dust.burst(t.x, t.z, 1.8);
+        fog.disturb(t.x, t.z);
+        camShake.add(missileCfg.shake);
+      },
+      onCover: () => {
+        if (run !== runId) return;
+        if (onCover) {
+          onCover({ x: t.x, z: t.z }, t);
+          return;
+        }
+        if (!convert) return;
+        if (tryIntercept(t.x, t.z, interceptUsed)) return;
+        const name = craterAt(t.x, t.z);
+        if (name) lost.push(name);
+      },
+    });
+    if (i < order.length - 1) await wait(0.45);
+    if (run !== runId) {
+      stop();
+      return lost;
+    }
+  }
+  await wait(holdAfter ?? missileCfg.holdAfter);
+  if (run !== runId) {
+    stop();
+    return lost;
+  }
+  if (restoreCamera && !free) {
+    rig.goal.copy(saved.goal);
+    rig.goalDistance = saved.distance;
+    await wait(0.7);
+    if (run !== runId) {
+      stop();
+      return lost;
+    }
+  }
+  endStrike(prevEvent);
+  return lost;
+}
+
+/** One white blink across the whole screen as the laser bolt falls. */
+function laserFlash() {
+  let el = document.getElementById('laserFlash');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'laserFlash';
+    document.body.appendChild(el);
+  }
+  el.classList.remove('on');
+  void el.offsetWidth;
+  el.classList.add('on');
+}
+
+/** The Overlord's strike: missile or laser, from Game Debug. */
+function playOverlordStrike(targets, opts) {
+  return overlordStrikeKind() === 'laser' ? playLaserStrike(targets, opts) : playMissileStrike(targets, opts);
+}
+
+/**
  * An attack-phase strike on your board (target.shots from war.js): each Intercept Network that fires opens up
  * with its CIWS turret as the missile comes down; a successful one shoots it out of the sky.
  */
 const CIWS_START = 0.22;
 const CIWS_GAP = 0.14;
-function fireDefences(t, u) {
+function fireDefences(t, u, sys = missiles) {
   // A simulated strike's guns play from setDefence. This list is the older cinematic path.
   if (typeof t.clock === 'function') return;
   const shots = t.shots;
@@ -1077,11 +1222,11 @@ function fireDefences(t, u) {
   while (t.fired < shots.length && u >= CIWS_START + CIWS_GAP * t.fired) {
     const shot = shots[t.fired++];
     const pad = hexToWorld(shot.x, shot.z);
-    missiles.fireCIWS(findCiws(grid.get(shot.x, shot.z)?.mesh), new THREE.Vector3(pad.x, 0.35, pad.z), () => missiles.position(t), {
+    sys.fireCIWS(findCiws(grid.get(shot.x, shot.z)?.mesh), new THREE.Vector3(pad.x, 0.35, pad.z), () => sys.position(t), {
       success: shot.success,
       onFire: (dur) => gunSnd(dur),
       onKill: () => {
-        if (missiles.destroy(t)) {
+        if (sys.destroy(t)) {
           camShake.add(missileCfg.shake * 0.35);
           explode('small');
         }
@@ -1333,11 +1478,11 @@ function landReveals(found, delay) {
 }
 
 /** Report line once the missiles have landed. */
-function reportStrike(lost) {
+function reportStrike(lost, label = { en: 'Missile strike', zh: '导弹打击' }) {
   if (!lost.length) return;
   $('report').innerHTML += L(
-    `<br /><span class="bad">Missile strike: your ${listLost(lost)} ${lost.length === 1 ? 'is now a Toxic Crater' : 'are now Toxic Craters'}.</span>`,
-    `<br /><span class="bad">导弹打击：你的${listLost(lost)}已化为毒坑。</span>`,
+    `<br /><span class="bad">${label.en}: your ${listLost(lost)} ${lost.length === 1 ? 'is now a Toxic Crater' : 'are now Toxic Craters'}.</span>`,
+    `<br /><span class="bad">${label.zh}：你的${listLost(lost)}已化为毒坑。</span>`,
   );
 }
 
@@ -1361,12 +1506,19 @@ function previewMissileStrike({ convert = missileCfg.previewCraters === 'yes', c
     targets.push({ x, z });
   }
   const run = runId;
-  playMissileStrike(targets, { convert }).then((lost) => {
+  playOverlordStrike(targets, { convert }).then((lost) => {
     if (run !== runId) return;
     eventOpen = false;
-    reportStrike(lost);
+    reportStrike(lost, strikeLabel());
     updateHUD();
-    if (lost.length) toast(() => L(`The Overlord's missiles destroyed your ${listLost(lost)}`, `霸主的导弹摧毁了你的${listLost(lost)}`), 'bad', 2600);
+    if (lost.length) {
+      const name = strikeLabel();
+      toast(
+        () => L(`The Overlord's ${name.en.toLowerCase()} destroyed your ${listLost(lost)}`, `霸主的${name.zh}摧毁了你的${listLost(lost)}`),
+        'bad',
+        2600,
+      );
+    }
   });
   return `Missile strike: ${targets.length} missile${targets.length === 1 ? '' : 's'}`;
 }
@@ -1412,7 +1564,7 @@ function debugRandomStrike() {
     targets.push({ x, z });
   }
   const run = runId;
-  playMissileStrike(targets, { convert: missileCfg.previewCraters === 'yes' }).then((lost) => {
+  playOverlordStrike(targets, { convert: missileCfg.previewCraters === 'yes' }).then((lost) => {
     if (run !== runId) return;
     eventOpen = false;
     updateHUD();
@@ -6801,8 +6953,8 @@ async function playTributeFailure({ quota, delivered, short, missiles: count, st
     if (!targets.length || !live()) return [];
     await dialogue.leave();
     if (!live()) return [];
-    const lost = await playMissileStrike(targets, opts);
-    if (live()) reportStrike(lost);
+    const lost = await playOverlordStrike(targets, opts);
+    if (live()) reportStrike(lost, strikeLabel());
     return lost;
   };
 
@@ -7043,6 +7195,7 @@ function frame(now) {
   if (view !== 'globe') globe.tickWar(dt);
   if (view !== 'board') {
     missiles.update(dt);
+    lasers.update(dt);
     dust.update(dt);
   }
   syncDefence();
@@ -7100,6 +7253,7 @@ function frame(now) {
   perf.end('dust');
   perf.begin('missiles');
   missiles.update(dt);
+  lasers.update(dt);
   perf.end('missiles');
   perf.begin('tile anims');
   factory.update(dt, scene);
