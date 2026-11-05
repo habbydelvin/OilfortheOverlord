@@ -23,6 +23,9 @@ const DEV_KEYS = [
   'oto.shakeConfig',
   'oto.previewConfig',
   'oto.globeConfig',
+  'oto.intercept', // combat-test tuning (arsenal.js): the release plays the code defaults
+  'oto.decoy',
+  'oto.boost',
 ];
 
 /** Saves from older releases that no longer count: the old tutorial flag (now oto.tutorialDone.v2, tutorial.js). */
