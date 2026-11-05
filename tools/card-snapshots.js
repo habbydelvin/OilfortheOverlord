@@ -51,8 +51,8 @@ const VIEWS = {
   magazine: { elevation: 30, closeUp: 0.72, underground: false },
   // Its hangar, antenna tower and decoys on their stands: raised like the Magazine so the yard reads.
   decoyworks: { elevation: 30, closeUp: 0.86, underground: false },
-  // Code-built (src/launcherMeshes.js): a little raised so the pad, gantry and rail read.
-  booster: { elevation: 18, closeUp: 0.9, underground: false },
+  // Its domed coil drum and barrel: raised like the Magazine so the coils and rings read.
+  booster: { elevation: 26, closeUp: 0.86, underground: false },
 };
 
 const GROUND_CLIP = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // keeps y >= 0

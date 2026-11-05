@@ -98,6 +98,7 @@ const GLB_ONLY = {
   'MissileRecipeLab.glb': 'MissileRecipeLab',
   'InterceptNetwork.glb': 'InterceptNetwork', // Idle (with the gun's sweep) and Fire; the game aims the gun (tiles.js)
   'DecoyBuilder.glb': 'DecoyBuilder', // static (no animation in the file)
+  'LaunchAccelerator.glb': 'LaunchAccelerator', // Idle: glowing coils and rings, fan, beacon, muzzle blast and smoke
   'Mothership.glb': 'Mothership', // the main screen's ship (titleScreen.js); Idle: its hover, propellers and plumes
 };
 /** Not board tiles: kept as modelled (no HEX_YAW turn), so their root may carry its own motion (the ship's hover). */
