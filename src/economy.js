@@ -368,16 +368,22 @@ export function computeEconomy(grid, state = {}) {
       }))
       .filter((g) => g.food || g.oil);
   }
-  // Map icons show this total, the same one the hover card prints. Refineries have no grants:
-  // the card's season line is their own outOil.
-  const boosts = new Map();
   for (const per of perCell) {
     if (per.terrain === 'pump' || per.terrain === 'oasis' || per.terrain === 'tarpit') {
       const res = per.terrain === 'tarpit' ? 'oil' : 'food';
       per.added = (per.grants ?? []).reduce((s, g) => s + (g[res] || 0), 0);
-      if (per.added > 0) boosts.set(`${per.x},${per.z}`, per.added);
-    } else if (per.terrain === 'refinery' && per.outOil > 0) {
-      boosts.set(`${per.x},${per.z}`, per.outOil);
+    }
+  }
+  // One season line per tile (`seasonParts`): the hover card prints it, and the zoomed-out icon shows the same
+  // parts. `boosts` stays the positive total of pumps, oases, tar pits and refineries, for the tutorial.
+  const yields = new Map();
+  const boosts = new Map();
+  for (const per of perCell) {
+    const parts = seasonParts(per);
+    if (parts.length) yields.set(`${per.x},${per.z}`, parts);
+    if (per.terrain === 'pump' || per.terrain === 'oasis' || per.terrain === 'tarpit' || per.terrain === 'refinery') {
+      const n = parts.reduce((s, p) => s + p.n, 0);
+      if (n > 0) boosts.set(`${per.x},${per.z}`, n);
     }
   }
 
@@ -391,6 +397,7 @@ export function computeEconomy(grid, state = {}) {
     perCell,
     shares,
     boosts,
+    yields,
     cap,
     used,
     needed,
@@ -470,6 +477,30 @@ export function computeEconomyIf(grid, state, terrain, cells) {
     map.set(`${x},${z}`, { x, z, terrain, onRuins: old?.terrain === 'ruins' || Boolean(old?.onRuins) });
   }
   return computeEconomy({ cells: map, get: (x, z) => map.get(`${x},${z}`) }, state);
+}
+
+/**
+ * The hover card's season line, as numbers: the same parts `seasonText` prints.
+ * Empty when that line is "idle" or the tile has nothing to settle.
+ * Each part is `{ res: 'food' | 'oil' | 'manpower', n }`.
+ */
+export function seasonParts(per) {
+  if (!per) return [];
+  const t = per.terrain;
+  if (per.idle && (t === 'farm' || t === 'station' || t === 'refinery')) return [];
+  if (t === 'pump' || t === 'oasis' || t === 'tarpit') {
+    const res = t === 'tarpit' ? 'oil' : 'food';
+    return [{ res, n: per.added ?? 0 }];
+  }
+  const parts = [];
+  if (per.outFood > 0) parts.push({ res: 'food', n: per.outFood });
+  if (per.food < 0) parts.push({ res: 'food', n: per.food });
+  if (per.outOil > 0) parts.push({ res: 'oil', n: per.outOil });
+  if (per.oil < 0) parts.push({ res: 'oil', n: per.oil });
+  if (per.outManpower) parts.push({ res: 'manpower', n: per.outManpower });
+  if (t === 'labourcamp' && !per.outManpower) parts.push({ res: 'manpower', n: 0 });
+  if ((t === 'farm' || t === 'station' || t === 'refinery') && !parts.length) parts.push({ res: t === 'farm' ? 'food' : 'oil', n: 0 });
+  return parts;
 }
 
 function counts0(grid, terrain) {

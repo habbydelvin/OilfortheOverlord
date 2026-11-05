@@ -30,7 +30,7 @@ import { setupLegend } from './legend.js';
 import { Mysteries, siloFires } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
-import { computeEconomy, computeEconomyIf, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS, rebelsRise, WORKERS } from './economy.js';
+import { computeEconomy, computeEconomyIf, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS, rebelsRise, seasonParts, WORKERS } from './economy.js';
 import { FACTORY_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, blastExtra, isMilitaryLab, labOilCost } from './arsenal.js';
 import { pieceOf, pieceOffsets } from './pieces.js';
 import { findCiws } from './interceptMesh.js';
@@ -2342,7 +2342,8 @@ function shadeIdle(e = economyNow()) {
     setGrey(cell.mesh, idle.has(`${cell.x},${cell.z}`) || blocked);
   }
   neonTiles.refresh(grid); // boosted buildings' tiles glow (not idle ones)
-  zoomIcons.setBoosts(e.boosts); // "+n" on the zoomed-out icons: the hover card's season total
+  zoomIcons.setBoosts(e.boosts); // tutorial: a booster started adding something
+  zoomIcons.setYields(e.yields); // zoomed-out hover: the card's season line
 }
 
 function missileHandCount() {
@@ -2722,21 +2723,11 @@ function grantText(g) {
 function seasonText(per) {
   const t = per.terrain;
   if (per.idle && (t === 'farm' || t === 'station' || t === 'refinery')) return { en: 'This season: idle', zh: '本季结算：闲置' };
-  if (t === 'pump' || t === 'oasis' || t === 'tarpit') {
-    const res = t === 'tarpit' ? 'oil' : 'food';
-    const n = per.added ?? 0;
-    const a = amountWords(n, res);
-    return { en: `Adds ${a.en} this season`, zh: `本季加成 ${a.zh}` };
-  }
-  const parts = [];
-  if (per.outFood > 0) parts.push(amountWords(per.outFood, 'food'));
-  if (per.food < 0) parts.push(amountWords(per.food, 'food'));
-  if (per.outOil > 0) parts.push(amountWords(per.outOil, 'oil'));
-  if (per.oil < 0) parts.push(amountWords(per.oil, 'oil'));
-  if (per.outManpower) parts.push(amountWords(per.outManpower, 'manpower'));
-  if (t === 'labourcamp' && !per.outManpower) parts.push(amountWords(0, 'manpower'));
-  if ((t === 'farm' || t === 'station' || t === 'refinery') && !parts.length) parts.push(amountWords(0, t === 'farm' ? 'food' : 'oil'));
+  const parts = seasonParts(per).map((p) => amountWords(p.n, p.res));
   if (!parts.length) return null;
+  if (t === 'pump' || t === 'oasis' || t === 'tarpit') {
+    return { en: `Adds ${parts[0].en} this season`, zh: `本季加成 ${parts[0].zh}` };
+  }
   return { en: `This season ${parts.map((p) => p.en).join(', ')}`, zh: `本季结算 ${parts.map((p) => p.zh).join('，')}` };
 }
 /** Neighbour effects under the card's own rule, then this season's settled yield. Empty when nothing changes by place. */

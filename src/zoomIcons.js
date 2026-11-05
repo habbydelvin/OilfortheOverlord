@@ -5,8 +5,8 @@ import { ICONS } from './tiles.js';
 /**
  * Map icons: when the camera zooms out, a resource icon floats over each tile
  * (food / oil / manpower / missile, a crown on the Capital, a ruin over Pre-war Ruins).
- * Boosters (Water Pump, Oasis, Tar Pit, Refinery) get their own icon. Hover one while the icons are up and its
- * season total floats above that icon, on top of every other map icon. It hides when the pointer leaves.
+ * Hover a tile while the icons are up and the hover card's season line floats above that icon, on top of every
+ * other map icon. It hides when the pointer leaves.
  * They fade out as you zoom back in. Tunable in Game Debug → Map icons.
  */
 export const ICON_DEFAULTS = {
@@ -140,7 +140,8 @@ export class ZoomIcons {
     this.cfg = cfg;
     this.els = new Map(); // cell key -> { el, terrain, px, py }
     this.v = new THREE.Vector3();
-    this.boosts = new Map(); // booster cell key -> the hover card's season total (computeEconomy's `boosts`)
+    this.boosts = new Map(); // booster cell key -> positive total, for the grey "adding nothing" state
+    this.yields = new Map(); // cell key -> seasonParts, the hover card's season line
     this.yield = document.createElement('div');
     this.yield.className = 'map-yield hidden';
     this.yieldBody = document.createElement('div');
@@ -156,6 +157,11 @@ export class ZoomIcons {
   /** The boosters' current bonuses, from the latest economy (call whenever it's recalculated). */
   setBoosts(boosts) {
     this.boosts = boosts ?? new Map();
+  }
+
+  /** Season parts for every tile, from the latest economy (call whenever it's recalculated). */
+  setYields(yields) {
+    this.yields = yields ?? new Map();
   }
 
   /** `hover` is the cell under the pointer, `[x, z]`, or null. */
@@ -219,40 +225,41 @@ export class ZoomIcons {
     this.#placeYield(hover, alpha > 0);
   }
 
-  /** Season total above the hovered booster icon. One element, painted over every map icon. */
+  /** Season total above the hovered tile. One element, painted over every map icon. */
   #placeYield(hover, iconsOn) {
     const pop = this.yield;
     const k = hover ? `${hover[0]},${hover[1]}` : '';
-    const rec = iconsOn ? this.els.get(k) : null;
-    const booster = rec && BOOSTERS[rec.terrain];
-    const show = Boolean(booster && rec.px != null);
+    const parts = iconsOn ? this.yields.get(k) : null;
+    const show = Boolean(parts?.length);
+    const rec = show ? this.els.get(k) : null;
+    const at = show ? (rec?.px != null ? rec : this.#pointAt(hover[0], hover[1])) : null;
     const open = !pop.classList.contains('hidden');
     const leaving = pop.classList.contains('out');
 
     // Same icon, still up: keep it there. Do not restart the spring.
     if (show && open && k === this._yieldKey && !leaving) {
-      this.#yieldContent(k, booster);
-      this.#yieldPos(rec);
+      this.#yieldContent(k);
+      this.#yieldPos(at);
       return;
     }
     // Pointer came back before the shrink finished.
     if (show && k === this._yieldKey && leaving) {
       this._yieldNext = null;
-      this.#yieldContent(k, booster);
-      this.#yieldPos(rec);
+      this.#yieldContent(k);
+      this.#yieldPos(at);
       this.#yieldIn();
       return;
     }
     if (show && !open) {
       this._yieldNext = null;
       this._yieldKey = k;
-      this.#yieldContent(k, booster);
-      this.#yieldPos(rec);
+      this.#yieldContent(k);
+      this.#yieldPos(at);
       this.#yieldIn();
       return;
     }
     if (show && leaving) {
-      this._yieldNext = { k, rec, booster }; // shrink into the old one, then spring from the new
+      this._yieldNext = { k, at }; // shrink into the old one, then spring from the new
       return;
     }
     if (!show) {
@@ -260,18 +267,29 @@ export class ZoomIcons {
       if (open && !leaving) this.#yieldOut();
       return;
     }
-    this._yieldNext = { k, rec, booster };
+    this._yieldNext = { k, at };
     this.#yieldOut();
   }
 
-  #yieldContent(k, booster) {
-    const amount = Math.round(this.boosts.get(k) ?? 0);
+  #yieldContent(k) {
+    const parts = this.yields.get(k) ?? [];
+    const sig = parts.map((p) => `${p.n}:${p.res}`).join('|');
     const pop = this.yield;
-    if (pop._amount === amount && pop._res === booster.res) return;
-    pop._amount = amount;
-    pop._res = booster.res;
-    this.yieldBody.innerHTML = `<b>+${amount}</b>${ICONS[booster.res]}`;
-    pop.classList.toggle('unused', amount === 0);
+    if (pop._sig === sig) return;
+    pop._sig = sig;
+    this.yieldBody.innerHTML = parts
+      .map((p) => `<span class="map-yield-part"><b>${p.n > 0 ? '+' : ''}${p.n}</b>${ICONS[p.res]}</span>`)
+      .join('');
+    pop.classList.toggle('unused', parts.every((p) => p.n === 0));
+  }
+
+  /** Screen point of a cell that has no map icon, using the same projection as the icons. */
+  #pointAt(x, z) {
+    const pos = hexToWorld(x, z);
+    this.v.set(pos.x, this.cfg.height, pos.z).project(this.camera);
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    return { px: (this.v.x * 0.5 + 0.5) * w, py: (-this.v.y * 0.5 + 0.5) * h };
   }
 
   #yieldPos(rec) {
@@ -313,11 +331,11 @@ export class ZoomIcons {
     if (!next) {
       pop.classList.add('hidden');
       this._yieldKey = '';
-      pop._amount = null;
+      pop._sig = '';
       return;
     }
-    this.#yieldContent(next.k, next.booster);
-    this.#yieldPos(next.rec);
+    this.#yieldContent(next.k);
+    this.#yieldPos(next.at);
     this._yieldKey = next.k;
     this.#yieldIn();
   }
