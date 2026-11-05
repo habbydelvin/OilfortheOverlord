@@ -51,6 +51,7 @@ import { createDebugPanel } from './debugPanel.js';
 import { CameraShake, SHAKE_PARAMS, SHAKE_DEFAULTS, loadShakeConfig, saveShakeConfig, clearShakeConfig } from './cameraShake.js';
 import { SCALE, SCALE_PARAMS, SCALE_DEFAULTS, loadScaleConfig, saveScaleConfig, clearScaleConfig, eventPct, P } from './scalingConfig.js';
 import { Traffic } from './traffic.js';
+import { unlockAmbience, updateAmbience } from './ambience.js';
 import { LOD, buildLods, setLod, wantLod, lodStats } from './lod.js';
 import { ZoomIcons, MAP_ICONS, ICON_PARAMS, ICON_DEFAULTS, loadIconConfig, saveIconConfig, clearIconConfig } from './zoomIcons.js';
 import { Perf } from './perfOverlay.js';
@@ -6985,6 +6986,8 @@ function frame(now) {
 
   perf.begin('camera');
   rig.update(dt);
+  // Board ambience (traffic hum, nearby ship engines, rain): fades out with zoom and off the board.
+  updateAmbience({ ships: traffic.ships, target: rig.target, distance: rig.distance, camera, active: view === 'board' && !switching, dt });
   if (!switching && view !== 'globe') clouds.setPeek(rig.stretch ** 0.8 * 0.92);
   // The attack phase keeps time wherever you're looking: flights on the planet, strikes in every city.
   if (view !== 'globe') globe.tickWar(dt);
@@ -7276,6 +7279,7 @@ factory.ready.then(async () => {
   const go = () => {
     const sound = unlockSfx();
     combatAudio.unlock();
+    unlockAmbience();
     startMusic();
     if (started || !sound) return sound;
     started = true;
