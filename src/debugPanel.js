@@ -7,7 +7,7 @@ const decimals = (step) => (String(step).split('.')[1] ?? '').length;
  * Each tuning section edits its `cfg` in place (read live) and saves to localStorage.
  * `fog` and `gfx` are optional extra sections: { params, defaults, cfg, save, clear, onChange(param) }.
  */
-export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog, globe, gfx, missiles, intercept, icons, scaling, audio, preview, shake, onShake, onMissiles, onPerf, onResetTutorial, crtOn, onCrt, onGiveTile, giveKeys, onGiveMissile }) {
+export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog, globe, gfx, missiles, intercept, icons, scaling, audio, preview, shake, onShake, onMissiles, onPerf, onResetTutorial, crtOn, onCrt, onGiveTile, giveKeys, onGiveMissile, overlordStrike, onOverlordStrike }) {
   const fmt = (p, v) => (p.type === 'select' || p.type === 'color' ? v : Number(v).toFixed(decimals(p.step)));
   const payout = { id: 'payout', params: PAYOUT_PARAMS, defaults: PAYOUT_DEFAULTS, cfg, save: savePayoutConfig, clear: clearPayoutConfig };
   const sections = [audio && { id: 'audio', ...audio }, gfx && { id: 'gfx', ...gfx }, preview && { id: 'preview', ...preview }, shake && { id: 'shake', ...shake }, missiles && { id: 'missiles', ...missiles }, intercept && { id: 'intercept', ...intercept }, payout, scaling && { id: 'scaling', ...scaling }, icons && { id: 'icons', ...icons }, fog && { id: 'fog', ...fog }, globe && { id: 'globe', ...globe }].filter(Boolean);
@@ -49,6 +49,13 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
           <input type="checkbox" data-act="mode"${expansionMode?.() ? ' checked' : ''} />
         </label>
         <div class="dbg-group">Dev testing</div>
+        <label class="dbg-row" title="Which strike a missed tribute and the bottom-left button play. 激光打击 is a copy of 导弹打击.">
+          <span class="dbg-name">霸主打击</span>
+          <select data-act="overlordStrike">
+            <option value="missile"${overlordStrike?.() === 'laser' ? '' : ' selected'}>导弹打击</option>
+            <option value="laser"${overlordStrike?.() === 'laser' ? ' selected' : ''}>激光打击</option>
+          </select>
+        </label>
         <div class="dbg-actions dbg-dev">
           <button data-act="skipMet" title="Jump to the tribute and deliver exactly the quota">Skip year <small>(meet)</small></button>
           <button data-act="skipMiss" title="Jump to the tribute and deliver nothing (a strike)">Skip year <small>(miss)</small></button>
@@ -88,6 +95,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
 
   root.addEventListener('change', (e) => {
     if (e.target.dataset.act === 'mode') onExpansionMode?.(e.target.checked);
+    else if (e.target.dataset.act === 'overlordStrike') status(onOverlordStrike?.(e.target.value) ?? '');
   });
 
   root.addEventListener('input', (e) => {
