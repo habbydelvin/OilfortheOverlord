@@ -18,6 +18,13 @@
   <script type="module">
     import * as sfx from '../src/sfx.js';
     const groups = {
+      'Voices / 角色语音 (Vashk)': [
+        ['霸主 short', () => sfx.voiceLine('The Overlord', 'You are late.')], ['霸主 long', () => sfx.voiceLine('The Overlord', 'A missile factory. So my Overseer has grown teeth. Use them wisely, or I will pull them out one by one.')],
+        ['叛军首领 short', () => sfx.voiceLine('Rebel Leader', 'We are starving!')], ['叛军首领 long', () => sfx.voiceLine('Rebel Leader', 'You fed the Overlord and let our children go hungry. Open the granaries, or we will open them ourselves.')],
+        ['匪首 short', () => sfx.voiceLine('Bandit Leader', 'Pay up, Overseer.')], ['匪首 long', () => sfx.voiceLine('Bandit Leader', 'This wasteland is ours now. Every barrel that crosses it pays the toll, or it burns where it stands.')],
+        ['走私贩 short', () => sfx.voiceLine('The Smuggler', 'Looking for something?')], ['走私贩 long', () => sfx.voiceLine('The Smuggler', 'Fresh off the dunes, Overseer. No questions asked, no receipts given. Take a look before the patrols come.')],
+        ['副官 short', () => sfx.voiceLine('Field Report', 'Report ready.')], ['副官 long', () => sfx.voiceLine('Field Report', "The Military Factory's up and running, Overseer. I've seen the schedule: our first missile should be ready in about a year.")],
+      ],
       'Recorded / 录音': [['thud (tile lands)', () => sfx.thud()], ['thud heavy (Wasteland piece)', () => sfx.thud(true)]],
       'Board / 棋盘 (synth)': [['tick up', () => sfx.tick(true)], ['tick down', () => sfx.tick(false)], ['hover', sfx.hover], ['chirp', sfx.chirp], ['deal', sfx.deal], ['shuffle', sfx.shuffle], ['coin', sfx.coin], ['food', sfx.food], ['barrel 0', () => sfx.barrel(0)], ['barrel 1', () => sfx.barrel(1)], ['latch', sfx.latch], ['confirm', sfx.confirm], ['buzz', sfx.buzz], ['deny', sfx.deny], ['demolition', () => sfx.demolition()], ['demolition heavy', () => sfx.demolition(true)], ['doom', sfx.doom]],
       'Dialogue / 对话 (synth)': [['speak', sfx.speak], ['click', sfx.click], ['choiceHover', sfx.choiceHover], ['choiceClick', sfx.choiceClick]],

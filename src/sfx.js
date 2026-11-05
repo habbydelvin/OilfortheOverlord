@@ -59,7 +59,93 @@ const loaded = (async () => {
 
 /** Resolves (true) once the recordings are decoded, or false if they could not be loaded. */
 export function sfxLoaded() {
-  return loaded;
+  return Promise.all([loaded, voicesLoaded]).then(([a, b]) => a && b);
+}
+
+// ---------- character voices (public/audio/voice) ----------
+// Each character speaks an invented language, Vashk (tools/build-voices.py): clips of several lengths per character.
+const VOICE_BASE = '/audio/voice/';
+/** Dialogue speaker -> voice set. Speakers not listed here keep the typewriter tick. */
+const VOICE_OF = { 'The Overlord': 'overlord', 'Rebel Leader': 'rebel', 'Bandit Leader': 'bandit', 'The Smuggler': 'smuggler', 'Field Report': 'aide' };
+const VOICE_GAIN = 0.8;
+/** About how long a line takes to say: English letters or CJK characters per second of speech. */
+const SPEECH_RATE = { latin: 15, cjk: 7 };
+/** voice -> [{ buf, dur, speech }]: speech is when the talking stops (the rest is room and breath). */
+const voices = {};
+const lastClip = {};
+
+const voicesLoaded = (async () => {
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!OAC || typeof fetch !== 'function') return false;
+  try {
+    const manifest = await (await fetch(VOICE_BASE + 'manifest.json')).json();
+    const decoder = new OAC(1, 1, 22050);
+    await Promise.all(
+      Object.entries(manifest).flatMap(([name, clips]) =>
+        clips.map(async ({ file, speech }, i) => {
+          const res = await fetch(VOICE_BASE + file);
+          if (!res.ok) throw new Error(`${file}: ${res.status}`);
+          const buf = await decoder.decodeAudioData(await res.arrayBuffer());
+          (voices[name] ??= [])[i] = { buf, dur: speech ?? buf.duration, speech: speech ?? buf.duration };
+        }),
+      ),
+    );
+    return true;
+  } catch (error) {
+    console.warn('Character voices could not be loaded.', error);
+    return false;
+  }
+})();
+
+/** True if `speaker` has a voice (then the dialogue doesn't play the typewriter tick for them). */
+export function hasVoice(speaker) {
+  return Boolean(VOICE_OF[speaker]);
+}
+
+/**
+ * `speaker` says `text` in Vashk: a clip about as long as the line would take to say (one of the three closest,
+ * never the one just played). Returns { speech, stop(fade) } (speech: seconds until the talking stops), or null if there
+ * is no voice for them / no sound yet.
+ */
+export function voiceLine(speaker, text) {
+  const name = VOICE_OF[speaker];
+  const clips = voices[name];
+  if (!name || !clips?.length || !ctx || ctx.state !== 'running') return null;
+  const s = String(text ?? '');
+  const cjk = (s.match(/[\u3000-\u9fff\uff00-\uffef]/g) ?? []).length;
+  const latin = s.replace(/[\s\u3000-\u9fff\uff00-\uffef]/g, '').length;
+  const want = Math.max(0.8, Math.min(7, cjk / SPEECH_RATE.cjk + latin / SPEECH_RATE.latin));
+  const order = clips.map((c, i) => [Math.abs(c.dur - want), i]).sort((a, b) => a[0] - b[0]).map(([, i]) => i);
+  const near = order.slice(0, 3).filter((i) => i !== lastClip[name]);
+  const i = near[Math.floor(Math.random() * near.length)] ?? order[0];
+  lastClip[name] = i;
+  const src = ctx.createBufferSource();
+  src.buffer = clips[i].buf;
+  const g = ctx.createGain();
+  g.gain.value = VOICE_GAIN;
+  src.connect(g).connect(recMaster);
+  src.start();
+  src.onended = () => {
+    src.disconnect();
+    g.disconnect();
+  };
+  let stopped = false;
+  return {
+    speech: clips[i].speech,
+    stop(fade = 0.15) {
+      if (stopped) return;
+      stopped = true;
+      const t = ctx.currentTime;
+      g.gain.cancelScheduledValues(t);
+      g.gain.setValueAtTime(g.gain.value, t);
+      g.gain.linearRampToValueAtTime(0, t + fade);
+      try {
+        src.stop(t + fade + 0.02);
+      } catch {
+        /* already ended */
+      }
+    },
+  };
 }
 
 let ctx = null;
