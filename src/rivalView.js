@@ -3,6 +3,7 @@ import { createGround, createLights } from './scene.js';
 import { HEX_RADIUS, hexToWorld, key, cellsCentre, cellSeed } from './grid.js';
 import { hexPlane } from './hexGeometry.js';
 import { FogOfWar } from './fogOfWar.js';
+import { createInstancer } from './instancer.js';
 import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
@@ -31,6 +32,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   // One group for the city's tiles, kept for good: the fog's depth pass holds on to it.
   const root = new THREE.Group();
   scene.add(root);
+  const instancer = createInstancer(root, scene);
   // Target reticles while aiming (First Strike style): two rings of slanted yellow dashes (parallelograms, the inner
   // ring set in the outer ring's gaps) and a wide faint outer circle. Only while aiming: it wraps the picked card's
   // footprint under the cursor (a salvo fan too) and fades out once that strike is aimed. Each tile it will hit gets a
@@ -230,11 +232,12 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   function ensureFog() {
     if (fog) return fog;
     fog = new FogOfWar(scene, fogSettings());
-    fog.attachRenderer(renderer, scene, [root]);
+    fog.attachRenderer(renderer, scene, [root, instancer.group]);
     return fog;
   }
 
   function clearRoot() {
+    instancer.end();
     root.clear();
   }
 
@@ -567,13 +570,23 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
     }
   }
 
-  /** Per frame while a rival city is shown: the fog follows the camera; its offscreen pass comes before the scene. */
+  /** Per frame while a rival city is shown. Rendering owns the temporary batches across all its passes. */
   function update(dt, camera) {
     animateReticles(dt);
     animateArcs(dt);
     if (!active || !fog) return;
     fog.update(dt, rig.target, rig.distance);
-    fog.render(camera);
+  }
+
+  function render(camera) {
+    scene.updateMatrixWorld(); // skeleton bind inverses and parents must be current before fog's depth pass
+    try {
+      instancer.begin(camera, true);
+      fog?.render(camera);
+      renderer.render(scene, camera);
+    } finally {
+      instancer.end();
+    }
   }
 
   /** Put the board camera back on the exact rig state from before the visit. */
@@ -602,6 +615,8 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
   }
 
   return {
+    instancer,
+    render,
     get scene() {
       return scene;
     },

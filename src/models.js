@@ -1398,6 +1398,12 @@ function batchAnimatedParts(root) {
     mesh.castShadow = first.castShadow;
     mesh.receiveShadow = first.receiveShadow;
     mesh.frustumCulled = false; // its bounds move with the bones
+    // Per-part bounds survive SkeletonUtils cloning; rigidBounds.js installs pose-aware culling on each copy.
+    mesh.userData.rigidPartBounds = parts.map((p) => {
+      if (!p.geometry.boundingSphere) p.geometry.computeBoundingSphere();
+      const s = p.geometry.boundingSphere;
+      return [s.center.x, s.center.y, s.center.z, s.radius];
+    });
     root.add(mesh);
     // Bind matrix and bone inverses are identity, so each vertex lands at part.matrixWorld × its own local
     // position: exactly where the part drew itself before.

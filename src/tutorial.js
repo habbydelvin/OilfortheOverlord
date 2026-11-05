@@ -1863,9 +1863,12 @@ const HINTS = {
   next: {
     make(t) {
       if (!onBoard(t) || t.idle < 7 || t.hand.placeableForced.length) return null;
+      // Only when there's nothing left worth playing (a card that fits somewhere isn't a reason to end the turn). The
+      // cards stay as they are: dimming them read as if they were locked.
+      if (t.hand.cards.some((p) => t.api.canPlay(p))) return null;
       return {
         until: 5,
-        view: () => ({ hand: { tapOn: '#btnNext' }, ring: { selector: '#btnNext' }, discard: t.hand.cards.length > 0 }),
+        view: () => ({ hand: { tapOn: '#btnNext' }, ring: { selector: '#btnNext' } }),
         over: () => Boolean(t.hand.piece) || t.hand.placeableForced.length > 0,
       };
     },

@@ -15,7 +15,7 @@
 
 import { L, onLangChange } from './i18n.js';
 
-const URL = '/audio/OverlordIsWatching.mp3';
+const URL = '/audio/OverlordIsWatching-v2.mp3'; // re-encoded from the source; the old file had a click at 9.98s
 export const MUSIC_VOLUME_DEFAULT = 79; // slider position; the level is its square, capped at 2
 export const MUSIC_VOLUME_MAX = 200; // 100 = full level, 200 = twice as loud
 const DEFAULT_VOLUME = MUSIC_VOLUME_DEFAULT;

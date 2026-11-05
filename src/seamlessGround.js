@@ -98,7 +98,11 @@ varying vec2 vSeamWorld;
 #endif
 `;
 const VERT_MAIN = /* glsl */ `
-vSeamWorld = ( modelMatrix * vec4( transformed, 1.0 ) ).xz;
+#ifdef USE_INSTANCING
+  vSeamWorld = ( modelMatrix * instanceMatrix * vec4( transformed, 1.0 ) ).xz;
+#else
+  vSeamWorld = ( modelMatrix * vec4( transformed, 1.0 ) ).xz;
+#endif
 #ifdef SEAM_EDGE
   vSeamCell = seamCell;
 #endif

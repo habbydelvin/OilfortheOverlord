@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { createGlobeBend } from './globeBend.js';
 import { WHEEL_GAP, wheelUnits } from './controls.js';
 import { L, onLangChange } from './i18n.js';
@@ -260,6 +263,9 @@ export const GLOBE = {
   fogOpacity: 0.13,
   fogHeight: 0.13, // how far the banks float above the tiles
   fogCityClear: 0, // extra rings of hexes uncovered around each city (0 = only the city's own hex)
+  arcHeight: 0.5, // missile arcs, × the old peak (1 = as high as they used to climb)
+  arcWidth: 3, // dashed aim lines, in screen pixels
+  arcFlow: 0.6, // how fast those dashes travel along the arc (world units / second; 0 = still)
 };
 export const GLOBE_PARAMS = [
   { group: 'Globe · cities' },
@@ -270,6 +276,9 @@ export const GLOBE_PARAMS = [
   { key: 'labelHeight', label: 'Name height', min: 0, max: 5, step: 0.05 },
   { key: 'spread', label: 'City spread', min: 8, max: 60, step: 1, layout: true, hint: 'how far apart the war-table positions land' },
   { key: 'minGap', label: 'Min gap between cities', min: 0, max: 20, step: 0.5, layout: true, hint: 'plane units; ~21 is the far side of the planet' },
+  { key: 'arcHeight', label: 'Arc height', min: 0.15, max: 1.5, step: 0.05, hint: '1 is the old height. Dashed aim lines follow this at once; missiles already in the air keep the height they launched with' },
+  { key: 'arcWidth', label: 'Arc thickness', min: 0.5, max: 10, step: 0.1, hint: 'screen pixels. Dashed aim lines follow this at once' },
+  { key: 'arcFlow', label: 'Arc dash speed', min: 0, max: 3, step: 0.05, hint: 'how fast the dashes run toward the target. 0 holds them still. Aim lines follow this at once' },
   { group: 'Globe · sun & moon' },
   { key: 'orbitRadius', label: 'Moon distance (× planet)', min: 1.02, max: 8, step: 0.02, hint: 'how far the moon orbits from the planet' },
   { key: 'orbitTilt', label: 'Near-side drop (°)', min: 0, max: 80, step: 1, hint: 'how far the front of the orbit sags below the middle. 0 is a flat line across the face' },
@@ -1356,7 +1365,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     camera.updateMatrixWorld();
     updateWar(dt);
     updateOil(dt);
-    updateQueued();
+    updateQueued(dt);
     updateSky(dt); // after the scroll for this frame, so the moon turns with the drag
 
     // Hover: label first, then the planet under the pointer.
@@ -1425,8 +1434,21 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
   const TAN = new THREE.Vector3();
 
   // Aimed but not yet fired: a dashed arc per strike from its city to the target, redrawn as the globe turns.
-  let queued = []; // { from, to, line }
-  const queuedMat = new THREE.LineDashedMaterial({ color: 0xffd08a, dashSize: 0.18, gapSize: 0.12, transparent: true, opacity: 0.85, toneMapped: false });
+  // Line2, because WebGL draws an ordinary line one pixel wide on this Mac, so a thickness slider would do nothing.
+  const ARC_SAMPLES = 40;
+  let queued = []; // { from, to, line, pts, lift, bow, jit }
+  let arcTravel = 0; // how far the dash pattern has walked, in world units
+  const arcRes = new THREE.Vector2();
+  const queuedMat = new LineMaterial({
+    color: 0xffd08a,
+    linewidth: 3, // screen pixels; live value is GLOBE.arcWidth
+    dashed: true,
+    dashSize: 0.18,
+    gapSize: 0.12,
+    transparent: true,
+    opacity: 0.85,
+    toneMapped: false,
+  });
 
   /** strikes: [{ from, to }] (one arc per pair and count). Pass [] to clear. */
   function setQueued(strikes) {
@@ -1434,30 +1456,56 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       warRoot.remove(q.line);
       q.line.geometry.dispose();
     }
-    queued = strikes.map((s, i) => {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(40 * 3), 3));
-      const line = new THREE.Line(geo, queuedMat);
+    queued = strikes.map((s) => {
+      const line = new Line2(new LineGeometry(), queuedMat);
       line.frustumCulled = false;
+      line.visible = false; // empty until the next frame writes its points
       warRoot.add(line);
-      return { from: s.from, to: s.to, line, lift: 1 + 0.08 * i };
+      // A volley fans out: each arc keeps its own height, sideways bow and launch offset (zero at the target).
+      return {
+        from: s.from,
+        to: s.to,
+        line,
+        pts: new Float32Array(ARC_SAMPLES * 3),
+        lift: 0.8 + Math.random() * 0.4,
+        bow: (Math.random() * 2 - 1) * 0.2,
+        jit: new THREE.Vector2((Math.random() - 0.5) * 0.12, (Math.random() - 0.5) * 0.12),
+      };
     });
   }
 
-  function updateQueued() {
+  function updateQueued(dt) {
+    const span = queuedMat.dashSize + queuedMat.gapSize;
+    arcTravel += dt * (GLOBE.arcFlow ?? 0);
+    arcTravel = ((arcTravel % span) + span) % span;
+    queuedMat.linewidth = GLOBE.arcWidth ?? 3;
+    queuedMat.dashOffset = -arcTravel; // negative walks the dashes toward the target
+    renderer.getSize(arcRes);
+    queuedMat.resolution.copy(arcRes);
     for (const q of queued) {
       const a = nodes.find((n) => n.id === q.from);
       const b = nodes.find((n) => n.id === q.to);
       q.line.visible = Boolean(a && b) && !war;
       if (!q.line.visible) continue;
       const d = bend.wrapDelta(b.p.x, b.p.y, a.p, new THREE.Vector2());
-      const it = { from: a.p, d, H: Math.min(RADIUS * 0.45, 0.8 + 0.28 * d.length()) * q.lift };
-      const pa = q.line.geometry.attributes.position;
-      for (let i = 0; i < pa.count; i++) {
-        arcPoint(it, i / (pa.count - 1), P);
-        pa.setXYZ(i, P.x, P.y, P.z);
+      const dist = d.length();
+      const it = {
+        from: a.p,
+        d,
+        H: arcPeak(dist, q.lift),
+        perp: new THREE.Vector2(-d.y, d.x).divideScalar(dist || 1),
+        bow: q.bow * dist,
+        jit: q.jit,
+      };
+      const pts = q.pts;
+      const last = ARC_SAMPLES - 1;
+      for (let i = 0; i < ARC_SAMPLES; i++) {
+        arcPoint(it, i / last, P);
+        pts[i * 3] = P.x;
+        pts[i * 3 + 1] = P.y;
+        pts[i * 3 + 2] = P.z;
       }
-      pa.needsUpdate = true;
+      q.line.geometry.setPositions(pts);
       q.line.computeLineDistances();
     }
   }
@@ -1535,6 +1583,11 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     oilBits.length = 0;
   }
 
+  /** Peak height of an arc. `lift` is that missile's own share of the volley (about 0.8–1.2). */
+  function arcPeak(dist, lift = 1) {
+    return Math.min(RADIUS * 0.45, 0.8 + 0.28 * dist) * lift * (GLOBE.arcHeight ?? 1);
+  }
+
   /** Plane point + height along a strike's arc at u (0 launch, 1 impact). */
   function arcPoint(it, u, out) {
     const k = Math.sin(Math.PI * Math.min(1, u));
@@ -1601,7 +1654,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
         d,
         // Each flight its own arc: a little higher or lower, bowed off to one side (zero at both ends), leaving from
         // a slightly different spot, so a volley fans out instead of tracing one line.
-        H: Math.min(RADIUS * 0.45, 0.8 + 0.28 * dist) * (0.8 + Math.random() * 0.4),
+        H: arcPeak(dist, 0.8 + Math.random() * 0.4),
         perp: new THREE.Vector2(-d.y, d.x).divideScalar(dist || 1),
         bow: (Math.random() * 2 - 1) * 0.2 * dist,
         jit: new THREE.Vector2((Math.random() - 0.5) * 0.12, (Math.random() - 0.5) * 0.12),
@@ -1651,6 +1704,11 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
       }
       war = { items, t: 0, speed: 1, done, after: 0 };
     });
+  }
+
+  /** The flights' pace (1 normal): the tutorial slows them while you follow one to its city. */
+  function setAttackSpeed(k) {
+    if (war) war.speed = k;
   }
 
   function skipAttack() {
@@ -1896,6 +1954,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
     },
     setQueued,
     skipAttack,
+    setAttackSpeed,
     /** The payout pays `amount` oil: it gushes out of Hive City on the planet (only while the planet is shown). */
     pulseOil,
     /** Where a city sits on screen ([x, y] px), or null when the planet isn't shown or it's round the far side. */

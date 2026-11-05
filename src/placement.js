@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { pieceOffsets, ROTATIONS } from './pieces.js';
-import { inWorld, hexToWorld, hexesAround } from './grid.js';
+import { inWorld, hexToWorld, hexesAround, rotateHex } from './grid.js';
 import { hexPlane, hexPrism, hexOutline } from './hexGeometry.js';
 import { hasBlockout } from './models.js';
 import { ACTIONS, TERRAINS, cardDef, isBuilding, isCamp, applyTileGap, fitFull } from './tiles.js';
@@ -187,7 +187,8 @@ export class Placement {
       if (piece.terrain === 'missile' || piece.terrain === 'missile2')
         this.offsets = footprint('missile', [0, 0], blastExtra(this.grid), this.grid);
       else
-        this.offsets = action.size ? [[0, 0], [1, 0], [0, 1], [1, 1]] : hexesAround(0, 0, action.range);
+        // A sized area (the Wrecking Crew's diamond) turns with the piece, like a Wasteland shape.
+        this.offsets = action.size ? [[0, 0], [1, 0], [0, 1], [1, 1]].map((c) => rotateHex(c, piece.rot ?? 0)) : hexesAround(0, 0, action.range);
       for (const [ox, oz] of this.offsets) {
         const f = cellPart(this.footGeo, this.footMat);
         const w = hexToWorld(ox, oz);

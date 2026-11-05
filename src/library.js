@@ -49,7 +49,6 @@ const groups = () => [
 /** Readable form of each event's `when` draw condition (events.js). */
 const eventWhen = (key) =>
   ({
-    showOfForce: L('You have at least one building and an empty cell next to your land', '你至少有一座建筑，且领地旁有空格'),
     earthquake: L('There is an empty cell next to your land', '领地旁有空格'),
     mercenaries: L('You have at least one camp', '你至少有一个营地'),
     prospectors: L('A hidden "?" site remains', '还有未揭开的神秘地点'),

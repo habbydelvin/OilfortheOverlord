@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented in `src/events.js` (14): **Early Collection, Tithe of Men, Show of Force, Famine, Drought, Dust Storm, Earthquake, Bumper Harvest, Oil Boom, Refugees at the Gate, Mercenaries, Prospectors, Black Market Caravan, Tax the Settlements**. Everything else in this file is the backlog.
+Implemented in `src/events.js` (13): **Early Collection, Tithe of Men, Famine, Drought, Dust Storm, Earthquake, Bumper Harvest, Oil Boom, Refugees at the Gate, Mercenaries, Prospectors, Black Market Caravan, Tax the Settlements**. Everything else in this file is the backlog.
 
 Percentage effects scale with the year (strength = year-2 value + per-year step, up to a max); every value is a slider in Game Debug → Scaling (`src/scalingConfig.js`). Event text shows the percentage and what it means right now. Events with nothing to act on are skipped in the draw (`when`), e.g. Mercenaries with no camps. (Overlord's Offer was removed: the yearly tribute target in `src/targets.js` replaces it.)
 
@@ -32,7 +32,6 @@ Every event uses systems the game already has: worker slots, the food store, rai
 | **Overlord's Inspection** | The quota is 25% higher, but meeting it gives double shop coins. |
 | **Tithe of Men** ✅ | −20% worker slots (+5%/year, max 50%). The Overlord has drafted your workers. |
 | **Requisition** | At the start of each season, the Overlord takes 3 oil from your stockpile. |
-| **Show of Force** ✅ | Pre-war Ruins surface on an empty cell next to your land; a dormant missile in their silo launches from them and turns one of your buildings (never the Capital) into a Toxic Crater. |
 | **Martial Law** | Rerolls are disabled for the year. |
 
 ## Disasters
@@ -89,6 +88,6 @@ These events keep coming back, harder each time.
 - **Live values:** `turn.event` keeps the key and choice; its `mods` and `summary` are getters, so the Scaling sliders apply straight away. The board counts in the text (camps, settlements, quota) are frozen when the event starts.
 - **Economy mods** (read in `computeEconomy`): `farmPct`, `stationPct`, `capPct`, `foodUpkeepPct`, `drought`, `settlementOil`, `settlementSlots`.
 - **Turn mods** (read in `main.js`): `yearLength`, `quotaMult` (applied once), `coinMult`, `shopMult` (copied to `turn.shopMult` at tribute), `extraWaste` and `handBonus` (`dealNewHand`).
-- **One-off effects:** `apply(ctx)` with helpers `spawnRaider`, `clearAllCamps`, `prospect`, `earthquake`, `showOfForce`. Async follow-ups (the Show of Force missile) are returned by `applyYearEvent` and awaited by `startYearEvent`.
+- **One-off effects:** `apply(ctx)` with helpers `spawnRaider`, `clearAllCamps`, `prospect`, `earthquake`. Async follow-ups (an Unexploded Missile found by Prospectors) are returned by `applyYearEvent` and awaited by `startYearEvent`.
 - **Ground-launched missiles:** a strike target may carry `from: { x, z }`; `missiles.js` then lobs it from that cell instead of from the Overlord's side of the world.
 - **Debug:** `tileIsland.debugEvent.force = 'drought'` then press V (or call `tileIsland.debugEvent()`) to play a given event.

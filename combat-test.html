@@ -151,6 +151,18 @@
       <button id="giveMissile" type="button">Add missile</button>
       <button id="giveDecoy" type="button">Add decoy (your hand)</button>
       <button id="incomingDecoys" type="button">+1 decoy at Hive City (each rival)</button>
+      <div class="tune-head"><b>Combat audio</b><span id="audioState">click to enable</span></div>
+      <div id="audioMix"></div>
+      <div class="tune-btns" style="flex-wrap: wrap">
+        <button data-snd="launch" type="button">Launch</button>
+        <button data-snd="incoming" type="button">Incoming</button>
+        <button data-snd="large" type="button">Explosion</button>
+        <button data-snd="small" type="button">Intercept</button>
+        <button data-snd="gun" type="button">CIWS</button>
+        <button data-snd="siren" type="button">Siren on/off</button>
+        <button data-snd="end" type="button">Test attack ending</button>
+        <button data-snd="salvo" type="button">Dense salvo</button>
+      </div>
       <div id="status">Loading the city…</div>
       <div id="log"></div>
       <div class="tune-head">

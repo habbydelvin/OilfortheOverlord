@@ -2420,7 +2420,7 @@ body.striking #mapIcons {
   background: rgba(232, 191, 104, 0.2);
 }
 
-/* Above the HUD and hand, below the dialogue (z 60). Clicks pass through to the game except on the bubble. */
+/* Above the HUD and hand, below the dialogue (z 60). Clicks pass through to the game except on the skip button. */
 #coach {
   position: absolute;
   inset: 0;
@@ -3905,6 +3905,10 @@ body.rival-view #btnWarMap {
   filter: brightness(1.25);
 }
 .float-btn.hidden {
+  display: none;
+}
+/* Touch only: with a mouse, R / right-click rotate and C recenters. */
+body:not(.touch) .float-btn {
   display: none;
 }
 #btnRotate {

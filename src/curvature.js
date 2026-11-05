@@ -114,6 +114,17 @@ export function flattenCurve() {
 /** How far the drawing drops a ground point at (x, z). */
 export const curveDrop = (x, z) => state.k * ((x - state.cx) ** 2 + (z - state.cz) ** 2);
 
+const bentSphere = new THREE.Sphere();
+/** Conservative union of a flat world sphere and its paraboloid-bent image, including the drop across its radius. */
+export function includeCurvedBounds(sphere) {
+  if (!state.k || sphere.isEmpty()) return sphere;
+  bentSphere.copy(sphere);
+  const d = Math.hypot(sphere.center.x - state.cx, sphere.center.z - state.cz);
+  bentSphere.center.y -= curveDrop(sphere.center.x, sphere.center.z);
+  bentSphere.radius += state.k * (2 * d * sphere.radius + sphere.radius ** 2);
+  return sphere.union(bentSphere);
+}
+
 // HTML over the 3D view (labels, icons, the tutorial's hand...) projects world points: bend them the same way.
 const project = THREE.Vector3.prototype.project;
 THREE.Vector3.prototype.project = function (camera) {

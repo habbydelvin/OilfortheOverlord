@@ -5,8 +5,11 @@ import './theme.css';
 import './themeShine.js';
 import * as THREE from 'three';
 import { createScene } from './scene.js';
+import { createInstancer } from './instancer.js';
+import { createShadowCache } from './shadowCache.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, startMusic } from './music.js';
 import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws } from './sfx.js';
+import { createCombatAudio } from './combatAudio.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed, hexesAround } from './grid.js';
 import { FogOfWar, FOG_PARAMS, FOG_DEFAULTS, loadFogConfig, saveFogConfig, clearFogConfig } from './fogOfWar.js';
@@ -24,7 +27,7 @@ import { setupCrt } from './crt.js';
 import { CrtPass } from './crtPass.js';
 import { BoostHints } from './boostHints.js';
 import { setupLegend } from './legend.js';
-import { Mysteries } from './mystery.js';
+import { Mysteries, siloFires } from './mystery.js';
 import { Expansion } from './expansion.js';
 import { Dust } from './dust.js';
 import { computeEconomy, computeEconomyIf, foodCapOf, FIRST_QUOTA, nextQuota, SEASONS, rebelsRise, WORKERS } from './economy.js';
@@ -36,6 +39,8 @@ import { CAPITAL_HP, resolve as resolveWar, applyToRival, footprint, spreadFrom 
 import { chooseStrikes, noteAttacks, idleOf } from './rivalAI.js';
 import { INTERCEPT, INTERCEPT_DEFAULTS, INTERCEPT_PARAMS, saveIntercept, clearIntercept, DECOY, BOOST, isBoosted } from './arsenal.js';
 import { Payout, tileHop } from './payout.js';
+import { PayoutHud } from './payoutHud.js';
+import { payoutPulse } from './payoutAnimations.js';
 import { EVENTS, KIND_LABEL, drawEvent } from './events.js';
 import { Dialogue } from './dialogue.js';
 import { TIERS, TIER_ORDER, REWARDS, LOW_STREAK_LIMIT, rollReward, scaledQuota } from './targets.js';
@@ -44,6 +49,7 @@ import { createDebugPanel } from './debugPanel.js';
 import { CameraShake, SHAKE_PARAMS, SHAKE_DEFAULTS, loadShakeConfig, saveShakeConfig, clearShakeConfig } from './cameraShake.js';
 import { SCALE, SCALE_PARAMS, SCALE_DEFAULTS, loadScaleConfig, saveScaleConfig, clearScaleConfig, eventPct, P } from './scalingConfig.js';
 import { Traffic } from './traffic.js';
+import { LOD, buildLods, setLod, wantLod, lodStats } from './lod.js';
 import { ZoomIcons, MAP_ICONS, ICON_PARAMS, ICON_DEFAULTS, loadIconConfig, saveIconConfig, clearIconConfig } from './zoomIcons.js';
 import { Perf } from './perfOverlay.js';
 import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig, applyGfx } from './graphics.js';
@@ -95,6 +101,8 @@ let globe;
 const rivalView = createRivalView({ renderer, factory, rig, fogSettings: () => fogCfg, fogQuality: () => gfxCfg.fogQuality, keepMaxZoom: true });
 const tiles = new THREE.Group();
 scene.add(tiles);
+const instancer = createInstancer(tiles, scene);
+const shadowCache = createShadowCache(sun);
 const interceptCover = new THREE.Group();
 scene.add(interceptCover);
 const INTERCEPT_GLOW = 0x4cc8ff;
@@ -112,8 +120,22 @@ const fogCfg = loadFogConfig(); // saved Game Debug slider values
 const globeCfg = loadGlobeConfig(); // globe tuning (city size, spread), same panel
 const fog = new FogOfWar(scene, fogCfg);
 // Reduced-resolution fog (quality presets); the placed tiles still hide the fog behind them.
-fog.attachRenderer(renderer, scene, [tiles]);
+fog.attachRenderer(renderer, scene, [tiles, instancer.group]);
 const missileCfg = loadMissileConfig(); // Game Debug → Missiles
+// Recorded combat sounds (public/audio/combat-test). Until they have loaded, the synthesised sounds below play instead.
+const combatAudio = createCombatAudio();
+/** The recorded sound once loaded, else the old synthesised one. */
+const snd = (recorded, fallback) => (combatAudio.ready ? recorded() : fallback?.());
+const explode = (size) => snd(() => combatAudio.explosion(size), boom);
+const launchSnd = () => snd(() => combatAudio.launch(), boom);
+const gunSnd = (dur) => snd(() => combatAudio.gunBurst(dur), () => ciws(dur));
+/** A whoosh that peaks when this missile lands or is shot down. Null until the recordings are loaded. */
+function missileWhoosh(t) {
+  if (!combatAudio.ready) return null;
+  const now = typeof t.clock === 'function' ? t.clock() : 0;
+  const end = (t.killAt ?? (t.t0 ?? 0) + (t.flight ?? missileCfg.followFlight)) - now;
+  return end > 0.2 ? combatAudio.incoming(end) : null;
+}
 const missiles = new MissileStrike(scene, camera, missileCfg);
 const shakeCfg = loadShakeConfig(); // Game Debug → Missile camera shake
 const camShake = new CameraShake(camera, shakeCfg); // missile strikes only; tiles etc. use the small `shake` jolt
@@ -127,8 +149,9 @@ placement.mysteries = mysteries; // "?" cells can't be built on, only next to (f
 const dialogue = new Dialogue(document.getElementById('dialogue'));
 const scaleCfg = loadScaleConfig(); // Game Debug → Scaling (events and camps)
 const iconCfg = loadIconConfig(); // Game Debug → Map icons
-const zoomIcons = new ZoomIcons(document.getElementById('mapIcons'), steadyCam, rig, iconCfg);
+const zoomIcons = new ZoomIcons(document.getElementById('mapIcons'), camera, rig, iconCfg);
 const traffic = new Traffic(scene); // ships flying between the tiles
+const trafficInstances = createInstancer(traffic.group, scene); // ships use the same model on every route
 const neonTiles = new NeonTiles(scene); // boosted buildings' tiles glow
 const boostHints = new BoostHints(scene); // outlines where the hovered / placed card would be boosted
 setupLegend(document.getElementById('btnLegend'), document.getElementById('legend')); // icon legend window
@@ -160,7 +183,10 @@ const debug = RELEASE
     },
     onChange: (p) => {
       if (!p || p.key === 'music') setMusicVolume(audioCfg.music);
-      if (!p || p.key === 'sfx') setSfxVolume(audioCfg.sfx);
+      if (!p || p.key === 'sfx') {
+        setSfxVolume(audioCfg.sfx);
+        combatAudio.syncMaster();
+      }
     },
   },
   onPlay: () => previewPayout(),
@@ -295,10 +321,11 @@ hand.perf = perf;
 const $ = (id) => document.getElementById(id);
 // The tribute gauge (barrels that fill with oil) and the oil flying into it at payout.
 const gauge = new BarrelGauge($('quotaBarrels'));
+const payoutHud = new PayoutHud(drawOil, drawStore);
 const seasonClock = new SeasonClock($('seasonClock'), latch); // the four-season dial right of the tribute plate
 setupCrt($('crt')); // the old CRT monitor the world is seen through
 const oilFlights = new OilFlights(document.body, gauge, (value) => {
-  if (value <= gauge.amount) return; // the season already settled (a skipped payout): nothing to add
+  if (value <= payoutHud.oilAmount(gauge.amount)) return; // includes arrivals already queued this frame
   showOil(value, true);
   barrel(Math.min(1, value / Math.max(1, turn.quota)));
 });
@@ -427,7 +454,7 @@ const tutorial = new Tutorial({
     },
   },
 });
-// While it runs, only the card, cells and buttons the advisor asks for respond.
+// While the guided opening runs, only what it allows responds (tutorial.allows).
 // In a rival city with the missile hand out, missile cards can be picked (and dragged onto a tile to aim them).
 hand.guard = (action, piece) =>
   (view === 'rival' && rivalHand && isPlayerMissile(piece?.terrain) && !screenBusy()) || (!busy() && tutorial.allows(action, piece));
@@ -955,6 +982,7 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
     flight: t.from || t.flight ? t.flight : missileCfg.followFlight,
   }));
   const original = new Map(tracked.map((t, i) => [t, targets[i]]));
+  const whoosh = new Map(tracked.map((t) => [t, missileWhoosh(t)]));
   await missiles.fire(tracked, {
     onMove: (pos, t, u) => {
       if (trackCamera) track(pos, original.get(t), u);
@@ -962,6 +990,8 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
     },
     onIntercept: (hit) => {
       if (run !== runId) return;
+      whoosh.get(hit)?.stop(0.25);
+      explode('small');
       flying.delete(original.get(hit));
       pending.delete(original.get(hit));
     },
@@ -969,8 +999,9 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
       if (run !== runId) return;
       flying.delete(original.get(hit));
       pending.delete(original.get(hit));
+      whoosh.get(hit)?.stop(0.12);
+      explode(hit.harmless ? 'small' : 'large');
       const { x, z } = hit.cell;
-      boom();
       dust.burst(x, z, hit.harmless ? 0.7 : 1.8);
       fog.disturb(x, z);
       camShake.add(missileCfg.shake * (hit.harmless ? 0.3 : 1));
@@ -1018,6 +1049,8 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
 const CIWS_START = 0.22;
 const CIWS_GAP = 0.14;
 function fireDefences(t, u) {
+  // A simulated strike's guns play from setDefence. This list is the older cinematic path.
+  if (typeof t.clock === 'function') return;
   const shots = t.shots;
   if (!shots?.length) return;
   t.fired ??= 0;
@@ -1026,11 +1059,11 @@ function fireDefences(t, u) {
     const pad = hexToWorld(shot.x, shot.z);
     missiles.fireCIWS(findCiws(grid.get(shot.x, shot.z)?.mesh), new THREE.Vector3(pad.x, 0.35, pad.z), () => missiles.position(t), {
       success: shot.success,
-      onFire: (dur) => ciws(dur),
+      onFire: (dur) => gunSnd(dur),
       onKill: () => {
         if (missiles.destroy(t)) {
           camShake.add(missileCfg.shake * 0.35);
-          boom();
+          explode('small');
         }
       },
     });
@@ -1099,8 +1132,7 @@ function followCamera(pos, distance, rate) {
 }
 
 /**
- * A missile launches from the ground at `spot` and hits `target` (Show of Force's ruins, and the old Missile
- * Magazine of a "?" site). silo: a Missile Magazine cell on the spot, which opens and fires it (otherwise the
+ * A missile launches from the ground at `spot` and hits `target` (the old Missile Magazine of a "?" site). silo: a Missile Magazine cell on the spot, which opens and fires it (otherwise the
  * missile stands upright on the spot). Resolves with the names of the tiles lost, or null if the run was reset meanwhile.
  */
 async function groundStrike(spot, target, lostText = (l) => L(`The silo's missile destroyed your ${l}`, `发射井的导弹摧毁了你的${l}`), silo = null) {
@@ -1127,7 +1159,7 @@ async function groundStrike(spot, target, lostText = (l) => L(`The silo's missil
       camShake.add(0.3);
       await wait(1.2);
       standing.remove();
-      boom();
+      launchSnd();
       dust.burst(spot.x, spot.z, 1.6);
     };
   }
@@ -1154,11 +1186,12 @@ function nearestBuilding(x, z) {
 
 /**
  * A "?" site was an old Missile Magazine with a missile still in it (an Unexploded Missile). The magazine surfaces on
- * the site and stays there, a working one like one you build; it opens and fires at `target` (default: your nearest
- * building). With nothing to hit, the missile gets stuck in the silo's mouth and a second later blows up there,
- * harming nothing.
+ * the site and stays there, a working one like one you build. A coin flip (siloFires) decides the rest: it opens and
+ * fires at `target` (default: your nearest building), or its missile is recovered into your stockpile. Firing with
+ * nothing to hit, the missile gets stuck in the silo's mouth and a second later blows up there, harming nothing.
  */
-async function unexplodedMissile(site, target = nearestBuilding(site.x, site.z)) {
+async function unexplodedMissile(site, target = nearestBuilding(site.x, site.z), fires = siloFires()) {
+  if (!fires) return recoveredMissile(site);
   const run = runId;
   if (target) {
     eventOpen = true; // locked through the magazine's landing, then the strike
@@ -1187,6 +1220,45 @@ async function unexplodedMissile(site, target = nearestBuilding(site.x, site.z))
     groundStrike({ x: site.x, z: site.z }, target, (l) => L(`The old magazine's missile destroyed your ${l}`, `旧储弹仓的导弹摧毁了你的${l}`), silo);
   } else if (silo) siloDud(silo);
   else uprightDud(site);
+}
+
+/**
+ * The silo held fire: the magazine surfaces with its missile intact and it goes into your stockpile. If the stockpile
+ * is full, the missile waits in this magazine (cell.heldMissile) and moves in once there is room (storeHeldMissiles).
+ */
+function recoveredMissile(site) {
+  addTile(site.x, site.z, 'magazine', 0.1);
+  dust.burst(site.x, site.z, 1.4);
+  frontier.rebuild(grid);
+  placement.cell = null; // force ghost revalidation
+  const cell = grid.get(site.x, site.z);
+  if (cell) cell.heldMissile = true;
+  const stored = storeHeldMissiles();
+  shadeIdle();
+  updateHUD();
+  toast(
+    stored
+      ? L('Uncovered an old Missile Magazine. Its missile is yours: +1 missile', '发现一座旧储弹仓。里面的导弹归你了：+1 导弹')
+      : L('Uncovered an old Missile Magazine. Its missile waits inside until you have room', '发现一座旧储弹仓。导弹暂存其中，等你有空位再入库'),
+    'good',
+    2600,
+  );
+}
+
+/** Missiles recovered from old silos, waiting for room: into the stockpile while it has space. Returns how many moved. */
+function storeHeldMissiles() {
+  let moved = 0;
+  for (const cell of grid.cells.values()) {
+    if (!cell.heldMissile) continue;
+    if (cell.terrain !== 'magazine') {
+      delete cell.heldMissile; // the magazine was destroyed: its missile went with it
+      continue;
+    }
+    if (!tryStoreMissile('missile')) break;
+    delete cell.heldMissile;
+    moved++;
+  }
+  return moved;
 }
 
 /** How long a missile with nothing to hit sits in place before it blows up (seconds). */
@@ -2404,6 +2476,7 @@ function updateHUD() {
   $('resOilD').className = e.oil > 0 ? 'up' : '';
   const cap = currentMissileCap(idleKeySet(e));
   trimMissiles(cap);
+  storeHeldMissiles(); // recovered silo missiles move in once there's room
   const missiles = missileHandCount();
   if ($('resMissile')) {
     $('resMissile').textContent = `${missiles} / ${cap}`;
@@ -2443,7 +2516,7 @@ function updateHUD() {
   if (tipKind) renderResTip(e);
 }
 
-/** Each reroll costs 1 more barrel of oil than the last (1, 2, 3, …) for the whole run; only a new game resets it. */
+/** Each reroll costs 1 more barrel than the last this year (1, 2, 3, …). A new year starts again at 1. */
 const rerollCost = () => turn.rerolls + 1;
 
 // ---------- resource breakdown tooltips ----------
@@ -2703,7 +2776,8 @@ new ResizeObserver(() => {
 }).observe($('inspect'));
 
 function updateInspect(cell) {
-  const c = cell ? grid.get(cell[0], cell[1]) : null;
+  // (Not during the guided opening: the tutorial shows what a building does on the board itself.)
+  const c = cell && !tutorial.guiding ? grid.get(cell[0], cell[1]) : null;
   const el = $('inspect');
   if (!c) {
     inspectKey = '';
@@ -2824,14 +2898,16 @@ function endTurn() {
   // it never starts a second turn on the same season.
   if (turnRunning && !payout.active) {
     if (document.body.classList.contains('homeward')) return toast(L("Return to Hive City to gather the season's oil", '返回蜂巢城以收集本季石油'));
-    oilFlights.finish();
+    payoutHud.batch(() => oilFlights.finish());
     return;
   }
   if (payout.active) {
     if (previewing) cancelPreview();
     else {
-      oilFlights.finish();
-      payout.skip(); // pressing again fast-forwards
+      payoutHud.batch(() => {
+        oilFlights.finish();
+        payout.skip(); // pressing again fast-forwards
+      });
       return;
     }
   }
@@ -2915,8 +2991,10 @@ function previewPayout() {
   if (tutorialBlocks()) return;
   if (payout.active) {
     if (!previewing) {
-      oilFlights.finish();
-      payout.skip(); // a real turn is playing: just finish it
+      payoutHud.batch(() => {
+        oilFlights.finish();
+        payout.skip(); // a real turn is playing: just finish it
+      });
       return;
     }
     cancelPreview(); // restart the preview
@@ -2935,6 +3013,10 @@ function cancelPreview() {
 
 /** Draw the food store bar (clamped to the capacity; glows when full, red when empty). */
 function showStore(amount, cap, bumpIt = false) {
+  payoutHud.showStore(amount, cap, bumpIt);
+}
+
+function drawStore(amount, cap, bumpIt = false) {
   const shown = Math.max(0, Math.min(cap, Math.round(amount)));
   $('popFill').style.width = `${cap ? Math.min(1, shown / cap) * 100 : 0}%`;
   $('popFill').classList.toggle('full', cap > 0 && shown >= cap);
@@ -2942,7 +3024,10 @@ function showStore(amount, cap, bumpIt = false) {
   $('popText').textContent =
     L(`Food stores ${shown} / ${cap}`, `粮仓 ${shown} / ${cap}`) +
     (turn.population ? L(` · population ${turn.population}`, ` · 人口 ${turn.population}`) : '');
-  if (bumpIt) bump($('popText'));
+  if (bumpIt) {
+    $('popText').style.display = 'inline-block'; // same formatting as the former .bump class
+    payoutPulse($('popText'), 'food');
+  }
 }
 
 function bump(el) {
@@ -2955,6 +3040,10 @@ function bump(el) {
 /** While the first tribute is carried off (tutorial.tribute): the gauge still shows what was delivered, of what. */
 let tributeHeld = null; // { amount, quota }
 function showOil(amount, bump = false) {
+  payoutHud.showOil(tributeHeld?.amount ?? amount, bump);
+}
+
+function drawOil(amount, bump = false) {
   if (tributeHeld) amount = tributeHeld.amount;
   const quota = tributeHeld?.quota ?? turn.quota;
   $('oilStock').textContent = amount;
@@ -2962,8 +3051,8 @@ function showOil(amount, bump = false) {
   $('quotaCount').textContent = L(`${amount} / ${quota} barrels`, `${amount} / ${quota} 桶`);
   gauge.show(amount, quota, bump);
   if (bump) {
-    pop($('oilStock'));
-    pop($('quotaCount'));
+    payoutPulse($('oilStock'), 'oil');
+    payoutPulse($('quotaCount'), 'quota');
   }
 }
 
@@ -3512,7 +3601,7 @@ function settleTurn(e) {
   if (yearEnds) turn.round++;
   tickBlackMarket();
   growRivals();
-  toast(() => msg.map(textOf).join(''), kind, 3200);
+  if (!tutorial.active) toast(() => msg.map(textOf).join(''), kind, 3200); // (the guided opening shows the payout itself)
   // A new year opens with the shop; the hand is dealt when it closes.
   if (turn.season === 0) {
     updateHUD();
@@ -3537,6 +3626,7 @@ let eventOpen = false;
  */
 async function startNewYear(then, { continued = false } = {}) {
   eventOpen = true;
+  turn.rerolls = 0; // the year's first paid hand reroll costs 1 again
   hand.select(-1);
   let talking = continued; // the dialogue is already up
   if (turn.season === 0 && turn.round >= 2) {
@@ -3694,7 +3784,7 @@ async function startYearEvent(then, { continued = false, force = null } = {}) {
   const choice = await playEventDialogue(key, ev, continued);
   await dialogue.leave();
   const later = applyYearEvent(key, ev, choice);
-  for (const fn of later) await fn(); // e.g. Show of Force: the missile cinematic (board stays locked)
+  for (const fn of later) await fn(); // e.g. Prospectors' Unexploded Missile: the missile cinematic (board stays locked)
   eventOpen = false;
   await playPendingScenes(); // turned-away refugees: the Rebel Leader speaks
   then();
@@ -3842,17 +3932,6 @@ function applyYearEvent(key, ev, choiceIdx) {
         ? L(`${cells.length} cell${cells.length === 1 ? '' : 's'} turned into Cliffs.`, `${cells.length} 个格子变成了悬崖。`)
         : '';
     },
-    showOfForce: () => {
-      // Ruins surface on an empty cell next to your land; a missile from their silo hits a building.
-      const [spot] = shuffled(emptyEdgeCells());
-      const [target] = pickStrikeTargets(1);
-      if (!spot || !target) return '';
-      addTile(spot[0], spot[1], 'ruins', 0.1);
-      dust.burst(spot[0], spot[1], 1.4);
-      frontier.rebuild(grid);
-      later.push(() => groundStrike({ x: spot[0], z: spot[1] }, target));
-      return L('Pre-war Ruins surfaced, and their missile launched.', '战前遗迹破土而出，其中的导弹随即发射。');
-    },
   };
   const extraParts = [ev.apply?.(ctx), choice?.apply?.(ctx)].filter(Boolean);
   const extra = extraParts.join(' ');
@@ -3877,6 +3956,12 @@ function dealNewHand() {
   // Dust Storm: extra Wasteland dealt on top of the normal hand.
   const waste = turn.event?.mods?.extraWaste ?? 0;
   hand.deal(handSize() + waste, [...turn.pinned, ...lessonCards(), ...Array(waste).fill('wasteland')]);
+  // The guided opening's hand to play on your own: one Wasteland at most, so the Farm decision isn't crowded out.
+  if (tutorial.active) {
+    let seen = 0;
+    hand.cards = hand.cards.map((p) => (p.terrain.startsWith('wasteland') && !p.pinned && ++seen > 1 ? pieceOf(seen % 2 ? 'station' : 'farm') : p));
+    hand.render();
+  }
   turn.pinned = [];
   holdingPurchases = false;
   updateHUD();
@@ -3895,8 +3980,7 @@ function lessonCards() {
   const e = economyNow();
   // The military lesson, from Autumn of the first year: a Missile Magazine card (kept until it's placed). Its missile
   // comes loaded in it, so the first strike has somewhere to come from.
-  const magazine = !turn.gifted && tutorial.lessons.open('war') && (turn.round > 1 || turn.season >= 2) && !hasMagazine();
-  if (magazine) cards.push('magazine');
+  const magazine = magazineDue(); // (handed over once this hand is played out: offerMagazine)
   // Housing, once, when the workers are about to run out (the Magazine needs two): a Settlement, and a Farm if the
   // food couldn't carry it.
   const need = magazine ? WORKERS.magazine : 1;
@@ -3909,6 +3993,24 @@ function lessonCards() {
 }
 
 const hasMagazine = () => [...grid.cells.values()].some((c) => c.terrain === 'magazine');
+/** A tutorial run's military lesson is due (from Autumn of the first year) and its Magazine not yet given. */
+const magazineDue = () =>
+  turn.guided && !turn.gifted && tutorial.lessons.open('war') && (turn.round > 1 || turn.season >= 2) && !hasMagazine() && !hand.cards.some((p) => p.terrain === 'magazine');
+
+/**
+ * The military lesson's Missile Magazine comes as an extra card once the season's hand is played out (no Wasteland
+ * left to place, and the hand empty or left alone a while), so Next turn is free when the lesson gets to it.
+ */
+let magazineCheck = 0;
+function offerMagazine(dt) {
+  magazineCheck -= dt;
+  if (magazineCheck > 0) return;
+  magazineCheck = 0.5;
+  if (!magazineDue() || tutorial.active || view !== 'board' || screenBusy() || turnRunning || warPending) return;
+  if (hand.placeableForced.length || hand.piece || hand.dragging) return;
+  if (!hand.isEmpty && tutorial.clock - tutorial.lastInput < 5) return;
+  hand.addPinned('magazine');
+}
 
 /**
  * A tutorial run's Missile Magazine is down: its missile loads into it (a missile rises from it into the Missiles
@@ -4655,7 +4757,7 @@ function tryPlace() {
   if (view !== 'board') return;
   if (turn.over || shopOpen || eventOpen) return;
   if (payout.active) {
-    payout.skip(); // clicking the board during the payout fast-forwards it
+    payoutHud.batch(() => payout.skip()); // clicking the board during the payout fast-forwards it
     return;
   }
   if (expansion.active) {
@@ -4836,7 +4938,7 @@ function siloLaunch(cell, count, launch) {
     cut: (i) => {
       const missile = mesh.getObjectByName(SILO_PARTS[0]);
       if (!missile) return null;
-      boom();
+      launchSnd();
       dust.burst(cell.x, cell.z, 1.2);
       camShake.add(0.25);
       return launch(siloFrom(missile), i);
@@ -4912,7 +5014,7 @@ async function launchSalvo(strikes) {
             await wait(0.1 + Math.random() * 0.25);
             if (run !== runId) return;
             dust.burst(cell.x, cell.z, 0.8);
-            boom();
+            launchSnd();
             fireAway({ x: w.x, y: 0.55, z: w.z, world: true }, s);
           }
         })(),
@@ -5425,10 +5527,16 @@ function playRivalStrike(r, rec) {
   rivalMissiles ??= new MissileStrike(rivalView.scene, camera, missileCfg);
   const w = hexToWorld(rec.at[0], rec.at[1]);
   // Their networks' fire is the simulated defence (setDefence in frame()); the missile flies the simulated path.
-  return rivalMissiles.fire([{ x: w.x, z: w.z, ...simFlight(rec) }], {
-    onIntercept: () => boom(),
+  const target = { x: w.x, z: w.z, ...simFlight(rec) };
+  const whoosh = missileWhoosh(target);
+  return rivalMissiles.fire([target], {
+    onIntercept: () => {
+      whoosh?.stop(0.25);
+      explode('small');
+    },
     onImpact: (t) => {
-      boom();
+      whoosh?.stop(0.12);
+      explode(t?.harmless ? 'small' : 'large');
       if (view === 'rival') camShake.add(missileCfg.shake * (t?.harmless ? 0.3 : 1));
     },
     onCover: () => craterRival(r, rec),
@@ -5462,8 +5570,11 @@ const simFlight = (rec) => ({
 /** The city on screen shows its networks' simulated fire (turrets turning, the stream, the rounds). */
 function syncDefence() {
   const board = attackLive && view === 'board' ? warSims.get('player') : null;
-  missiles.setDefence(board ?? null, warClock, (i) => findCiws(grid.get(board.turrets[i].x, board.turrets[i].z)?.mesh), (d) => ciws(d));
-  if (rivalMissiles) rivalMissiles.setDefence((attackLive && view === 'rival' && rivalShown && warSims.get(rivalShown.id)) || null, warClock);
+  missiles.setDefence(board ?? null, warClock, (i) => findCiws(grid.get(board.turrets[i].x, board.turrets[i].z)?.mesh), (d) => gunSnd(d));
+  if (rivalMissiles) {
+    const sim = attackLive && view === 'rival' && rivalShown ? warSims.get(rivalShown.id) : null;
+    rivalMissiles.setDefence(sim || null, warClock, (i) => findCiws(rivalShown?.grid.get(sim?.turrets[i].x, sim?.turrets[i].z)?.mesh), (d) => gunSnd(d));
+  }
   else if (attackLive && view === 'rival' && rivalShown && warSims.get(rivalShown.id)) rivalMissiles = new MissileStrike(rivalView.scene, camera, missileCfg);
 }
 
@@ -5610,6 +5721,8 @@ async function runAttackPhase() {
   landing = [];
   played.clear();
   warTimer.classList.remove('hidden');
+  // The air-raid siren follows missiles aimed at Hive City, from launch until the last one is down.
+  if (res.some((s) => s.to === 'player' && !s.fizzled)) snd(() => combatAudio.sirenOn(), buzz);
   const phase = globe.playAttack(res, rivals);
   // Everyone fires at once: on Hive City your magazines open and the salvo climbs away as the countdown starts.
   // The first strike while the military lesson is open: launched from home, it waits in the air for you to follow it.
@@ -5618,10 +5731,14 @@ async function runAttackPhase() {
   if (follow) holdForFollow(run, mine[0].to);
   // The first time missiles fly each way, the Field Report briefs you with everything frozen in the air.
   const briefed = await briefAttack(mine, theirs);
-  if (run !== runId) return true;
+  if (run !== runId) {
+    combatAudio.endAttack();
+    return true;
+  }
   if (!briefed.incoming) announceIncoming(theirs);
   await phase;
   await Promise.all(landing);
+  combatAudio.endAttack();
   attackLive = false;
   warTimer.classList.add('hidden');
   if (run !== runId) return true;
@@ -5664,6 +5781,7 @@ async function runAttackPhase() {
  */
 let following = null; // { to } while a flight waits for you
 const FOLLOW_ETA = 3.4; // seconds left when it's held (more than the 2.2 s the incoming flight takes)
+const FOLLOW_SPEED = 0.3; // its pace on the War Map while you follow it (3.4 s of flight: about 11 s to dive in)
 async function holdForFollow(run, to) {
   const hold = (on) => run === runId && globe.pauseAttack(on);
   const mineInAir = () => globe.inFlight().find((f) => f.s.from === 'player' && f.s.to === to);
@@ -5683,17 +5801,21 @@ async function holdForFollow(run, to) {
   }
   if (run !== runId || !mineInAir()) return;
   // ...and held there until you're in that city (a dialogue unpausing it doesn't count: re-held every tick).
+  // Held while you're still home; once you're out on the War Map it flies on, slowly, so you can watch it and dive
+  // into its city in time; there (or if you never come) it's back to full speed.
   following = { to };
   // (Wall time: the wait is for the player, not for the frames. Arriving there ends it; skipping the lesson too.)
   const t1 = performance.now();
-  while (run === runId && following) {
+  while (run === runId && following && mineInAir()) {
     const there = view === 'rival' && rivalShown?.id === to && !switching;
     if (there || performance.now() - t1 > 90000) break;
-    hold(true);
+    hold(view === 'board');
+    if (view !== 'board') globe.setAttackSpeed(FOLLOW_SPEED);
     await wait(0.1);
   }
   following = null;
   hold(false);
+  if (run === runId) globe.setAttackSpeed(1);
 }
 
 /** Incoming! A banner naming who is firing at Hive City, before the missiles fly. */
@@ -5735,7 +5857,6 @@ async function briefAttack(mine, theirs) {
         : () => L("We've no Intercept Networks, Overseer. I'm sorry. Everything they fired is going to land.", '我们没有拦截网，总督。很抱歉。他们打来的每一枚都会落地。'),
       () => L("You can stay and watch them come in, or step back to the War Map. Your call. I'll be right here.", '您可以留下来看着它们落下，也可以退回战争地图。由您决定。我就在这儿。'),
     );
-    buzz();
   }
   dialogue.open({ kind: 'pressure', kindLabel: () => L('Field Report', '前线报告'), title: () => (incoming ? L('Incoming missiles', '导弹来袭') : L('First strike', '首次打击')) });
   for (const line of lines) {
@@ -5753,7 +5874,6 @@ async function announceIncoming(strikes) {
   const from = [...new Set(at.map((x) => x.from))].map(cityName).join(L(', ', '、'));
   // A toast, not a banner: nothing stops you looking around while they fly.
   toast(L(`Incoming! ${from} launched ${at.length} missile${at.length === 1 ? '' : 's'} at Hive City`, `导弹来袭！${from}向蜂巢城发射了 ${at.length} 枚导弹`), 'bad', 2600);
-  buzz();
 }
 
 /** Every rival city has fallen and the tribute still flows: the run is won. */
@@ -5951,8 +6071,8 @@ $('btnRivalBack').addEventListener('click', (e) => {
 });
 
 /**
- * Dev-testing hotkeys (Space, `, -, N, M, P, V, T, X). Off for players; set true to use them again.
- * The Game Debug panel (its button, top left) still has the same tools.
+ * Dev-testing hotkeys (Space, `, N, M, P, V, T, X). Off for players; set true to use them again.
+ * `-` still opens the performance overlay in dev builds. The Game Debug panel still has the same tools.
  */
 const DEV_HOTKEYS = false && !RELEASE; // never in the release build
 
@@ -5973,6 +6093,10 @@ window.addEventListener('keydown', (e) => {
     else openGlobe();
     return;
   }
+  if (!RELEASE && k === '-' && !e.repeat) {
+    perf.setOpen(!perf.enabled); // performance overlay
+    return;
+  }
   if (k === 'escape' && view === 'rival') {
     leaveRival();
     return;
@@ -5987,10 +6111,6 @@ window.addEventListener('keydown', (e) => {
   }
   if (dev && k === '`') {
     debug.toggle();
-    return;
-  }
-  if (dev && k === '-') {
-    perf.setOpen(!perf.enabled); // performance overlay
     return;
   }
   if (striking) return; // the missile strike cinematic owns the screen
@@ -6165,7 +6285,7 @@ function ghostPrice(i) {
 /** The rotate button over the board: there while a piece of 2+ cells is held (touch has no R key). */
 function updateRotateButton() {
   const p = hand.piece;
-  const multi = Boolean(p && !ACTIONS[p.terrain] && pieceOffsets(p).length > 1);
+  const multi = Boolean(p && (ACTIONS[p.terrain] ? ACTIONS[p.terrain].size : pieceOffsets(p).length > 1)); // (the Wrecking Crew's area turns too)
   $('btnRotate').classList.toggle('hidden', !multi || view !== 'board');
 }
 
@@ -6239,6 +6359,7 @@ function resetIsland(opts) {
   resetView();
   rivals = createRivals((Math.random() * 0x100000000) >>> 0);
   runId++; // stops a missile strike / failure speech still running
+  combatAudio.endAttack(); // a reset must not leave the siren wailing
   introRun++; // and an opening scene
   tutorial.stop();
   grid.expansionMode = localStorage.getItem(MODE_KEY) === 'expansion';
@@ -6591,12 +6712,42 @@ function renderGhost() {
   renderer.shadowMap.autoUpdate = shadows;
 }
 
+/**
+ * Zoomed out (the map icons fully in), buildings draw their light copies (lod.js); close up, the full models.
+ * Each scene keeps its own state; while light, it is swept again now and then for tiles placed or rebuilt since.
+ */
+const lodState = new WeakMap(); // scene root -> { on, sweep }
+const LOD_DISTANCE_KEY = 'oto.lodDistance';
+LOD.distance = Number(localStorage.getItem(LOD_DISTANCE_KEY)) || LOD.distance; // Performance overlay slider, kept across reloads
+const lodDistance = () => LOD.distance;
+function updateLod(root, dt) {
+  let st = lodState.get(root);
+  if (!st) lodState.set(root, (st = { on: false, sweep: 0 }));
+  const on = wantLod(rig.distance, lodDistance(), st.on);
+  st.sweep -= dt;
+  if (on === st.on && (!on || st.sweep > 0)) return;
+  st.sweep = 0.5;
+  st.on = on;
+  setLod(root, on);
+}
+
 let last = performance.now();
+function updatePayoutFx(dt) {
+  payoutHud.batch(() => {
+    payout.update(dt);
+    updateFactoryHops(dt);
+    updatePadMissiles(dt);
+    updateFactoryFloaters(dt);
+    oilFlights.update(dt);
+  });
+}
+
 function frame(now) {
   const dt = Math.min((now - last) / 1000, 0.05);
   last = now;
   const time = now / 1000;
   perf.frameBegin(now);
+  if (view !== 'board') shadowCache.invalidate();
 
   perf.begin('camera');
   rig.update(dt);
@@ -6612,11 +6763,7 @@ function frame(now) {
   updateWarTimer();
   if (view !== 'board') {
     // The payout keeps paying out wherever you're looking (on the board it runs after the render, below).
-    payout.update(dt);
-    updateFactoryHops(dt);
-    updatePadMissiles(dt);
-    updateFactoryFloaters(dt);
-    oilFlights.update(dt);
+    updatePayoutFx(dt);
   }
   if (view === 'globe') {
     perf.end('camera');
@@ -6635,17 +6782,18 @@ function frame(now) {
   if (view === 'rival') {
     perf.end('camera');
     perf.begin('tile anims');
-    factory.update(dt);
+    factory.update(dt, rivalView.scene);
     perf.end('tile anims');
     perf.begin('render (cpu)');
     perf.gpuBegin();
     updateCurve(camera, rig.target); // rival cities follow the Graphics map shape (Flat / Planet), like the board
     syncSteadyCam();
     camShake.update(dt, rig.distance);
-    rivalView.update(dt, camera); // its fog of war (offscreen pass before the scene)
+    rivalView.update(dt, camera); // fog and targeting animations; render() owns the depth/colour passes
     updateAimHover();
     updateAimCancelHint();
-    renderer.render(rivalView.scene, camera);
+    updateLod(rivalView.scene, dt);
+    rivalView.render(camera);
     tutorial.update(time); // the guided trip: back to the War Map from here
     perf.gpuEnd();
     perf.end('render (cpu)');
@@ -6668,7 +6816,7 @@ function frame(now) {
   missiles.update(dt);
   perf.end('missiles');
   perf.begin('tile anims');
-  factory.update(dt);
+  factory.update(dt, scene);
   perf.end('tile anims');
   perf.begin('ships');
   traffic.update(dt, grid);
@@ -6687,9 +6835,6 @@ function frame(now) {
   updateFactoryBars();
   updateBuildReveal(dt);
   perf.end('ruin buttons');
-  perf.begin('map icons');
-  zoomIcons.update(grid);
-  perf.end('map icons');
   updateInterceptCover(time);
   perf.begin('expansion');
   checkExpansion();
@@ -6710,6 +6855,7 @@ function frame(now) {
   if (busy() && hand.selected >= 0 && !payout.active) hand.select(-1);
   placement.update(expansion.active || busy() ? null : cell, dt, time);
   updateForecast(expansion.active || busy() ? null : cell);
+  offerMagazine(dt);
   updateRecenter(dt);
   perf.end('placement');
   tutorial.update(time);
@@ -6717,19 +6863,30 @@ function frame(now) {
   perf.begin('render (cpu)');
   perf.gpuBegin();
   updateCurve(camera, rig.target); // the small-planet bend, around where the camera looks
-  fog.render(camera); // offscreen fog pass (High/Medium/Low on high-DPI screens)
-  crtPass.begin(); // CRT: the scene goes into its off-screen image
-  renderer.render(scene, camera);
-  renderGhost();
-  crtPass.end(time); // CRT: the tube's picture onto the screen
+  updateLod(scene, dt);
+  scene.updateMatrixWorld(); // once for culling, fog depth and shadow inspection, including when shadows are off
+  shadowCache.update(scene, camera, renderer, true);
+  try {
+    instancer.begin(camera, true);
+    trafficInstances.begin(camera, true);
+    fog.render(camera); // the same batches also hide the fog behind buildings
+    crtPass.begin();
+    renderer.render(scene, camera); // the sun's pass uses these batches too
+    renderGhost();
+    crtPass.end(time);
+  } finally {
+    instancer.end(); // picking, animation and material swaps always see the original objects
+    trafficInstances.end();
+  }
   perf.gpuEnd();
   perf.end('render (cpu)');
+  // Anchor icons to the picture just drawn: current camera, planet bend and CRT projection (including camera shake).
+  // DOM changes still reach the same browser paint; updating earlier used the preceding frame's projection state.
+  perf.begin('map icons');
+  zoomIcons.update(grid);
+  perf.end('map icons');
   perf.begin('payout');
-  payout.update(dt); // after render so labels use this frame's camera
-  updateFactoryHops(dt);
-  updatePadMissiles(dt);
-  updateFactoryFloaters(dt);
-  oilFlights.update(dt);
+  updatePayoutFx(dt); // after render so labels use this frame's camera
   perf.end('payout');
   perf.frameEnd();
   requestAnimationFrame(frame);
@@ -6746,6 +6903,26 @@ perf.counter('fog quality', () => fog.quality + (fog.offscreen ? ` @${fog.render
 perf.counter('fog billows', () => (fog.visible ? fog.count.toLocaleString() : 'off'));
 perf.counter('fog mask uploads', () => fog.uploads ?? 0);
 perf.counter('grid cells', () => grid.cells.size);
+perf.counter('batched parts / draws', () => {
+  const batches = view === 'rival' ? [rivalView.instancer] : [instancer, trafficInstances];
+  return `${batches.reduce((n, b) => n + b.stats.parts, 0)} / ${batches.reduce((n, b) => n + b.stats.batches, 0)}`;
+});
+perf.counter('instance transforms uploaded', () => view === 'rival' ? rivalView.instancer.stats.uploads : instancer.stats.uploads + trafficInstances.stats.uploads);
+perf.counter('LOD triangles (full → light)', () => `${Math.round(lodStats.before).toLocaleString()} → ${Math.round(lodStats.after).toLocaleString()} in ${lodStats.meshes} meshes`);
+perf.toggle({ label: 'LOD models', options: ['Auto', 'On', 'Off'], get: () => LOD.mode, set: (v) => (LOD.mode = v) });
+// Where Auto switches to the light models (camera distance).
+perf.toggle({
+  label: 'LOD distance',
+  range: [6, 48, 0.5],
+  get: () => lodDistance(),
+  set: (v) => {
+    LOD.distance = v;
+    localStorage.setItem(LOD_DISTANCE_KEY, String(v));
+  },
+});
+perf.counter('camera distance', () => rig.distance.toFixed(1));
+perf.counter('sun shadow', () => shadowCache.stats.updated ? 'updated' : 'reused');
+perf.toggle({ label: 'Instanced buildings', get: () => instancer.enabled, set: (on) => { instancer.enabled = rivalView.instancer.enabled = trafficInstances.enabled = on; shadowCache.invalidate(); } });
 perf.toggle({ label: 'Fog', get: () => fog.visible, set: (on) => fog.setVisible(on) });
 perf.toggle({ label: 'Fog veil', get: () => fog.veilOn, set: (on) => fog.setParts({ veil: on }) });
 perf.toggle({ label: 'Fog billows', get: () => fog.billowsOn, set: (on) => fog.setParts({ billows: on }) });
@@ -6794,8 +6971,6 @@ function warmUpModels(models = factory.models) {
 
 /** Compile the construction dissolve shader once the extra models are in, so the first drop doesn't hitch. */
 async function prewarmBuildReveal() {
-  const hold = new THREE.Group();
-  tiles.add(hold);
   for (const terrain of ['missilelab', 'warhead']) {
     let mesh;
     try {
@@ -6803,19 +6978,16 @@ async function prewarmBuildReveal() {
     } catch {
       continue;
     }
-    mesh.position.set(0, -5, 0);
-    hold.add(mesh);
     const cell = { mesh, terrain, built: false };
     ensureBuildReveal(cell);
     try {
       await renderer.compileAsync(mesh, camera, scene);
     } catch {
-      renderer.compile(scene, camera);
+      renderer.compile(mesh, camera, scene);
+    } finally {
+      clearBuildReveal(cell);
     }
-    clearBuildReveal(cell);
-    hold.remove(mesh);
   }
-  tiles.remove(hold);
 }
 
 /**
@@ -6836,7 +7008,7 @@ async function warmUpModelsGradually(models) {
   }
   for (const model of models.values()) {
     try {
-      await renderer.compileAsync(model, camera, scene);
+      await instancer.warm(model, renderer, camera, (m) => [m, greyOf(m)], fog.depthScene.overrideMaterial);
     } catch {
       // compiles on first draw instead
     }
@@ -6847,17 +7019,27 @@ async function warmUpModelsGradually(models) {
 // Start once the models are in, so the Capital lands as the real city rather than a
 // stand-in block that swaps a second later. factory.ready also resolves if loading
 // fails (the game then runs on coloured blocks).
-factory.ready.then(() => {
+factory.ready.then(async () => {
   setTimeout(preloadCardArt, 0); // decode the card pictures in the background, so showing cards never waits
   clearInterval(loadTimer);
   $('loadingFill').style.width = '100%';
   warmUpModels();
+  // Core model shaders finish behind the loading screen, including the instanced and idle-grey variants.
+  for (const model of [...factory.models.values()]) {
+    try {
+      await instancer.warm(model, renderer, camera, (m) => [m, greyOf(m)], fog.depthScene.overrideMaterial);
+    } catch {
+      // A shader unsupported by this device gets the usual renderer diagnostics on first draw.
+    }
+  }
+  buildLods(factory.models).catch((e) => console.warn('[lod] skipped', e)); // in the background
   // Sound has to be allowed before the opening hand is dealt, or that whoosh is skipped.
   // When the browser blocks autoplay, the loading screen stays up for one click or key.
   let started = false;
   let swallowNextClick = false;
   const go = () => {
     const sound = unlockSfx();
+    combatAudio.unlock();
     startMusic();
     if (started || !sound) return sound;
     started = true;
@@ -6912,6 +7094,7 @@ factory.extrasReady.then(async (extras) => {
   if (!extras) return;
   await warmUpModelsGradually(extras);
   adoptBlockouts();
+  buildLods(extras).catch((e) => console.warn('[lod] skipped', e));
   rivalView.refresh(true);
   await prewarmBuildReveal();
 });
@@ -6920,4 +7103,4 @@ factory.extrasReady.then(async (extras) => {
 if (RELEASE) for (const id of ['debugDock', 'libraryLink']) document.getElementById(id)?.remove();
 
 // Handy for debugging in the console (dev builds only).
-if (!RELEASE) window.tileIsland = { tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, openCityStrike, drawStrikeHand, missileCount, _t: { openGlobe, globeCfg, clear: () => (eventOpen = false), war: { addMissile, queueDrawn, updateAimBar, runAttackPhase, rivals: () => rivals } } };
+if (!RELEASE) window.tileIsland = { lod: { LOD, lodStats, setLod }, instancer, shadowCache, tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, openCityStrike, drawStrikeHand, missileCount, _t: { openGlobe, globeCfg, clear: () => (eventOpen = false), war: { addMissile, queueDrawn, updateAimBar, runAttackPhase, rivals: () => rivals } } };
