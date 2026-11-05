@@ -2435,7 +2435,8 @@ function assignBuildParts(root) {
   });
   const first = 1 / Math.max(2, yearLength());
   for (const rec of body) rec.o.userData.buildPart = first * 0.5;
-  for (const rec of ground) rec.o.userData.buildPart = 2;
+  // The ground plate isn't built: it keeps its own (desert sand) look the whole time.
+  for (const rec of ground) rec.o.userData.buildGround = true;
 }
 
 const buildPatchCache = new WeakMap();
@@ -2478,7 +2479,7 @@ function ensureBuildReveal(cell) {
   assignBuildParts(mesh);
   const state = { uBuild: { value: 0 }, orig: new Map(), draw: new Map() };
   mesh.traverse((o) => {
-    if (!o.isMesh || !o.material || BUILD_FX.test(o.name)) return;
+    if (!o.isMesh || !o.material || BUILD_FX.test(o.name) || o.userData.buildGround) return;
     state.orig.set(o, o.material);
     state.draw.set(o, o.onBeforeRender);
     o.userData.buildDissolve = 0;
