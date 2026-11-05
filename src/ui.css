@@ -2244,10 +2244,10 @@ body.dialogue #inspect {
   transform-origin: 50% 100%;
 }
 #mapIcons .map-yield.in .map-yield-body {
-  animation: map-yield-in 0.16s linear both;
+  animation: map-yield-in 0.08s linear both;
 }
 #mapIcons .map-yield.out .map-yield-body {
-  animation: map-yield-out 0.09s linear both;
+  animation: map-yield-out 0.045s linear both;
 }
 @keyframes map-yield-in {
   0% { transform: translateY(80%) scale(0.15); }
