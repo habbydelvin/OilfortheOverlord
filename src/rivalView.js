@@ -261,6 +261,7 @@ export function createRivalView({ renderer, factory, rig, fogSettings, fogQualit
       const mesh = factory.create(cell.terrain, { bare, seed: cellSeed(cell.x, cell.z) });
       const w = hexToWorld(cell.x, cell.z);
       mesh.position.set(w.x, 0, w.z);
+      cell.mesh = mesh;
       root.add(mesh);
       minX = Math.min(minX, w.x);
       maxX = Math.max(maxX, w.x);

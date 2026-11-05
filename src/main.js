@@ -5115,7 +5115,9 @@ function updateAimBar() {
   const q = rival ? queuedStrikes(rival.id).length : 0;
   const cards = rivalHand ? hand.cards.filter((p) => isPlayerMissile(p.terrain)).length : 0;
   $('rivalAim').classList.toggle('hidden', !rival || rival.alive === false || (!q && !cards));
-  $('rivalQueue').textContent = L(`${q} aimed · ${cards} in hand · fires after End Turn`, `已瞄准 ${q} · 手牌 ${cards} · 结束回合后发射`);
+  $('rivalQueue').textContent = q
+    ? L(`${q} aimed · click a red tile to cancel · fires after End Turn`, `已瞄准 ${q} · 点击红格取消发射 · 结束回合后发射`)
+    : L(`${q} aimed · ${cards} in hand · fires after End Turn`, `已瞄准 ${q} · 手牌 ${cards} · 结束回合后发射`);
   const aimed = rival ? queuedStrikes(rival.id) : [];
   const aimedCells = aimed.map((s) => s.cells ?? footprint(s.kind, s.at, s.size, rival.grid));
   rivalView.setMarkers(aimedCells, aimHover, aimAt);
@@ -5149,6 +5151,52 @@ function rivalCell() {
   raycaster.setFromCamera(pointer, camera);
   if (!intersectGround(raycaster.ray, hit)) return null;
   return worldToHex(hit.x, hit.z);
+}
+
+const aimHintV = new THREE.Vector3();
+const aimHintBox = new THREE.Box3();
+
+function strikeOnCell(rival, at) {
+  for (const s of queuedStrikes(rival.id)) {
+    const cells = s.cells ?? footprint(s.kind, s.at, s.size, rival.grid);
+    if (cells.some(([x, z]) => x === at[0] && z === at[1])) return s;
+  }
+  return null;
+}
+
+function updateAimCancelHint() {
+  const layer = $('aimCancelHint');
+  if (!layer) return;
+  let tag = layer.firstElementChild;
+  if (!tag) {
+    tag = document.createElement('div');
+    tag.className = 'aim-cancel-tag';
+    layer.appendChild(tag);
+  }
+  const rival = rivalShown;
+  const c = rivalCell();
+  const hit = view === 'rival' && rival && c && !hand.dragging && strikeOnCell(rival, c);
+  const text = L('Click to cancel', '点击取消发射');
+  if (tag.textContent !== text) tag.textContent = text;
+  if (hit) {
+    const w = hexToWorld(c[0], c[1]);
+    const mesh = rival.grid.get(c[0], c[1])?.mesh;
+    let y = 0.7;
+    if (mesh) {
+      mesh.updateMatrixWorld(true);
+      aimHintBox.setFromObject(mesh);
+      y = Math.max(0.4, aimHintBox.max.y + 0.08);
+    }
+    aimHintV.set(w.x, y, w.z).project(camera);
+    const px = (aimHintV.x * 0.5 + 0.5) * window.innerWidth;
+    const py = (-aimHintV.y * 0.5 + 0.5) * window.innerHeight;
+    tag.style.left = `${px.toFixed(1)}px`;
+    tag.style.top = `${py.toFixed(1)}px`;
+    tag.classList.add('on');
+  } else {
+    tag.classList.remove('on');
+  }
+  if (view === 'rival' && !rig.isDragging) renderer.domElement.style.cursor = hit ? 'pointer' : '';
 }
 
 /** Click an already-aimed tile to take that missile back. Aiming is drop-the-card only. */
@@ -6596,6 +6644,7 @@ function frame(now) {
     camShake.update(dt, rig.distance);
     rivalView.update(dt, camera); // its fog of war (offscreen pass before the scene)
     updateAimHover();
+    updateAimCancelHint();
     renderer.render(rivalView.scene, camera);
     tutorial.update(time); // the guided trip: back to the War Map from here
     perf.gpuEnd();
@@ -6654,6 +6703,7 @@ function frame(now) {
   perf.begin('inspect');
   updateInspect(cell);
   updateBuildHover(cell);
+  updateAimCancelHint();
   perf.end('inspect');
   perf.begin('placement');
   // Hide the ghost while choosing a plot or while the payout plays.
