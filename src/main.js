@@ -6855,7 +6855,7 @@ function autosave(dt) {
 function restoreSave(save) {
   if (!save?.cells?.length) return false;
   markTutorialDone(); // a saved game is past the guided opening
-  resetIsland({ tutorial: false, keepClouds: true, intro: false });
+  resetIsland({ tutorial: false, keepClouds: true, intro: false, restoring: true });
   tutorial.stop();
   // The board: drop what the reset laid out, then each saved tile, as it was.
   for (const c of grid.cells.values()) removeMesh(c.mesh);
@@ -6875,10 +6875,16 @@ function restoreSave(save) {
     if (cell.terrain === 'milfactory') setPadMissile(cell, cell.missileReady);
   }
   // The pieces drop in at once (no fall).
-  for (const a of anims) a.t = 1e3;
+  // Already landed: no thud, dust, fog puff or shake as the saved city appears.
+  for (const a of anims) {
+    a.t = 1e3;
+    a.landed = true;
+    a.mesh.visible = true;
+  }
   // The turn and everything else.
   Object.assign(turn, save.turn, { over: false, guided: false });
   hand.cards = (save.hand ?? []).map((p) => ({ ...p }));
+  hand.fresh = new Set(); // already in hand: no deal-in
   hand.selected = -1;
   hand.render();
   setMissileState(save.missiles);
@@ -6909,6 +6915,7 @@ function restoreSave(save) {
     rig.goalDistance = save.camera.distance ?? rig.goalDistance;
   }
   shadeIdle();
+  seasonClock.set(turn.season, yearLength() - 1, { instant: true }); // already in this season: no turn, no latch
   updateHUD();
   lastSaved = '';
   return true;
@@ -7399,6 +7406,9 @@ function resetIsland(opts) {
     turn.freeRerolls = 20;
     turn.stockpile = Math.max(turn.stockpile, 30);
     hand.deal(HAND_SIZE);
+  } else if (opts?.restoring) {
+    // Continue: the saved hand replaces it right after (restoreSave), so deal nothing (no deal sound).
+    hand.cards = [];
   } else if (turn.guided) {
     // The guided opening's hand, in order: a Farm, an Oil Station and two Wasteland pieces (no Settlement yet:
     // the Capital's workers are enough for now; housing comes when they run out).

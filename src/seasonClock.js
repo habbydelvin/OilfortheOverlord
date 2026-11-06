@@ -96,12 +96,15 @@ export class SeasonClock {
     this.tribute = el.querySelector('.sc-tribute');
   }
 
-  /** Show `season` (0-3); `tribute`: the season the tribute is due in. Animated once it is showing something. */
-  set(season, tribute = 3) {
+  /**
+   * Show `season` (0-3); `tribute`: the season the tribute is due in. Animated once it is showing something;
+   * `instant`: jump straight there, silently (a loaded game is already in that season).
+   */
+  set(season, tribute = 3, { instant = false } = {}) {
     this.tribute.setAttribute('transform', `rotate(${tribute * 90})`);
     if (season === this.season) return;
-    const first = this.season < 0;
-    const steps = first ? season : (season - this.season + 4) % 4;
+    const first = this.season < 0 || instant;
+    const steps = this.season < 0 ? season : (season - this.season + 4) % 4;
     this.season = season;
     this.angle += steps * 90;
     for (const t of this.#timers) clearTimeout(t);

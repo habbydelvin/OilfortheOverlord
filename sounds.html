@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sound library · Oil for the Overlord</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; font: 14px/1.45 system-ui, sans-serif; background: #17130e; color: #eadfc8; }
+      header { position: sticky; top: 0; z-index: 2; display: flex; gap: 16px; align-items: center; padding: 14px 24px; background: #201a13; border-bottom: 1px solid #4a3c2b; }
+      header h1 { margin: 0; font-size: 18px; color: #e8b660; }
+      header a { color: #d9a54a; text-decoration: none; }
+      #status { margin-left: auto; font-size: 12px; color: #b9a98c; }
+      main { padding: 8px 24px 48px; max-width: 1100px; }
+      h2 { margin: 28px 0 4px; font-size: 15px; color: #e8b660; border-bottom: 1px solid #3a3024; padding-bottom: 4px; }
+      .note { margin: 0 0 10px; font-size: 12px; color: #a8987c; }
+      table { width: 100%; border-collapse: collapse; }
+      td { padding: 6px 8px; border-bottom: 1px solid #2c241a; vertical-align: top; }
+      td.name { width: 220px; font-weight: 600; }
+      td.name small { display: block; font-weight: 400; color: #9c8d72; font-family: ui-monospace, monospace; font-size: 11px; }
+      td.kind { width: 92px; }
+      td.play { width: 300px; }
+      .tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; }
+      .tag.synth { background: #2b3f52; color: #a9d2ff; }
+      .tag.rec { background: #4a3520; color: #ffcf8a; }
+      .tag.music { background: #3d2a48; color: #e0b4ff; }
+      .tag.loop { background: #233d2c; color: #a6e8b8; }
+      button { margin: 0 4px 4px 0; padding: 4px 10px; background: #3a3024; color: inherit; border: 1px solid #6b5a42; border-radius: 4px; cursor: pointer; font: inherit; font-size: 12px; }
+      button:hover { background: #4d3f2e; }
+      button.stop { border-color: #7a4a3a; }
+      .files { margin-top: 4px; font-size: 11px; color: #9c8d72; font-family: ui-monospace, monospace; }
+      .files button { font-family: ui-monospace, monospace; font-size: 11px; padding: 2px 6px; }
+      .unused td { opacity: 0.55; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a href="/">← Back to the game</a>
+      <h1>Sound library</h1>
+      <span id="status">Click any button to enable sound</span>
+    </header>
+    <main id="lib"></main>
+    <script type="module" src="/src/soundLibrary.js"></script>
+  </body>
+</html>
