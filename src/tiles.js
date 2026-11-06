@@ -75,8 +75,8 @@ export const TERRAINS = {
   station: {
     name: 'Oil Station',
     trigger: 'On trigger',
-    top: 0x3a3a3a,
-    edge: 0x222222,
+    top: 0x4a2470, // dark purple, after its purple outline on the board (neonGlow.js 0xb44dff)
+    edge: 0x2c1446,
     category: 'building',
     buildable: false,
     weight: 3,
