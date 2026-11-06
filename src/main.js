@@ -9,7 +9,7 @@ import { createInstancer } from './instancer.js';
 import { createTitleScreen } from './titleScreen.js';
 import { createSandPlanet } from './sandPlanet.js';
 import { createShadowCache } from './shadowCache.js';
-import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, setMusicMuffled, startMusic } from './music.js';
+import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, setMusicMuffled, startMusic, playTrack } from './music.js';
 import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws, wasteThud, buildThud, zoomWhoosh, sfxLoaded, laserCharge, stopLaserCharges } from './sfx.js';
 import { createCombatAudio } from './combatAudio.js';
 import { CameraRig } from './controls.js';
@@ -78,7 +78,7 @@ const { renderer, scene, camera, sun, followTarget, setBoardFraming } = createSc
 // The CRT post-process (Graphics → CRT screen: Shader); the glass is #crt's area. HTML over the 3D view follows its bend.
 const crtPass = new CrtPass(renderer, document.getElementById('crt'));
 crtPass.hookProjection(camera);
-initMusic(); // background track downloads now; it starts with the game, once sound is allowed
+initMusic('title'); // the tracks download now; the main screen's theme starts once sound is allowed
 onMusicVolume((volume) => {
   audioCfg.music = volume;
   const input = document.querySelector('#debug input[data-s="audio"][data-k="music"]');
@@ -6681,6 +6681,8 @@ function syncOptions() {
   }
   $('optCrt').checked = gfxCfg.crtScreen === 'Shader';
 }
+// The settings form lives in the main menu's sheet; the in-game panel borrows it while it's open.
+const optionsHome = { parent: $('titleOptions').parentNode, next: $('titleOptions').nextSibling };
 function showOptions(on) {
   $('titleOptions').classList.toggle('hidden', !on);
   $('titleOptions').closest('.title-sheet').classList.toggle('showing-options', on);
@@ -6706,11 +6708,74 @@ $('optCrt').addEventListener('change', (e) => {
 });
 $('btnOptionsBack').addEventListener('click', (e) => {
   e.currentTarget.blur();
-  showOptions(false);
+  if (gameMenuOpen()) setGameMenu(false);
+  else showOptions(false);
 });
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && view === 'title' && !$('titleOptions').classList.contains('hidden')) showOptions(false);
+  if (e.key !== 'Escape') return;
+  if (gameMenuOpen()) {
+    e.stopImmediatePropagation();
+    setGameMenu(false);
+  } else if (view === 'title' && !$('titleOptions').classList.contains('hidden')) showOptions(false);
+}, true);
+
+// ---------- in-game options: the gear in the bottom-left corner opens the same settings, and Main Menu ----------
+const gameMenuOpen = () => !$('gameMenu').classList.contains('hidden');
+function setGameMenu(on) {
+  if (on === gameMenuOpen()) return;
+  const form = $('titleOptions');
+  if (on) {
+    hand.select(-1);
+    $('gameMenuSlot').appendChild(form);
+    $('gameMenu').classList.remove('hidden');
+    showOptions(true);
+  } else {
+    $('gameMenu').classList.add('hidden');
+    showOptions(false);
+    optionsHome.parent.insertBefore(form, optionsHome.next);
+  }
+}
+$('btnGameMenu').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  if (view !== 'title' && !titleDive) setGameMenu(!gameMenuOpen());
 });
+// A click on the dim backdrop (outside the panel) closes it.
+$('gameMenu').addEventListener('pointerdown', (e) => {
+  if (e.target === e.currentTarget) setGameMenu(false);
+});
+$('btnMainMenu').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  setGameMenu(false);
+  backToTitle();
+});
+
+/** Main Menu: the game is saved as it stands (Continue picks it up), then the clouds roll in and the main screen comes back. */
+function backToTitle() {
+  if (view === 'title' || switching || titleDive) return;
+  if (calmForSave()) writeSave(encodeSave(gatherSave())); // otherwise the last autosave (a calm moment just before) stands
+  switching = true;
+  zoomWhoosh(false);
+  const run = ++viewRun;
+  clouds.cover().then(() => {
+    if (run !== viewRun) return;
+    runId++; // a strike, a payout or a speech still running stops
+    combatAudio.endAttack();
+    if (view === 'globe') {
+      globe.exit();
+      document.body.classList.remove('globe-view');
+    } else if (view === 'rival') {
+      setAiming(false);
+      rivalView.exit();
+      rivalShown = null;
+      document.body.classList.remove('rival-view');
+    }
+    tutorial.stop();
+    setMusicMuffled(false);
+    showTitle();
+    switching = false;
+    clouds.uncover();
+  });
+}
 
 // ---------- the saved game (saveGame.js): Continue on the main screen ----------
 const SAVE_EVERY = 2; // seconds between checks; a snapshot is only written when something changed
@@ -6852,6 +6917,7 @@ function restoreSave(save) {
 /** The main screen: the planet from mid distance, the menu over it. */
 function showTitle() {
   view = 'title';
+  playTrack('title', { fadeOut: 1.5 });
   setBoardFraming(false);
   titleGlobe.enter([], 'player'); // pulls back from just above the planet to its usual distance
   titleScreen.show();
@@ -6871,6 +6937,8 @@ function startFromTitle({ resume = false } = {}) {
   titleResume = resume;
   switching = true;
   zoomWhoosh(true);
+  // The main screen's theme fades away as the camera dives for the planet; the game's track comes in once it's there.
+  playTrack('game', { fadeOut: TITLE_DIVE.duration, delay: TITLE_DIVE.duration + 0.3, fadeIn: 3 });
   titleScreen.depart();
   const cam = titleGlobe.camera;
   titleDive = { t: 0, d0: cam.position.length(), fov0: cam.fov, covering: false };
@@ -6956,7 +7024,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (tgt.matches?.('input, select, textarea')) return; // typing in the debug panel
-  if (view === 'title') return; // the main screen: only its menu
+  if (view === 'title' || gameMenuOpen()) return; // the main screen, or the options over the game: only their menu
   if (k === 'g' && !e.repeat) {
     if (view === 'globe') globeHome();
     else openGlobe();
@@ -7632,6 +7700,7 @@ function frame(now) {
     if (titleDive) updateTitleDive(dt);
     titlePlanet.update(dt);
     titleScreen.update(dt);
+    updateAmbience({ ships: traffic.ships, target: rig.target, distance: rig.distance, camera, active: false, dt }); // the board's sounds fade away
     titleGlobe.render();
     perf.end('render (cpu)');
     perf.frameEnd();

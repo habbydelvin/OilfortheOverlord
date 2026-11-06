@@ -1,5 +1,6 @@
 /**
- * Background music: one track, looped forever.
+ * Background music: the main screen's theme and the game's track, each looped forever; one plays at a time, and
+ * switching between them fades one out as the other comes in (playTrack).
  *
  * The track plays at full level right to its last note, so a plain loop would cut audibly. Instead each
  * copy is scheduled to start CROSSFADE seconds before the previous one ends: the old copy fades out while
@@ -15,7 +16,12 @@
 
 import { L, onLangChange } from './i18n.js';
 
-const URL = '/audio/OverlordIsWatching-v2.mp3'; // re-encoded from the source; the old file had a click at 9.98s
+// The tracks: game, the gameplay track; title, the main screen's theme. Each copy fades in at its start and out at its
+// end, the next one fading in under it (CROSSFADE), so the loop never cuts.
+const TRACKS = {
+  game: '/audio/game-theme.mp3',
+  title: '/audio/title/menu-theme.mp3',
+};
 export const MUSIC_VOLUME_DEFAULT = 79; // slider position; the level is its square, capped at 2
 export const MUSIC_VOLUME_MAX = 200; // 100 = full level, 200 = twice as loud
 const DEFAULT_VOLUME = MUSIC_VOLUME_DEFAULT;
@@ -52,54 +58,99 @@ let master = null;
 let lowpass = null;
 let distance = null;
 let muffled = false;
-let buffer = null;
-let download = null;
 
 /** Open on the board. On the War Map the highs are gone and the track sits much further back. */
 const AIR_HZ = 16000;
 const SPACE_HZ = 450;
 const SPACE_GAIN = 0.35;
 
+/**
+ * One looped track: its file (downloaded once), its own fader (so it can fade out under another), and the copies it
+ * has scheduled. run counts each start: a stopped track's pending copies see a newer run and don't play.
+ */
+const decks = Object.fromEntries(Object.entries(TRACKS).map(([name, url]) => [name, { name, url, download: null, buffer: null, gain: null, run: 0, playing: false }]));
+let wanted = 'game'; // the track that should be playing
+
+function fetchTrack(deck) {
+  deck.download ??= fetch(deck.url).then((res) => {
+    if (!res.ok) throw new Error(`${deck.url}: ${res.status}`);
+    return res.arrayBuffer();
+  });
+  deck.download.catch(() => {}); // reported when it's played
+  return deck.download;
+}
+
 /** Plays one copy of the track from audio time `when`, fading in over `fadeIn` seconds and out at its end. */
-function playCopy(when, fadeIn) {
+function playCopy(deck, run, when, fadeIn) {
+  if (run !== deck.run) return; // stopped meanwhile
   const source = ctx.createBufferSource();
-  source.buffer = buffer;
+  source.buffer = deck.buffer;
   const gain = ctx.createGain();
-  source.connect(gain).connect(master);
-  const end = when + buffer.duration;
+  source.connect(gain).connect(deck.gain);
+  const end = when + deck.buffer.duration;
   gain.gain.setValueAtTime(0, when);
   gain.gain.setValueCurveAtTime(IN, when, fadeIn);
   gain.gain.setValueCurveAtTime(OUT, end - CROSSFADE, CROSSFADE);
   source.start(when);
   source.stop(end);
+  deck.sources.add(source);
   source.onended = () => {
+    deck.sources.delete(source);
     source.disconnect();
     gain.disconnect();
   };
   // The next copy is booked a whole track ahead, as this one begins: the audio clock times it exactly,
   // and timer delays (background tabs) cannot make it late.
   const next = end - CROSSFADE;
-  setTimeout(() => playCopy(next, CROSSFADE), Math.max(0, (when - ctx.currentTime) * 1000));
+  setTimeout(() => playCopy(deck, run, next, CROSSFADE), Math.max(0, (when - ctx.currentTime) * 1000));
 }
 
-let playbackArmed = false;
-
-function beginPlayback() {
-  if (playbackArmed || !ctx || ctx.state !== 'running') return;
-  playbackArmed = true;
-  download
-    .then((raw) => ctx.decodeAudioData(raw))
+/** Start a track's loop (fading in over `fadeIn` s), unless it's already playing. */
+function startDeck(deck, fadeIn) {
+  if (deck.playing || !ctx || ctx.state !== 'running') return;
+  deck.playing = true;
+  const run = ++deck.run;
+  deck.gain.gain.cancelScheduledValues(ctx.currentTime);
+  deck.gain.gain.setValueAtTime(1, ctx.currentTime);
+  fetchTrack(deck)
+    .then((raw) => deck.buffer ?? ctx.decodeAudioData(raw))
     .then((decoded) => {
-      buffer = decoded;
-      playCopy(ctx.currentTime + 0.05, FADE_IN);
+      deck.buffer = decoded;
+      if (run === deck.run) playCopy(deck, run, ctx.currentTime + 0.05, fadeIn);
     })
     .catch((error) => {
-      playbackArmed = false;
-      console.warn('Background music could not be loaded.', error);
+      deck.playing = false;
+      console.warn(`Music (${deck.name}) could not be loaded.`, error);
     });
 }
 
-/** Open the music context and start the track once the browser is allowing sound. Safe to call again. */
+/** Fade a track out over `seconds`, then stop its copies. */
+function stopDeck(deck, seconds) {
+  if (!deck.playing) return;
+  deck.playing = false;
+  const run = ++deck.run; // no more copies get booked
+  const now = ctx.currentTime;
+  deck.gain.gain.cancelScheduledValues(now);
+  deck.gain.gain.setValueAtTime(deck.gain.gain.value, now);
+  deck.gain.gain.linearRampToValueAtTime(0, now + seconds);
+  setTimeout(() => {
+    if (run !== deck.run) return; // started again meanwhile
+    for (const src of deck.sources) {
+      try {
+        src.stop();
+      } catch {
+        /* already stopped */
+      }
+    }
+  }, seconds * 1000 + 100);
+}
+
+function beginPlayback() {
+  if (!ctx || ctx.state !== 'running') return;
+  startDeck(decks[wanted], FADE_IN);
+}
+
+/** Open the music context and start the wanted track once the browser is allowing sound. Safe to call again. */
 export function startMusic() {
   if (!ctx) {
     ctx = new AudioContext();
@@ -112,10 +163,29 @@ export function startMusic() {
     distance = ctx.createGain();
     distance.gain.value = muffled ? SPACE_GAIN : 1;
     master.connect(lowpass).connect(distance).connect(ctx.destination);
+    for (const deck of Object.values(decks)) {
+      deck.gain = ctx.createGain();
+      deck.sources = new Set();
+      deck.gain.connect(master);
+    }
     ctx.addEventListener('statechange', beginPlayback);
   }
   if (ctx.state === 'suspended') ctx.resume();
   beginPlayback();
+}
+
+/**
+ * Switch the music: 'title' (the main screen's theme) or 'game'. The old track fades out over `fadeOut` seconds; the
+ * new one fades in over `fadeIn`, starting after `delay` seconds (so the old one can be gone first).
+ */
+export function playTrack(name, { fadeOut = 2, fadeIn = FADE_IN, delay = 0 } = {}) {
+  if (!decks[name]) return;
+  wanted = name;
+  if (!ctx) return; // startMusic plays it once sound is allowed
+  for (const deck of Object.values(decks)) if (deck.name !== name) stopDeck(deck, fadeOut);
+  const go = () => wanted === name && startDeck(decks[name], fadeIn);
+  if (delay > 0) setTimeout(go, delay * 1000);
+  else go();
 }
 
 /** Muffle the track on the War Map, and open it again in a city. Glides, so the change is not a click. */
@@ -193,14 +263,14 @@ function mountControl() {
   updateControl();
 }
 
-/** Download the track now and show the control. Playback waits for startMusic. */
-export function initMusic() {
-  if (download) return;
+let initialised = false;
+/** Download the tracks now and show the control. Playback waits for startMusic. */
+export function initMusic(first = 'game') {
+  if (initialised) return;
+  initialised = true;
+  wanted = first;
   mountControl();
-  download = fetch(URL).then((r) => {
-    if (!r.ok) throw new Error(`${URL}: ${r.status}`);
-    return r.arrayBuffer();
-  });
-  download.catch(() => {}); // reported when playback starts
+  fetchTrack(decks[first]);
+  for (const deck of Object.values(decks)) fetchTrack(deck);
 }
 
