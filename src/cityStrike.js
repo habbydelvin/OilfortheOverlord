@@ -42,6 +42,13 @@ export function resetMissiles() {
   queue = [];
 }
 
+/** The silo and the aimed strikes, for the saved game (saveGame.js), and back. */
+export const missileState = () => ({ stock: [...stock], queue: queue.map((q) => ({ ...q, at: [...q.at] })) });
+export function setMissileState(s) {
+  stock = [...(s?.stock ?? [])];
+  queue = (s?.queue ?? []).map((q) => ({ ...q, at: [...q.at] }));
+}
+
 /** Drop the newest attacking missiles when magazine capacity falls. Decoys stay. */
 export function trimMissiles(cap) {
   let n = stock.filter(attacking).length;

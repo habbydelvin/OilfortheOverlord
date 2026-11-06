@@ -36,7 +36,7 @@ import { computeEconomy, computeEconomyIf, foodCapOf, FIRST_QUOTA, nextQuota, SE
 import { FACTORY_OIL, INTERCEPT_OIL, factoryYield, interceptorsBeside, isPlayerMissile, isMissileAmmo, missileCapacity, blastExtra, isMilitaryLab, labOilCost, BASE_MISSILE_CAP, MAGAZINE_CAP } from './arsenal.js';
 import { pieceOf, pieceOffsets } from './pieces.js';
 import { findCiws } from './interceptMesh.js';
-import { queueDrawn, addMissile, missileCount, ammoCount, missileKinds, trimMissiles, resetMissiles, openCityStrike, drawStrikeHand, returnStrikeHand, bindCityStrikeUi, queueStrike, unqueueStrike, queuedStrikes, takeQueue, clearQueue } from './cityStrike.js';
+import { missileState, setMissileState, queueDrawn, addMissile, missileCount, ammoCount, missileKinds, trimMissiles, resetMissiles, openCityStrike, drawStrikeHand, returnStrikeHand, bindCityStrikeUi, queueStrike, unqueueStrike, queuedStrikes, takeQueue, clearQueue } from './cityStrike.js';
 import { CAPITAL_HP, resolve as resolveWar, applyToRival, footprint, spreadFrom } from './war.js';
 import { chooseStrikes, noteAttacks, idleOf } from './rivalAI.js';
 import { INTERCEPT, INTERCEPT_DEFAULTS, INTERCEPT_PARAMS, saveIntercept, clearIntercept, DECOY, BOOST, isBoosted } from './arsenal.js';
@@ -61,7 +61,8 @@ import { MissileStrike, MISSILE_PARAMS, MISSILE_DEFAULTS, MISSILE_TAIL, loadMiss
 import { LaserStrike } from './laserStrike.js';
 import { Tutorial, TUTORIAL_KEY, OPENING, tutorialDone, markTutorialDone } from './tutorial.js';
 import { L, both, isZh, toggleLang, onLangChange, applyStatic, textOf, retranslate } from './i18n.js';
-import { createRivals, advanceRivals, rivalStats, PLAYER_NODE } from './rivals.js';
+import { createRivals, advanceRivals, rivalStats, PLAYER_NODE, RIVALS, mulberry32 } from './rivals.js';
+import { encodeSave, writeSave, readSave, hasSave, clearSave } from './saveGame.js';
 import { createRivalView } from './rivalView.js';
 import { createGlobeView, GLOBE_RADIUS, GLOBE_PARAMS, GLOBE_DEFAULTS, loadGlobeConfig, saveGlobeConfig, clearGlobeConfig } from './globeView.js';
 import { createCloudTransition } from './cloudTransition.js';
@@ -3733,6 +3734,7 @@ function showStrikes() {
 let gameOverReason = null;
 function gameOver(reason) {
   turn.over = true;
+  clearSave(); // a finished game can't be continued
   hand.select(-1);
   gameOverReason = reason;
   $('gameoverTitle').textContent = L('The city has fallen', '城市已陷落'); // victory() retitles it
@@ -6587,9 +6589,141 @@ const titleScreen = createTitleScreen({
   scene: titleGlobe.scene,
   camera: titleGlobe.camera,
   getModel: () => factory.models?.get('mothership'),
+  planetRadius: GLOBE_RADIUS * 1.06, // the planet with its clouds and air: the ships always stay in front of it
   onStart: startFromTitle,
+  onContinue: () => startFromTitle({ resume: true }),
+  canContinue: hasSave,
   onOptions: () => debug.toggle(), // every Game Debug option, for now
 });
+
+// ---------- the saved game (saveGame.js): Continue on the main screen ----------
+const SAVE_EVERY = 2; // seconds between checks; a snapshot is only written when something changed
+let saveCheck = 0;
+let lastSaved = '';
+
+/** At rest on the home board (nothing animating, no screen, nothing mid-flight), once the first season has passed. */
+function calmForSave() {
+  return (
+    (turn.round > 1 || turn.season > 0) && // saving starts after the first round
+    view === 'board' &&
+    !switching &&
+    !busy() &&
+    !turnRunning &&
+    !attackLive &&
+    !striking &&
+    !strikeOpen &&
+    !expansion.active &&
+    !turn.over &&
+    !anims.length &&
+    !factoryHops.length &&
+    !hand.dragging &&
+    hand.selected < 0
+  );
+}
+
+/** Everything a game in progress is: the board, the hand, the turn, the silo, the "?" sites and the rivals. */
+function gatherSave() {
+  const cells = [];
+  const pieces = new Map(); // piece record -> saved piece
+  for (const c of grid.cells.values()) {
+    const { mesh, ...rest } = c;
+    const rec = mesh?.userData?.piece;
+    if (rec && !rec.broken && !pieces.has(rec)) pieces.set(rec, { shape: rec.shape, rot: rec.rot, seed: rec.seed, terrain: c.terrain, cells: [] });
+    if (rec && !rec.broken) pieces.get(rec).cells.push([c.x, c.z]);
+    cells.push({ ...rest, rot: mesh?.userData?.rot ?? 0, piece: Boolean(rec && !rec.broken) });
+  }
+  return {
+    turn: { ...turn },
+    cells,
+    pieces: [...pieces.values()],
+    plots: [...grid.plots],
+    expansionMode: grid.expansionMode,
+    hand: hand.cards.map((p) => ({ ...p })),
+    missiles: missileState(),
+    sites: mysteries.list(),
+    rivals: rivals.map(({ def, rng, grid: g, stats, ...rest }) => ({ ...rest, cells: [...g.cells.values()], plots: [...g.plots] })),
+    piecesPlaced,
+    labOilPool,
+    bmRevealed,
+    bmStock,
+    camera: { x: rig.target.x, z: rig.target.z, distance: rig.goalDistance },
+  };
+}
+
+function autosave(dt) {
+  saveCheck -= dt;
+  if (saveCheck > 0) return;
+  saveCheck = SAVE_EVERY;
+  if (!calmForSave()) return;
+  const encoded = encodeSave(gatherSave());
+  // The time stamp changes every write: compare without it.
+  const body = encoded.replace(/"savedAt":\d+,/, '');
+  if (body === lastSaved) return;
+  if (writeSave(encoded)) lastSaved = body;
+}
+
+/** Rebuild the game from a snapshot. Returns false (nothing changed) if there's no usable save. */
+function restoreSave(save) {
+  if (!save?.cells?.length) return false;
+  markTutorialDone(); // a saved game is past the guided opening
+  resetIsland({ tutorial: false, keepClouds: true, intro: false });
+  tutorial.stop();
+  // The board: drop what the reset laid out, then each saved tile, as it was.
+  for (const c of grid.cells.values()) removeMesh(c.mesh);
+  tiles.clear();
+  grid.clear();
+  anims.length = 0;
+  grid.plots = new Set(save.plots ?? []);
+  grid.expansionMode = !!save.expansionMode;
+  for (const p of save.pieces ?? []) addWastePiece({ shape: p.shape, rot: p.rot, id: p.seed, terrain: p.terrain }, p.cells);
+  for (const saved of save.cells) {
+    if (!saved.piece) addTile(saved.x, saved.z, saved.terrain, 0, true, { rot: saved.rot ?? 0 });
+    const cell = grid.get(saved.x, saved.z);
+    if (!cell) continue;
+    const { rot, piece, terrain, ...fields } = saved;
+    Object.assign(cell, fields);
+    if (!piece) cell.terrain = terrain;
+    if (cell.terrain === 'milfactory') setPadMissile(cell, cell.missileReady);
+  }
+  // The pieces drop in at once (no fall).
+  for (const a of anims) a.t = 1e3;
+  // The turn and everything else.
+  Object.assign(turn, save.turn, { over: false, guided: false });
+  hand.cards = (save.hand ?? []).map((p) => ({ ...p }));
+  hand.selected = -1;
+  hand.render();
+  setMissileState(save.missiles);
+  mysteries.restore(save.sites);
+  piecesPlaced = save.piecesPlaced ?? piecesPlaced;
+  labOilPool = save.labOilPool ?? 0;
+  if (save.bmStock) bmStock = save.bmStock;
+  if (save.bmRevealed) revealBlackMarket(false);
+  // The rivals: their cities as they were (their own decks keep a fresh random stream).
+  if (save.rivals?.length) {
+    rivals = save.rivals.map((sr) => {
+      const def = RIVALS.find((d) => d.id === sr.id);
+      const g = new Grid();
+      for (const c of sr.cells ?? []) g.cells.set(plotKey(c.x, c.z), { ...c });
+      g.plots = new Set(sr.plots ?? []);
+      const { cells: _c, plots: _p, ...rest } = sr;
+      const rv = { ...rest, def, grid: g, rng: mulberry32((Math.random() * 0x100000000) >>> 0) };
+      rv.stats = rivalStats(g, rv);
+      return rv;
+    }).filter((rv) => rv.def);
+  }
+  // The land around the city uncovered, the open cells shown, the camera where it was.
+  fog.reset(grid);
+  if (!grid.expansionMode) for (const c of grid.cells.values()) fog.openAround(c.x, c.z, fogCfg.openRadius);
+  frontier.rebuild(grid);
+  if (save.camera) {
+    rig.focus(save.camera.x, save.camera.z);
+    rig.goalDistance = save.camera.distance ?? rig.goalDistance;
+  }
+  shadeIdle();
+  updateHUD();
+  lastSaved = '';
+  return true;
+}
 
 /** The main screen: the planet from mid distance, the menu over it. */
 function showTitle() {
@@ -6601,13 +6735,16 @@ function showTitle() {
 
 /**
  * Start: a new game from the very beginning, the full tutorial included. The camera dives from orbit into the
- * planet (the Mothership stays behind in the world), punches through the clouds, and comes out above Hive City.
+ * planet (the Motherships hold their place on screen), punches through the clouds, and comes out above Hive City.
  */
 const TITLE_DIVE = { duration: 2.4, cloudsAt: 1.9, fovKick: 14 }; // the cloud cover (0.55 s) closes as the camera reaches the surface
 let titleDive = null; // { t, d0, fov0, covering }
+let titleResume = false; // the dive is Continue (the saved game), not Start (a new game)
 
-function startFromTitle() {
+function startFromTitle({ resume = false } = {}) {
   if (switching || titleDive) return;
+  if (resume && !readSave()) return;
+  titleResume = resume;
   switching = true;
   zoomWhoosh(true);
   titleScreen.depart();
@@ -6643,8 +6780,13 @@ function arriveFromTitle() {
   titleDive = null;
   titleScreen.hide();
   titleGlobe.exit();
-  localStorage.removeItem(TUTORIAL_KEY);
-  resetIsland({ tutorial: true, keepClouds: true }); // back on the board, lessons start over
+  if (titleResume && restoreSave(readSave())) {
+    // Continue: the saved game, as it was left (past the first round: the guided opening doesn't play again).
+  } else {
+    localStorage.removeItem(TUTORIAL_KEY);
+    clearSave(); // a new game replaces the old one
+    resetIsland({ tutorial: true, keepClouds: true }); // back on the board, lessons start over
+  }
   const home = rig.goalDistance;
   rig.distance = rig.maxDistance; // out of the clouds high above the city, then down onto it
   rig.goalDistance = home;
@@ -7485,6 +7627,7 @@ function frame(now) {
   updateForecast(expansion.active || busy() ? null : cell);
   offerMagazine(dt);
   updateRecenter(dt);
+  autosave(dt);
   perf.end('placement');
   tutorial.update(time);
 

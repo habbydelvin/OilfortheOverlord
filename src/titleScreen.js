@@ -87,7 +87,7 @@ function paintedMaterial(m) {
 }
 const NOSE = new THREE.Vector3(1, 0, 0); // the model's nose is +x (its tail engine at -x)
 
-export function createTitleScreen({ root, scene, camera, getModel, onStart, onOptions }) {
+export function createTitleScreen({ root, scene, camera, getModel, planetRadius = 0, onStart, onContinue = () => {}, canContinue = () => false, onOptions }) {
   const holder = new THREE.Group(); // placed and turned in camera space every frame
   holder.name = 'title ship';
   let ship = null; // the lead ship
@@ -231,6 +231,7 @@ export function createTitleScreen({ root, scene, camera, getModel, onStart, onOp
   const from = new THREE.Vector3();
   const to = new THREE.Vector3();
   const heading = new THREE.Vector3();
+  const ray = new THREE.Vector3();
   const look = new THREE.Matrix4();
   const toCamera = (p, d, out) =>
     out.copy(camera.position).addScaledVector(right, p.x * d).addScaledVector(up, p.y * d).addScaledVector(back, p.z * d);
@@ -244,7 +245,7 @@ export function createTitleScreen({ root, scene, camera, getModel, onStart, onOp
     if (!ship) return;
     for (const m of mixers) m.update(dt);
     arrive();
-    if (departing) return; // left where it was in the world: the camera flies on without it
+    // Departing too: they keep their place on screen (moving with the camera), so the dive never flies into them.
     camera.updateMatrixWorld();
     camera.matrixWorld.extractBasis(right, up, back);
     const d = camera.position.length(); // distance to the planet's centre: everything scales with it
@@ -256,7 +257,28 @@ export function createTitleScreen({ root, scene, camera, getModel, onStart, onOp
     heading.subVectors(to, from).normalize();
     look.lookAt(new THREE.Vector3(), heading, up); // -z of the look frame along the heading
     holder.quaternion.setFromRotationMatrix(look).multiply(new THREE.Quaternion().setFromUnitVectors(NOSE, new THREE.Vector3(0, 0, -1)));
-    holder.scale.setScalar((SHIP.size * d) / length);
+    let size = (SHIP.size * d) / length;
+    // Always in front of the planet: if the formation would reach its surface (late in the flight, or as the camera
+    // dives in), it comes closer to the camera and smaller by the same share, so on screen nothing changes.
+    if (planetRadius > 0) {
+      ray.subVectors(holder.position, camera.position);
+      const dist = ray.length();
+      ray.divideScalar(dist);
+      // Where the ray to the formation first meets the planet (camera outside it: the near hit).
+      const b = camera.position.dot(ray);
+      const c = camera.position.lengthSq() - planetRadius * planetRadius;
+      const disc = b * b - c;
+      const reach = dist + SHIP.size * d * 2.2; // the formation's depth (three ships spread round the lead)
+      const limit = disc > 0 ? -b - Math.sqrt(disc) : Infinity; // distance to the surface along the ray
+      // Off the planet's disc: keep it nearer than the planet's centre plane all the same (it can't pass behind).
+      const safe = Math.min(limit, camera.position.length() - planetRadius * 0.15) * 0.92;
+      if (reach > safe) {
+        const k = Math.max(0.02, safe / reach);
+        holder.position.copy(camera.position).addScaledVector(ray, dist * k);
+        size *= k;
+      }
+    }
+    holder.scale.setScalar(size);
   }
 
   function show() {
@@ -267,9 +289,10 @@ export function createTitleScreen({ root, scene, camera, getModel, onStart, onOp
     scene.add(holder);
     root.classList.remove('hidden', 'departing');
     document.body.classList.add('title-screen');
+    continueBtn.disabled = !canContinue();
   }
 
-  /** Start pressed: the menu fades and the ship stays put in the world while the camera dives past it. */
+  /** Start pressed: the menu fades; the ships hold their place on screen while the camera dives (the clouds take them). */
   function depart() {
     departing = true;
     root.classList.add('departing');
@@ -283,6 +306,12 @@ export function createTitleScreen({ root, scene, camera, getModel, onStart, onOp
     root.classList.add('hidden');
     document.body.classList.remove('title-screen');
   }
+  // Continue: greyed out until there's a saved game (main.js saves as you play), then back into it.
+  const continueBtn = root.querySelector('#btnContinue');
+  continueBtn.addEventListener('click', (e) => {
+    e.currentTarget.blur();
+    if (canContinue()) onContinue();
+  });
   root.querySelector('#btnStart').addEventListener('click', (e) => {
     e.currentTarget.blur();
     onStart();

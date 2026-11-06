@@ -226,6 +226,16 @@ export class Mysteries {
     }
   }
 
+  /** The sites as they are (the saved game), and back. */
+  list() {
+    return [...this.sites.values()].map((s) => ({ ...s }));
+  }
+  restore(list) {
+    this.sites.clear();
+    for (const s of list ?? []) this.sites.set(key(s.x, s.z), { ...s });
+    this.#dirty = true;
+  }
+
   /** The tutorial leads the player to this site: it won't be an Unexploded Missile. */
   spare(x, z) {
     const s = this.sites.get(key(x, z));
