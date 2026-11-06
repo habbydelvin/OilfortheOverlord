@@ -2,7 +2,7 @@ import { updateCurve } from './curvature.js'; // first: bends every material mad
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { CameraRig } from './controls.js';
-import { Grid, hexToWorld, worldToHex, hexesAround, hexDistance, key } from './grid.js';
+import { Grid, hexToWorld, worldToHex, hexesAround, hexDistance, key, cellSeed } from './grid.js';
 import { INTERCEPT, INTERCEPT_DEFAULTS, saveIntercept, clearIntercept, missileCapacity, DECOY, BOOST, saveDecoy, saveBoost, clearDecoyBoost } from './arsenal.js';
 import { intersectGround, flattenCurve } from './curvature.js';
 import { createRivals, rivalStats } from './rivals.js';
@@ -226,7 +226,7 @@ function place(x, z, terrain) {
   const id = key(x, z);
   const old = meshes.get(id);
   if (old) tiles.remove(old);
-  const mesh = factory.create(terrain);
+  const mesh = factory.create(terrain, { seed: cellSeed(x, z) }); // per-cell Wasteland looks (seed 0 was all worm pits)
   const w = hexToWorld(x, z);
   mesh.position.set(w.x, 0, w.z);
   tiles.add(mesh);
@@ -1310,3 +1310,20 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// ---------- the panel: hide / show it (button or the ` key), remembered across reloads ----------
+const panelEl = document.getElementById('panel');
+const panelBtn = document.getElementById('panelToggle');
+function setPanel(open) {
+  panelEl.classList.toggle('hidden', !open);
+  panelBtn.textContent = open ? 'Hide debug' : 'Combat debug';
+  localStorage.setItem('oto.combatPanel', open ? '1' : '0');
+}
+panelBtn.addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  setPanel(panelEl.classList.contains('hidden'));
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === '`' && !e.target.closest?.('input, textarea')) setPanel(panelEl.classList.contains('hidden'));
+});
+setPanel(localStorage.getItem('oto.combatPanel') !== '0');

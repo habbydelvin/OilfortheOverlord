@@ -124,6 +124,9 @@
       .inc-table input { width: 56px; }
       .inc-table tr.dead { opacity: 0.4; }
       .inc-table tfoot td { font-weight: bold; border-bottom: 0; }
+      #panel.hidden { display: none; }
+      #panelToggle { position: fixed; z-index: 6; top: 12px; left: 348px; margin: 0; padding: 4px 10px; font: inherit; font-size: 12px; background: rgba(12, 10, 8, 0.82); color: #e8e2d8; border: 1px solid #4a4036; border-radius: 4px; cursor: pointer; }
+      #panel.hidden + #panelToggle { left: 12px; }
       #placeNets.on { background: #2f6a54; color: #dfffee; }
       #panel {
         max-height: calc(100vh - 24px);
@@ -181,6 +184,7 @@
       </div>
       <p><a href="/">← Back to the table</a></p>
     </div>
+    <button id="panelToggle" type="button" title="Show / hide the combat test panel (`)">Hide debug</button>
     <script type="module" src="/src/combatTest.js"></script>
   </body>
 </html>
