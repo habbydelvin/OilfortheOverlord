@@ -82,6 +82,7 @@ crtPass.hookProjection(camera);
 initMusic('title'); // the tracks download now; the main screen's theme starts once sound is allowed
 onMusicVolume((volume) => {
   audioCfg.music = volume;
+  if (RELEASE) return; // no Game Debug slider to keep in step
   const input = document.querySelector('#debug input[data-s="audio"][data-k="music"]');
   if (!input || document.activeElement === input) return;
   input.value = String(volume);
@@ -7978,6 +7979,7 @@ function frame(now) {
 // ---------- performance overlay (-) ----------
 // GPU split: each fog draw (veil + billow layers) is bracketed, so GPU time lands in "fog";
 // the rest of the frame (shadow pass, buildings, overlays, fog depth pre-pass + composite) is "scene".
+if (!RELEASE) {
 for (const obj of [fog.veil, ...fog.meshes]) {
   obj.onBeforeRender = () => perf.gpuMark('fog');
   obj.onAfterRender = () => perf.gpuMark('scene');
@@ -8025,6 +8027,7 @@ const gfxToggle = (key, label) =>
 gfxToggle('fogQuality', 'Fog quality');
 gfxToggle('resolution', 'Resolution');
 gfxToggle('shadows', 'Shadows');
+} // performance overlay: dev builds only
 
 // ---------- startup ----------
 // Loading bar: bytes of the model files downloaded so far. The FBX files are
@@ -8185,8 +8188,7 @@ factory.extrasReady.then(async (extras) => {
   await prewarmBuildReveal();
 });
 
-// Release build: players get no Game Debug button, no tile library link (library.html isn't built), no cheats.
-if (RELEASE) for (const id of ['debugDock', 'libraryLink']) document.getElementById(id)?.remove();
+// Release build: the Game Debug and tile library markup is stripped from index.html at build time (vite.config.js).
 
 // Handy for debugging in the console (dev builds only).
 if (!RELEASE) window.tileIsland = { titleScreen, lod: { LOD, lodStats, setLod }, instancer, shadowCache, tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, openCityStrike, drawStrikeHand, missileCount, _t: { openGlobe, markIncoming, globeCfg, clear: () => (eventOpen = false), war: { addMissile, queueDrawn, updateAimBar, runAttackPhase, rivals: () => rivals } } };

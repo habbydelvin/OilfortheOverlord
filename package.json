@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build --mode release --emptyOutDir && rm -f OilfortheOverlordRelease.zip && cd dist && zip -qr -X ../OilfortheOverlordRelease.zip . -x '.DS_Store' '*/.DS_Store'",
+    "build:dev": "vite build",
     "preview": "vite preview",
-    "release": "vite build --mode release --emptyOutDir && rm -f OilfortheOverlordRelease.zip && cd dist && zip -qr -X ../OilfortheOverlordRelease.zip . -x '.DS_Store' '*/.DS_Store'",
+    "release": "npm run build",
     "models": "node tools/convert-models.mjs",
     "test": "node --test tests/*.test.mjs"
   },
