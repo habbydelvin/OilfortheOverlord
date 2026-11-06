@@ -1,4 +1,3 @@
-import { throughEstimate } from './interceptSim.js';
 import { DIRS, key, hexDistance } from './grid.js';
 import { TERRAINS, MILITARY } from './tiles.js';
 import { SHAPES, ROTATIONS, rotateCells } from './pieces.js';
@@ -394,12 +393,12 @@ export function rivalIntercept(rival, x, z, used = new Set()) {
 
 /**
  * aggression: tension toward everyone it never fades below. retaliate: tension per hit taken from a city.
- * reserve: missiles kept back. capitalOdds: how good the odds must be before it aims at a Capital.
+ * reserve: missiles kept back.
  */
 export const WAR = {
-  hawk: { aggression: 0.55, retaliate: 0.35, reserve: 0, capitalOdds: 0.3 },
-  merchant: { aggression: 0.1, retaliate: 0.3, reserve: 1, capitalOdds: 0.55 },
-  paranoid: { aggression: 0.2, retaliate: 0.6, reserve: 1, capitalOdds: 0.45 },
+  hawk: { aggression: 0.55, retaliate: 0.35, reserve: 0 },
+  merchant: { aggression: 0.1, retaliate: 0.3, reserve: 1 },
+  paranoid: { aggression: 0.2, retaliate: 0.6, reserve: 1 },
 };
 const FIRE_AT = 0.6; // tension needed to open fire on a city
 const TENSION_FADE = 0.85; // per season
@@ -421,11 +420,6 @@ export function fadeTension(rival) {
   rival.tension ??= {};
   const base = warOf(rival).aggression;
   for (const k of Object.keys(rival.tension)) rival.tension[k] = base + (rival.tension[k] - base) * TENSION_FADE;
-}
-
-/** Odds a strike on (x, z) gets through: each live network next to it that the defender can pay for gets a shot. */
-function throughOdds(city, x, z, decoys = 0) {
-  return throughEstimate(city.grid, x, z, 'missile', decoys);
 }
 
 /**
@@ -461,27 +455,24 @@ export function chooseStrikes(rival, cities, { round, chance, playerArmed = true
   const out = [];
   const aimed = new Set();
   const cap = [...target.grid.cells.values()].find((c) => c.terrain === 'capital');
-  const nDecoys = count ? decoys.length : 0;
   for (let i = 0; i < count; i++) {
     const kind = rival.missiles.shift();
     let at = null;
-    if (cap && throughOdds(target, cap.x, cap.z, nDecoys) >= w.capitalOdds) at = [cap.x, cap.z];
-    else {
-      // Its oil first (it pays for the interceptors), then anything it built; the least defended first.
-      let bestCell = null;
-      let bestV = -Infinity;
-      for (const c of target.grid.cells.values()) {
-        const t = TERRAINS[c.terrain];
-        if (!t || t.category !== 'building' || c.terrain === 'capital' || aimed.has(key(c.x, c.z))) continue;
-        const v = (c.terrain === 'refinery' || c.terrain === 'station' ? 2 : c.terrain === 'intercept' ? 1.6 : 1) * throughOdds(target, c.x, c.z, nDecoys) + rng() * 0.2;
-        if (v > bestV) {
-          bestV = v;
-          bestCell = c;
-        }
+    // Around the Capital: closer scores higher, and interceptor coverage does not matter. One hex once per salvo.
+    let bestCell = null;
+    let bestV = -Infinity;
+    for (const c of target.grid.cells.values()) {
+      const t = TERRAINS[c.terrain];
+      if (!t || t.category !== 'building' || aimed.has(key(c.x, c.z))) continue;
+      const worth = c.terrain === 'refinery' || c.terrain === 'station' ? 2 : c.terrain === 'intercept' ? 1.6 : 1;
+      const dist = cap ? hexDistance(c.x, c.z, cap.x, cap.z) : 0;
+      const v = worth / (1 + dist * dist) + rng() * 0.15;
+      if (v > bestV) {
+        bestV = v;
+        bestCell = c;
       }
-      if (bestCell) at = [bestCell.x, bestCell.z];
-      else if (cap) at = [cap.x, cap.z];
     }
+    if (bestCell) at = [bestCell.x, bestCell.z];
     if (!at) {
       rival.missiles.unshift(kind);
       break;
