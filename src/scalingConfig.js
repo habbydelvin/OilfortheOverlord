@@ -17,7 +17,7 @@ export const SCALE_DEFAULTS = {
   bumperMax: 0.25,
   titheBase: 0.2,
   tithePerYear: 0.05,
-  titheMax: 0.5,
+  titheMax: 0.2,
   oilBoomBase: 0.1,
   oilBoomPerYear: 0.05,
   oilBoomMax: 0.25,
