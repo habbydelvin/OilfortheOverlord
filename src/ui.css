@@ -4382,6 +4382,138 @@ body.paying .float-btn {
 #title .title-item:disabled .title-seal {
   filter: grayscale(1) opacity(0.45);
 }
+/* Options: the settings on the same leather, the menu swapped out while they show. */
+#title .title-sheet.showing-options .title-menu,
+#title .title-options.hidden {
+  display: none;
+}
+#title .title-options {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin: 0;
+}
+#title .title-options-head {
+  margin: 0 0 2px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(201, 160, 100, 0.3);
+  font: 700 15px/1.2 var(--dp-serif);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-align: center;
+  color: #c9ae86;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+}
+#title .title-opt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+}
+#title .title-opt-name {
+  font: 700 17px/1.2 var(--dp-serif);
+  letter-spacing: 0.05em;
+  color: #ecdcb8;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.75);
+}
+/* The slider: a brass rail sunk in the leather, a brass gear for the knob. */
+#title .title-opt input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+#title .title-opt input[type='range']::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #6a4c22, #c9a35c 50%, #6a4c22);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.7), 0 1px 0 rgba(201, 160, 100, 0.2);
+}
+#title .title-opt input[type='range']::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #6a4c22, #c9a35c 50%, #6a4c22);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+#title .title-opt input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  margin-top: -8px;
+  border: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, #3a2610 0 3px, #f0cd85 3.5px 6px, #9b7031 6.5px 8px, transparent 8.5px),
+    repeating-conic-gradient(#d8b066 0 20deg, #7a5626 20deg 40deg);
+  -webkit-mask: radial-gradient(circle, #000 10.5px, transparent 11px);
+  mask: radial-gradient(circle, #000 10.5px, transparent 11px);
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.6));
+}
+#title .title-opt input[type='range']::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, #3a2610 0 3px, #f0cd85 3.5px 6px, #9b7031 6.5px 8px, #d8b066 8.5px);
+}
+#title .title-opt input[type='range']:focus-visible {
+  outline: 1px dashed rgba(240, 196, 106, 0.6);
+  outline-offset: 3px;
+}
+/* The stops under the rail; the current one lit gold (main.js sets data-at on the row). */
+#title .title-opt-ticks {
+  position: relative;
+  height: 13px;
+  font: 600 12px/1 var(--dp-serif);
+  letter-spacing: 0.04em;
+  color: rgba(236, 220, 184, 0.45);
+}
+/* Each stop's label centred under the knob's position there (the knob's centre runs 11px in from each end). */
+#title .title-opt-ticks i {
+  position: absolute;
+  top: 0;
+  left: calc(11px + (100% - 22px) * var(--at, 0));
+  font-style: normal;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+#title .title-opt-ticks i.on {
+  color: #f0c46a;
+  text-shadow: 0 0 6px rgba(240, 196, 106, 0.35);
+}
+/* The CRT check: a small brass-rimmed box, a gear inside when on. */
+#title .title-opt-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+#title .title-opt-check input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+#title .title-check {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 0 0 2px #9b7031, inset 0 2px 3px rgba(0, 0, 0, 0.6);
+}
+#title .title-opt-check input:checked + .title-check {
+  background: radial-gradient(circle, #3a2610 0 2.5px, #f0cd85 3px 5px, transparent 5.5px),
+    repeating-conic-gradient(#d8b066 0 20deg, #7a5626 20deg 40deg) center / 16px 16px no-repeat, rgba(0, 0, 0, 0.35);
+}
+#title .title-opt-check input:focus-visible + .title-check {
+  outline: 1px dashed rgba(240, 196, 106, 0.6);
+  outline-offset: 3px;
+}
+#title .title-options #btnOptionsBack {
+  margin-top: 4px;
+}
+
 /* A blind-pressed seal in the corner of the leather. */
 #title .title-stamp {
   position: absolute;

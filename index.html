@@ -86,6 +86,31 @@
             <button id="btnStart" class="title-item" type="button"><span class="title-seal" aria-hidden="true"></span><span data-zh="开始">Start</span></button>
             <button id="btnOptions" class="title-item" type="button"><span class="title-seal" aria-hidden="true"></span><span data-zh="选项">Options</span></button>
           </nav>
+          <!-- Options (main.js): the graphics settings, saved like the Game Debug panel's. -->
+          <form id="titleOptions" class="title-options hidden" onsubmit="return false">
+            <h2 class="title-options-head" data-zh="选项">Options</h2>
+            <label class="title-opt">
+              <span class="title-opt-name" data-zh="雾效质量">Fog Quality</span>
+              <input id="optFog" type="range" min="0" max="3" step="1" />
+              <span class="title-opt-ticks"><i data-zh="低">Low</i><i data-zh="中">Medium</i><i data-zh="高">High</i><i data-zh="极高">Ultra</i></span>
+            </label>
+            <label class="title-opt">
+              <span class="title-opt-name" data-zh="分辨率">Resolution</span>
+              <input id="optRes" type="range" min="0" max="3" step="1" />
+              <span class="title-opt-ticks"><i>0.75</i><i>1</i><i>1.5</i><i>2</i></span>
+            </label>
+            <label class="title-opt">
+              <span class="title-opt-name" data-zh="阴影">Shadows</span>
+              <input id="optShadows" type="range" min="0" max="2" step="1" />
+              <span class="title-opt-ticks"><i data-zh="关">Off</i><i data-zh="低">Low</i><i data-zh="高">High</i></span>
+            </label>
+            <label class="title-opt title-opt-check">
+              <input id="optCrt" type="checkbox" />
+              <span class="title-check" aria-hidden="true"></span>
+              <span class="title-opt-name" data-zh="CRT 屏幕效果">CRT Effect</span>
+            </label>
+            <button id="btnOptionsBack" class="title-item" type="button"><span class="title-seal" aria-hidden="true"></span><span data-zh="返回">Back</span></button>
+          </form>
           <span class="title-stamp" aria-hidden="true"></span>
         </div>
         <footer class="title-clamp" aria-hidden="true"></footer>

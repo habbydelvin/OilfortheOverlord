@@ -18,8 +18,8 @@ import { ftlJump, stopFtlJumps, FTL_HIT } from './sfx.js';
  */
 const SHIP = {
   size: 0.07, // the lead ship's length
-  from: { x: 0.29, y: 0.065, z: -0.55 }, // just past the right edge, in the distance
-  to: { x: 0.15, y: 0.04, z: -0.65 }, // nearing the planet, seen side on the whole way
+  from: { x: 0.13, y: 0.065, z: -0.55 }, // in view on the right, so all three drop out of warp on screen // just past the right edge, in the distance
+  to: { x: 0.06, y: 0.04, z: -0.65 }, // nearing the planet, seen side on the whole way
   duration: 300, // seconds for the whole way (it keeps drifting the whole time the menu is up)
 };
 // The other two fly in formation: offsets in ship lengths (x along the nose, y up, z toward the camera).
@@ -34,9 +34,118 @@ const ARRIVE = {
   delay: 1.7, // seconds before the first one (room for the FTL sound's build-up before its hit)
   stagger: 0.45, // between ships
   time: 1.1, // the braking streak
-  distance: 14, // ship lengths it covers while braking
-  stretch: 9, // how long the streak is drawn at the start (× its length)
+  distance: 14, // ship lengths the lead covers while braking (it can come in from off screen)
+  wingDistance: 3.5, // the other two: a short dash, so they drop out of warp in view
+  stretch: 12, // how long a ship is drawn at the start of its dash (× its length), back from its nose
+  flashIn: 0.06, // seconds for the light to flare as it appears
+  flare: 9, // the exit flare's length (× the ship's length)
+  wakeOut: 0.55, // seconds for the warp wake to dissolve once it's stopped
 };
+
+/**
+ * The warp wake (after Star Trek Beyond's warp): a bow wave of churning, blue-cyan warped space wrapped round the
+ * ship, pinched at the nose and opening out behind it, flowing backward, with thin streaks of light racing through.
+ * Soft everywhere (no rim, no hard edge); additive, so it only adds light.
+ */
+const WAKE_VERT = /* glsl */ `
+varying vec2 vUv;
+varying vec3 vN;
+varying vec3 vView;
+void main() {
+  vUv = uv;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vN = normalize(normalMatrix * normal);
+  vView = normalize(-mv.xyz);
+  gl_Position = projectionMatrix * mv;
+}`;
+const WAKE_FRAG = /* glsl */ `
+uniform float uTime, uPower, uSeed;
+varying vec2 vUv;
+varying vec3 vN;
+varying vec3 vView;
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+float fbm(vec2 p) {
+  float s = 0.0, a = 0.5;
+  for (int i = 0; i < 5; i++) { s += a * noise(p); p = p * 2.07 + 13.1; a *= 0.5; }
+  return s;
+}
+void main() {
+  // u: round the wake (wraps), v: from the nose (0) back along it (1).
+  float u = vUv.x, v = vUv.y;
+  float flow = uTime * 2.6;
+  // Churning warped space: noise stretched along the flight and flowing back, folded by a second, slower swirl.
+  vec2 q = vec2(u * 7.0 + uSeed, v * 2.2 - flow);
+  q.x += fbm(vec2(u * 3.0, v * 1.5 - flow * 0.4) + uSeed) * 2.4;
+  float n = fbm(q);
+  float churn = smoothstep(0.38, 0.9, n);
+  churn *= churn; // wisps rather than slabs
+  // Thin streaks of light racing back through it: each a soft line (a gaussian across it, smoothed to the pixel),
+  // a bright head trailing off into a long fading tail, every one at its own speed and brightness.
+  float streak = 0.0;
+  for (int k = 0; k < 2; k++) {
+    float lanes = k == 0 ? 38.0 : 61.0;
+    float lu = u * lanes + uSeed + float(k) * 0.37;
+    float lane = floor(lu);
+    float on = step(0.72, hash(vec2(lane, 7.0 + float(k))));
+    float d = abs(fract(lu) - 0.5); // distance from the lane's centre line
+    float w = 0.09 + 0.5 * fwidth(lu); // at least a pixel wide: no stair steps
+    float across = exp(-(d * d) / (w * w));
+    float speed = 1.2 + hash(vec2(lane, 2.0)) * 1.8;
+    float ph = fract(v * 0.9 - flow * speed * 0.6 + hash(vec2(lane, 5.0)));
+    float tail = 0.28 + hash(vec2(lane, 9.0)) * 0.4; // how long it trails
+    float head = smoothstep(1.0, 0.985, ph); // a soft front, not a cut
+    float along = head * exp(-(1.0 - ph) / tail * 3.0) * smoothstep(0.0, 0.05, ph);
+    streak += on * across * along * (0.6 + 0.4 * hash(vec2(lane, 11.0)));
+  }
+  // Soft at the nose and dissolving behind; a little fuller where the shell is seen edge on (no hard rim).
+  float along = smoothstep(0.0, 0.12, v) * (1.0 - smoothstep(0.45, 1.0, v));
+  float side = 0.45 + 0.55 * pow(1.0 - abs(dot(normalize(vN), normalize(vView))), 1.2);
+  float a = (churn * 0.75 + streak * 0.9) * along * side * uPower;
+  vec3 deep = vec3(0.05, 0.28, 0.55);
+  vec3 cyan = vec3(0.45, 0.85, 1.0);
+  vec3 col = mix(deep, cyan, churn) + vec3(0.9, 0.95, 1.0) * streak;
+  gl_FragColor = vec4(col * a, a);
+}`;
+
+/** The wake's shape: a bow wave round the x axis, its tip at +x (the nose), opening out behind (unit length). */
+function wakeGeometry() {
+  const pts = [];
+  const steps = 40;
+  for (let i = 0; i <= steps; i++) {
+    const k = i / steps; // 0 at the tip, 1 at the open end
+    pts.push(new THREE.Vector2(Math.max(1e-3, Math.sqrt(k)), -k)); // radius grows like a parabola
+  }
+  // Lathed round y, then turned so its axis lies along x with the tip toward +x.
+  return new THREE.LatheGeometry(pts, 64).rotateZ(-Math.PI / 2);
+}
+
+/**
+ * The exit flare: a thin horizontal streak of light through the point where a ship drops out of warp (the way a camera
+ * lens catches a sudden bright light), white-hot in the middle, blue at the ends. Additive: it only adds light.
+ */
+const FLARE_FRAG = /* glsl */ `
+uniform float uPower;
+varying vec2 vUv;
+void main() {
+  float x = abs(vUv.x - 0.5) * 2.0; // 0 centre .. 1 tips
+  float y = abs(vUv.y - 0.5) * 2.0;
+  float core = exp(-y * y * 30.0) * pow(1.0 - x, 2.2);
+  float halo = exp(-y * y * 6.0) * pow(1.0 - x, 5.0) * 0.5;
+  float a = (core + halo) * uPower;
+  vec3 col = mix(vec3(0.55, 0.75, 1.0), vec3(1.0), pow(1.0 - x, 3.0));
+  gl_FragColor = vec4(col * a, a);
+}`;
+const FLARE_VERT = /* glsl */ `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
 // The planet's own sun (sandPlanet.js createSandPlanet), so the ships are lit and shadowed like the planet.
 const SUN = new THREE.Vector3(0.62, 0.42, 0.66).normalize();
 
@@ -123,6 +232,7 @@ export function createTitleScreen({ root, scene, camera, getModel, planetRadius 
   });
   trailMat.userData.flat = true; // never the board's map-shape bend
   const trailGeo = new THREE.PlaneGeometry(1, 1).translate(-0.5, 0, 0);
+  const wakeGeo = wakeGeometry();
   // Hyperspace: the blue-white streak behind an arriving ship, and the flash as it drops out.
   const flashTex = (() => {
     const c = document.createElement('canvas');
@@ -180,7 +290,42 @@ export function createTitleScreen({ root, scene, camera, getModel, planetRadius 
       flash.frustumCulled = false;
       holder.add(flash);
       const fade = trailMat.clone();
-      const entry = { slot, place: slot.position.clone(), streak, flash, fade, i, jumped: false };
+      // The exit flare: a long thin streak of light along the flight, through the ship (in the formation's frame).
+      const flareMat = new THREE.ShaderMaterial({
+        uniforms: { uPower: { value: 0 } },
+        vertexShader: FLARE_VERT,
+        fragmentShader: FLARE_FRAG,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      });
+      flareMat.userData.flat = true;
+      const flare = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), flareMat);
+      flare.frustumCulled = false;
+      flare.renderOrder = 5;
+      holder.add(flare);
+      // The warp wake round the hull (in the slot, so it stretches with the ship at speed).
+      const shipSize = box.getSize(new THREE.Vector3());
+      const wakeMat = new THREE.ShaderMaterial({
+        uniforms: { uTime: { value: 0 }, uPower: { value: 0 }, uSeed: { value: i * 3.17 } },
+        vertexShader: WAKE_VERT,
+        fragmentShader: WAKE_FRAG,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      });
+      wakeMat.userData.flat = true;
+      const wake = new THREE.Mesh(wakeGeo, wakeMat);
+      const wr = Math.max(shipSize.y, shipSize.z, shipSize.x * 0.18) * 0.95; // its widest, behind the ship
+      wake.scale.set(shipSize.x * 1.9, wr, wr); // tip just ahead of the nose, open well behind the stern
+      wake.position.x = shipSize.x * 0.62;
+      wake.frustumCulled = false;
+      wake.renderOrder = 4;
+      slot.add(wake);
+      const entry = { slot, place: slot.position.clone(), streak, flash, fade, flare, wake, half: shipSize.x / 2, i, jumped: false };
       ships.push(entry);
       // A trail streaming back from each propeller.
       slot.updateMatrixWorld(true);
@@ -213,20 +358,35 @@ export function createTitleScreen({ root, scene, camera, getModel, planetRadius 
       const e = 1 - Math.pow(1 - a, 4); // fast, braking hard at the end
       const rest = 1 - e;
       s.slot.visible = t >= start;
-      // From far behind (the ship's -x), drawn long while it's fast, then snapping to its shape.
-      s.slot.position.copy(s.place).setX(s.place.x - rest * ARRIVE.distance * length);
-      s.slot.scale.set(1 + rest * rest * ARRIVE.stretch, 1 - 0.4 * rest, 1);
+      // From behind (the ship's -x), drawn long while it's fast, then snapping to its shape. The stretch reaches back
+      // from the nose, so the ship streaks out behind itself.
+      const dash = s.i === 0 ? ARRIVE.distance : ARRIVE.wingDistance;
+      const stretch = 1 + rest * rest * ARRIVE.stretch;
+      s.slot.position.copy(s.place).setX(s.place.x - rest * dash * length - (stretch - 1) * s.half);
+      s.slot.scale.set(stretch, 1 - 0.45 * Math.min(1, rest * 1.5), 1);
       s.streak.visible = s.slot.visible && rest > 0.01;
       s.streak.position.copy(s.slot.position);
       s.streak.scale.set((0.5 + rest * ARRIVE.stretch * 1.4) * length, 0.06 * length * (0.4 + rest), 1);
       s.streak.material.uniforms.uFade.value = Math.min(1, rest * 3);
-      // The flash: up as it lands, then dying away.
-      const since = t - (start + ARRIVE.time * 0.75);
-      const glow = since < 0 ? Math.max(0, 1 + since / 0.12) : Math.exp(-since * 4);
+      // The light: it flares the moment the ship appears and rides with it while it brakes, then dies away.
+      const age = t - start;
+      const stopped = t - (start + ARRIVE.time);
+      const glow = age < 0 ? 0 : Math.min(1, age / ARRIVE.flashIn) * (stopped < 0 ? 1 : Math.exp(-stopped * 3.5));
       s.flash.visible = glow > 0.01;
-      s.flash.position.copy(s.place);
-      s.flash.scale.setScalar(length * (0.6 + 1.6 * glow));
+      s.flash.position.copy(s.slot.position);
+      s.flash.scale.setScalar(length * (0.9 + 1.4 * glow + rest * 0.8));
       s.flash.material.opacity = glow;
+      // The exit flare: flashes across at once, shrinks as the ship slows, and is gone soon after it stops.
+      const flare = glow * (0.35 + 0.65 * rest);
+      s.flare.visible = flare > 0.01;
+      s.flare.position.copy(s.slot.position);
+      s.flare.scale.set(length * ARRIVE.flare * (0.35 + 0.65 * rest + 0.3 * glow), length * 0.09, 1);
+      s.flare.material.uniforms.uPower.value = flare * 1.6;
+      // The warp wake: there from the moment it appears, dissolving once it has stopped.
+      const wake = age < 0 ? 0 : Math.min(1, age / ARRIVE.flashIn) * (stopped < 0 ? 1 : Math.max(0, 1 - stopped / ARRIVE.wakeOut));
+      s.wake.visible = wake > 0.01;
+      s.wake.material.uniforms.uPower.value = wake * (1.1 + 0.7 * rest);
+      s.wake.material.uniforms.uTime.value = t;
       // The yellow propeller trails come on once it's out.
       s.fade.uniforms.uFade.value = Math.min(1, Math.max(0, (t - start - ARRIVE.time * 0.8) / 0.8));
     }

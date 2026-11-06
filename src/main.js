@@ -6618,7 +6618,55 @@ const titleScreen = createTitleScreen({
   onStart: startFromTitle,
   onContinue: () => startFromTitle({ resume: true }),
   canContinue: hasSave,
-  onOptions: () => debug.toggle(), // every Game Debug option, for now
+  onOptions: () => showOptions(true),
+});
+
+// ---------- Options (main screen): the four graphics settings players change, on the menu's leather ----------
+const OPTION_STEPS = {
+  optFog: { key: 'fogQuality', values: ['Low', 'Medium', 'High', 'Ultra'] },
+  optRes: { key: 'resolution', values: ['0.75', '1', '1.5', '2'] },
+  optShadows: { key: 'shadows', values: ['Off', 'Low', 'High'] },
+};
+function syncOptions() {
+  for (const [id, { key, values }] of Object.entries(OPTION_STEPS)) {
+    const input = $(id);
+    // A value the slider doesn't have (Resolution "Auto" from the debug panel): the nearest stop.
+    let i = values.indexOf(gfxCfg[key]);
+    if (i < 0) i = values.indexOf(key === 'resolution' ? '1' : 'Medium');
+    input.value = String(Math.max(0, i));
+    input.closest('.title-opt').querySelectorAll('.title-opt-ticks i').forEach((t, k) => t.classList.toggle('on', k === Number(input.value)));
+  }
+  $('optCrt').checked = gfxCfg.crtScreen === 'Shader';
+}
+function showOptions(on) {
+  $('titleOptions').classList.toggle('hidden', !on);
+  $('titleOptions').closest('.title-sheet').classList.toggle('showing-options', on);
+  if (on) {
+    syncOptions();
+    $('optFog').focus({ preventScroll: true });
+  }
+}
+for (const [id, { key, values }] of Object.entries(OPTION_STEPS)) {
+  // Each stop's label under its place on the rail.
+  $(id).closest('.title-opt').querySelectorAll('.title-opt-ticks i').forEach((t, k, all) => t.style.setProperty('--at', k / (all.length - 1)));
+  $(id).addEventListener('input', (e) => {
+    gfxCfg[key] = values[Number(e.currentTarget.value)];
+    applyGraphics();
+    saveGfxConfig(gfxCfg);
+    syncOptions();
+  });
+}
+$('optCrt').addEventListener('change', (e) => {
+  gfxCfg.crtScreen = e.currentTarget.checked ? 'Shader' : 'Off';
+  applyGraphics();
+  saveGfxConfig(gfxCfg);
+});
+$('btnOptionsBack').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  showOptions(false);
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && view === 'title' && !$('titleOptions').classList.contains('hidden')) showOptions(false);
 });
 
 // ---------- the saved game (saveGame.js): Continue on the main screen ----------
