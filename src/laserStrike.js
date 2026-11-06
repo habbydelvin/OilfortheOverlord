@@ -170,7 +170,7 @@ export const LASER = {
   firstAim: 0.7,
   gather: 1.8,
   spinTurns: 1.5,
-  pause: 0.5,
+  pause: 0.92, // gather + pause + retract = 3.02 s: the length of the charge-up tracks (sfx.js CHARGES)
   retract: 0.25,
   fall: 0.5,
   stagger: 0.45,
@@ -190,12 +190,12 @@ export const LASER = {
 
 export const LASER_PARAMS = [
   { group: 'Laser strike · sequence (s)' },
-  { key: 'firstAim', label: 'Camera settle before firing', min: 0, max: 3, step: 0.05, hint: 'Wait after the camera moves to the first target, before the beams appear' },
+  { key: 'firstAim', label: 'Camera settle before firing', min: 0, max: 3, step: 0.05, hint: 'Wait after the camera reaches the Capital, before the first beams appear' },
   { key: 'gather', label: 'Beams spiral in', min: 0.2, max: 5, step: 0.05 },
   { key: 'pause', label: 'Merged charge pause', min: 0, max: 3, step: 0.05 },
   { key: 'retract', label: 'Sight line retracts up', min: 0.05, max: 2, step: 0.01 },
   { key: 'fall', label: 'Blast falls', min: 0.05, max: 2, step: 0.01 },
-  { key: 'stagger', label: 'Gap after impact (next target)', min: 0, max: 3, step: 0.05 },
+  { key: 'stagger', label: 'Stagger between laser starts', min: 0, max: 3, step: 0.05, hint: 'Seconds between each laser sequence starting (they overlap)' },
   { group: 'Laser strike · beams' },
   { key: 'beams', label: 'Beam count', min: 1, max: 12, step: 1 },
   { key: 'spread', label: 'Start spread', min: 0.2, max: 4, step: 0.05 },

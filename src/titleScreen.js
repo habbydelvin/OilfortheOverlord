@@ -9,6 +9,7 @@
  */
 import * as THREE from 'three';
 import { clone as cloneModel } from 'three/addons/utils/SkeletonUtils.js';
+import { ftlJump, stopFtlJumps, FTL_HIT } from './sfx.js';
 
 /**
  * The Mothership's flight, in camera space as shares of the camera's distance to the planet's centre (x right,
@@ -30,7 +31,7 @@ const FORMATION = [
 const TRAIL = { length: 2.2, width: 0.014 }; // the yellow trail behind each propeller, in ship lengths
 // Dropping out of hyperspace into their places, one after another: a streak braking hard, then a flash.
 const ARRIVE = {
-  delay: 0.6, // seconds before the first one
+  delay: 1.7, // seconds before the first one (room for the FTL sound's build-up before its hit)
   stagger: 0.45, // between ships
   time: 1.1, // the braking streak
   distance: 14, // ship lengths it covers while braking
@@ -179,7 +180,7 @@ export function createTitleScreen({ root, scene, camera, getModel, planetRadius 
       flash.frustumCulled = false;
       holder.add(flash);
       const fade = trailMat.clone();
-      const entry = { slot, place: slot.position.clone(), streak, flash, fade, i };
+      const entry = { slot, place: slot.position.clone(), streak, flash, fade, i, jumped: false };
       ships.push(entry);
       // A trail streaming back from each propeller.
       slot.updateMatrixWorld(true);
@@ -202,6 +203,12 @@ export function createTitleScreen({ root, scene, camera, getModel, planetRadius 
   function arrive() {
     for (const s of ships) {
       const start = arriveAt + ARRIVE.delay + s.i * ARRIVE.stagger;
+      // The FTL sound starts early so its hit lands on this ship's flash (skipped if that moment is long past).
+      const soundAt = start + ARRIVE.time * 0.75 - FTL_HIT;
+      if (!s.jumped && t >= soundAt) {
+        s.jumped = true;
+        if (t - soundAt < 0.25) ftlJump();
+      }
       const a = Math.min(1, Math.max(0, (t - start) / ARRIVE.time));
       const e = 1 - Math.pow(1 - a, 4); // fast, braking hard at the end
       const rest = 1 - e;
@@ -234,9 +241,11 @@ export function createTitleScreen({ root, scene, camera, getModel, planetRadius 
   const ray = new THREE.Vector3();
   const look = new THREE.Matrix4();
   const toCamera = (p, d, out) =>
-    out.copy(camera.position).addScaledVector(right, p.x * d).addScaledVector(up, p.y * d).addScaledVector(back, p.z * d);
+    out.copy(eye).addScaledVector(right, p.x * d).addScaledVector(up, p.y * d).addScaledVector(back, p.z * d);
 
   let departing = false;
+  let frozen = false; // the camera frame is held (diving in): the ships stop following the camera
+  const eye = new THREE.Vector3();
 
   function update(dt) {
     if (!active) return;
@@ -245,10 +254,14 @@ export function createTitleScreen({ root, scene, camera, getModel, planetRadius 
     if (!ship) return;
     for (const m of mixers) m.update(dt);
     arrive();
-    // Departing too: they keep their place on screen (moving with the camera), so the dive never flies into them.
-    camera.updateMatrixWorld();
-    camera.matrixWorld.extractBasis(right, up, back);
-    const d = camera.position.length(); // distance to the planet's centre: everything scales with it
+    // Placed from the camera's view, except while the camera dives in: then they stay put in the world (the frame
+    // is frozen at the moment Start was pressed) and the camera flies past them.
+    if (!frozen) {
+      camera.updateMatrixWorld();
+      camera.matrixWorld.extractBasis(right, up, back);
+      eye.copy(camera.position);
+    }
+    const d = eye.length(); // distance to the planet's centre: everything scales with it
     toCamera(SHIP.from, d, from);
     toCamera(SHIP.to, d, to);
     const k = Math.min(1, t / SHIP.duration);
@@ -260,7 +273,7 @@ export function createTitleScreen({ root, scene, camera, getModel, planetRadius 
     let size = (SHIP.size * d) / length;
     // Always in front of the planet: if the formation would reach its surface (late in the flight, or as the camera
     // dives in), it comes closer to the camera and smaller by the same share, so on screen nothing changes.
-    if (planetRadius > 0) {
+    if (planetRadius > 0 && !frozen) {
       ray.subVectors(holder.position, camera.position);
       const dist = ray.length();
       ray.divideScalar(dist);
@@ -284,23 +297,28 @@ export function createTitleScreen({ root, scene, camera, getModel, planetRadius 
   function show() {
     active = true;
     departing = false;
+    frozen = false;
     t = 0;
     arriveAt = 0; // they drop in again each time the menu comes up
+    for (const s of ships) s.jumped = false;
     scene.add(holder);
     root.classList.remove('hidden', 'departing');
     document.body.classList.add('title-screen');
     continueBtn.disabled = !canContinue();
   }
 
-  /** Start pressed: the menu fades; the ships hold their place on screen while the camera dives (the clouds take them). */
+  /** Start pressed: the menu fades; the ships stay where they are in space while the camera dives past them. */
   function depart() {
     departing = true;
+    frozen = true;
     root.classList.add('departing');
   }
 
   function hide() {
+    stopFtlJumps();
     active = false;
     departing = false;
+    frozen = false;
     root.classList.remove('departing');
     holder.removeFromParent();
     root.classList.add('hidden');
@@ -326,6 +344,7 @@ export function createTitleScreen({ root, scene, camera, getModel, planetRadius 
     seek(seconds) {
       t = seconds;
       arriveAt = 0;
+      for (const s of ships) s.jumped = true; // no burst of jump sounds after a seek
     },
     show,
     depart,

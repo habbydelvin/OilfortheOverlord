@@ -287,6 +287,7 @@ function begin(dur, build) {
   };
   active.push(voice);
   build(now, nodes);
+  return voice;
 }
 
 /** Play one take of recording `name` (not the one played last), its pitch nudged by up to ±`vary`, as one voice. */
@@ -376,6 +377,113 @@ export function zoomWhoosh(inward = false) {
     src.start(t);
     nodes.push(src, g);
   });
+}
+
+// ---------- main screen: a Mothership dropping out of FTL ----------
+const FTL_FILE = '/audio/title/ftl-jump.ogg';
+/** Seconds into ftl-jump.ogg where its arrival hit lands (the title screen lines this up with each ship's flash). */
+export const FTL_HIT = 2.4;
+let ftlBuf = null;
+(async () => {
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!OAC || typeof fetch !== 'function') return;
+  try {
+    const res = await fetch(FTL_FILE);
+    if (!res.ok) throw new Error(res.status);
+    ftlBuf = await new OAC(1, 1, 44100).decodeAudioData(await res.arrayBuffer());
+  } catch (err) {
+    console.warn(`[sfx] ${FTL_FILE} failed to load`, err);
+  }
+})();
+const ftlVoices = new Set();
+
+/** One ship's FTL jump. Overlaps with the others (each its own voice). */
+export function ftlJump() {
+  if (!ftlBuf) return;
+  const voice = begin(ftlBuf.duration, (t, nodes) => {
+    const src = ctx.createBufferSource();
+    src.buffer = ftlBuf;
+    src.playbackRate.value = 1 + (Math.random() * 2 - 1) * 0.03;
+    const g = ctx.createGain();
+    g.gain.value = 0.55;
+    src.connect(g).connect(master);
+    src.start(t);
+    nodes.push(src, g);
+  });
+  if (!voice) return;
+  ftlVoices.add(voice);
+  setTimeout(() => ftlVoices.delete(voice), ftlBuf.duration * 1000 + 200);
+}
+
+/** Leaving the main screen: cut any jump still sounding. */
+export function stopFtlJumps() {
+  for (const v of ftlVoices) v.kill();
+  ftlVoices.clear();
+}
+
+// ---------- laser strike: the charge-up ----------
+/** Variations, one picked per laser (never the same twice running). Each plays whole: it ends as the blast fires. */
+const CHARGES = [
+  { file: '/audio/laser/charge-1.ogg' },
+  { file: '/audio/laser/charge-2.ogg' },
+  { file: '/audio/laser/charge-3.ogg' },
+  { file: '/audio/laser/charge-4.ogg' },
+];
+let lastCharge = -1;
+(async () => {
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!OAC || typeof fetch !== 'function') return;
+  const decoder = new OAC(1, 1, 44100);
+  await Promise.all(
+    CHARGES.map(async (c) => {
+      try {
+        const res = await fetch(c.file);
+        if (!res.ok) throw new Error(res.status);
+        c.buf = await decoder.decodeAudioData(await res.arrayBuffer());
+      } catch (err) {
+        console.warn(`[sfx] ${c.file} failed to load`, err);
+      }
+    }),
+  );
+})();
+const chargeVoices = new Set();
+
+/**
+ * One laser's charge-up (a random variation), starting now and ending `seconds` from now, when the blast fires.
+ * If the charge time differs from the file's length it plays faster or slower (0.5–2×). Returns a stop().
+ */
+export function laserCharge(seconds) {
+  const ready = CHARGES.map((c, i) => i).filter((i) => CHARGES[i].buf);
+  if (!ready.length || !(seconds > 0)) return () => {};
+  let pick = ready[Math.floor(Math.random() * ready.length)];
+  if (ready.length > 1 && pick === lastCharge) pick = ready[(ready.indexOf(pick) + 1) % ready.length];
+  lastCharge = pick;
+  const { buf } = CHARGES[pick];
+  const rate = Math.min(2, Math.max(0.5, buf.duration / seconds));
+  const delay = 0;
+  const voice = begin(delay + buf.duration / rate, (t, nodes) => {
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = rate;
+    const g = ctx.createGain();
+    g.gain.value = 0.6;
+    src.connect(g).connect(master);
+    src.start(t + delay);
+    nodes.push(src, g);
+  });
+  if (!voice) return () => {};
+  chargeVoices.add(voice);
+  setTimeout(() => chargeVoices.delete(voice), (delay + buf.duration / rate) * 1000 + 200);
+  return () => {
+    voice.kill();
+    chargeVoices.delete(voice);
+  };
+}
+
+/** Cut every laser charge still sounding (strike cancelled, island reset). */
+export function stopLaserCharges() {
+  for (const v of chargeVoices) v.kill();
+  chargeVoices.clear();
 }
 
 /** A building hits the sand: one of the recorded impacts, or the ordinary thud if they are not ready. */

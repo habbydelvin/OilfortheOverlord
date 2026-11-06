@@ -10,7 +10,7 @@ import { createTitleScreen } from './titleScreen.js';
 import { createSandPlanet } from './sandPlanet.js';
 import { createShadowCache } from './shadowCache.js';
 import { getMusicVolume, initMusic, MUSIC_VOLUME_DEFAULT, MUSIC_VOLUME_MAX, onMusicVolume, setMusicVolume, setMusicMuffled, startMusic } from './music.js';
-import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws, wasteThud, buildThud, zoomWhoosh, sfxLoaded } from './sfx.js';
+import { barrel, latch, bindCardHover, boom, buzz, confirm, coin, demolition, deny, doom, food, getSfxVolume, setSfxVolume, SFX_VOLUME_DEFAULT, SFX_VOLUME_MAX, shuffle, thud, tick, unlockSfx, whenSfxRunning, ciws, wasteThud, buildThud, zoomWhoosh, sfxLoaded, laserCharge, stopLaserCharges } from './sfx.js';
 import { createCombatAudio } from './combatAudio.js';
 import { CameraRig } from './controls.js';
 import { Grid, DIRS, inWorld, key as plotKey, hexToWorld, worldToHex, hexDistance, cellsCentre, cellSeed, hexesAround } from './grid.js';
@@ -1114,7 +1114,8 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
 }
 
 /**
- * 激光打击. No missile. The camera centres each building in a random order and stays on the last.
+ * 激光打击. No missile. The camera holds on the Capital (zoomed to fit every target) and the strikes
+ * start LASER.stagger s apart, overlapping.
  * Five thin beams spiral inward and merge, charge briefly, then an energy blast falls from the
  * sky. The blast touching the ground plays the missile impact (blast, shake, crater).
  */
@@ -1139,54 +1140,62 @@ async function playLaserStrike(targets, { convert = true, restoreCamera = true, 
     const j = Math.floor(Math.random() * (i + 1));
     [order[i], order[j]] = [order[j], order[i]];
   }
-  const centre = (t) => {
-    const w = hexToWorld(t.x, t.z);
-    followCamera(new THREE.Vector3(w.x, 0, w.z), 16, 4.5);
-  };
   const stop = () => {
+    stopLaserCharges();
     lasers.abortGathers();
     endStrike(prevEvent);
   };
-  for (let i = 0; i < order.length; i++) {
-    const t = order[i];
-    centre(t);
-    await wait(i === 0 ? LASER.firstAim : 0.55);
-    if (run !== runId) {
-      stop();
-      return lost;
-    }
+  const fireAt = (t) => {
     const w = hexToWorld(t.x, t.z);
-    await lasers.gather(w.x, w.z, { onBolt: laserFlash });
-    if (run !== runId) {
-      stop();
-      return lost;
-    }
-    const hit = { x: w.x, z: w.z, cell: { x: t.x, z: t.z } };
-    lasers.impact(hit, {
-      onImpact: () => {
-        if (run !== runId) return;
-        explode('large');
-        dust.burst(t.x, t.z, 1.8);
-        fog.disturb(t.x, t.z);
-        camShake.add(missileCfg.shake);
-      },
-      onCover: () => {
-        if (run !== runId) return;
-        if (onCover) {
-          onCover({ x: t.x, z: t.z }, t);
-          return;
-        }
-        if (!convert) return;
-        if (tryIntercept(t.x, t.z, interceptUsed)) return;
-        const name = craterAt(t.x, t.z);
-        if (name) lost.push(name);
-      },
+    laserCharge(LASER.gather + LASER.pause + LASER.retract); // peaks as the blast fires
+    return lasers.gather(w.x, w.z, { onBolt: laserFlash }).then(() => {
+      if (run !== runId) return;
+      const hit = { x: w.x, z: w.z, cell: { x: t.x, z: t.z } };
+      return new Promise((done) => {
+        lasers.impact(hit, {
+          onImpact: () => {
+            if (run !== runId) return;
+            explode('large');
+            dust.burst(t.x, t.z, 1.8);
+            fog.disturb(t.x, t.z);
+            camShake.add(missileCfg.shake);
+          },
+          onCover: () => {
+            done();
+            if (run !== runId) return;
+            if (onCover) {
+              onCover({ x: t.x, z: t.z }, t);
+              return;
+            }
+            if (!convert) return;
+            if (tryIntercept(t.x, t.z, interceptUsed)) return;
+            const name = craterAt(t.x, t.z);
+            if (name) lost.push(name);
+          },
+        });
+      });
     });
-    if (i < order.length - 1) await wait(LASER.stagger);
+  };
+  // Hold on the Capital (zoomed to fit every target) and stagger the strikes so they overlap.
+  strikeCamera(order);
+  await wait(LASER.firstAim);
+  if (run !== runId) {
+    stop();
+    return lost;
+  }
+  const strikes = [];
+  for (let i = 0; i < order.length; i++) {
+    if (i) await wait(LASER.stagger);
     if (run !== runId) {
       stop();
       return lost;
     }
+    strikes.push(fireAt(order[i]));
+  }
+  await Promise.all(strikes);
+  if (run !== runId) {
+    stop();
+    return lost;
   }
   await wait(Math.max(holdAfter ?? missileCfg.holdAfter, lasers.beamRemaining() + 0.2));
   if (run !== runId) {
@@ -6751,7 +6760,7 @@ function showTitle() {
 
 /**
  * Start: a new game from the very beginning, the full tutorial included. The camera dives from orbit into the
- * planet (the Motherships hold their place on screen), punches through the clouds, and comes out above Hive City.
+ * planet (past the Motherships, which stay where they are), punches through the clouds, and comes out above Hive City.
  */
 const TITLE_DIVE = { duration: 2.4, cloudsAt: 1.9, fovKick: 14 }; // the cloud cover (0.55 s) closes as the camera reaches the surface
 let titleDive = null; // { t, d0, fov0, covering }
