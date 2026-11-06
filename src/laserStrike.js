@@ -948,7 +948,9 @@ export class LaserStrike {
         continue;
       }
       const fade = 1 - Math.max(0, (r.age - r.life * 0.7) / (r.life * 0.3));
-      const tail = 0.035; // seconds of travel the streak covers
+      // The streak trails the bullet, but never back past the muzzle. A full tail is longer than the turret,
+      // so a round that just left the barrel was drawn out through the back of the gun.
+      const tail = Math.min(0.035, r.age);
       pos.setXYZ(n * 2, r.pos.x, r.pos.y, r.pos.z);
       pos.setXYZ(n * 2 + 1, r.pos.x - r.vel.x * tail, r.pos.y - r.vel.y * tail, r.pos.z - r.vel.z * tail);
       col.setXYZ(n * 2, 1.6 * fade, 1.15 * fade, 0.45 * fade);
@@ -1716,7 +1718,7 @@ export class LaserStrike {
   #endReplay() {
     const rp = this.#replay;
     if (!rp) return;
-    rp.sim.turrets.forEach((_, i) => rp.firing[i] && rp.gunFor(i)?.end?.());
+    rp.sim.turrets.forEach((_, i) => rp.gunFor(i)?.release?.());
     this.#replay = null;
   }
   #updateReplay(dt) {
@@ -1731,8 +1733,8 @@ export class LaserStrike {
       if (rp.next < 0) rp.next = sim.rounds.length;
     }
     rp.lastT = t;
-    // Turrets first: aim exactly as the sim had them (snapped: the sim already limits the turn speed, so easing it
-    // again only makes the barrels trail the stream); streams start and stop with it.
+    // Turrets first. The idle sweep stays off for the whole replay (engage), and the mesh is aimed after
+    // the mixer (gun.aim). Stopping it only while a burst plays made every new shot snap off the sweep.
     const pt = new THREE.Vector3();
     sim.turrets.forEach((tr, i) => {
       const s = Math.max(0, Math.min(sim.steps - 1, Math.floor((t - sim.t0) / SIM_STEP)));
@@ -1743,18 +1745,14 @@ export class LaserStrike {
       if (gun) {
         const cp = Math.cos(pitch);
         pt.set(tr.pos[0] + Math.sin(yaw) * cp * 5, tr.pos[1] + Math.sin(pitch) * 5, tr.pos[2] + Math.cos(yaw) * cp * 5);
-        this.#slew({ gun }, pt, dt, Infinity);
-        gun.turret?.updateWorldMatrix(true, true);
+        gun.engage?.();
+        gun.aim?.(pt);
       }
-      if (firing && !rp.firing[i]) {
-        gun?.begin?.();
-        rp.onFire?.(0.3);
-      }
+      if (firing && !rp.firing[i]) rp.onFire?.(0.3);
       if (firing && (rp.beat[i] -= dt) <= 0) {
         rp.beat[i] = 0.25;
         gun?.fire?.(0.3);
       }
-      if (!firing && rp.firing[i]) gun?.end?.();
       rp.firing[i] = firing;
     });
     // Rounds: each leaves the gun's real barrel tip (alternating barrels) and flies to where the sim's round went in

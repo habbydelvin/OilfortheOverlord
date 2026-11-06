@@ -910,7 +910,9 @@ export class TileFactory {
    * A model's CIWS gun (models.js splitCiws), for the attack phase: missiles.js fireCIWS turns `turret` and lifts
    * `pivot` itself between begin() and end(). Meanwhile the idle sweep (the 'Aim' clip) holds where it was, fire(s)
    * plays the Fire clip (barrels spinning, muzzle flash, tracers) over about s seconds, and afterwards the gun eases
-   * back into its sweep. Kept as model.userData.ciws, where findCiws (interceptMesh.js) finds it.
+   * back into its sweep. A defence replay calls engage() for the whole phase (not only while the burst is playing),
+   * then aim() each frame; update() applies that after the mixer, or the sweep would put the idle pose back and the
+   * next burst would snap. Kept as model.userData.ciws, where findCiws (interceptMesh.js) finds it.
    */
   #ciwsRig(model, entry) {
     const parts = model.userData.ciwsParts;
@@ -933,8 +935,27 @@ export class TileFactory {
       busy: 0,
       back: null,
       clock: 0, // the sweep's time while it's paused
+      goal: null, // world point the defence replay wants the barrels on
+      engaged: false,
       get active() {
         return rig.busy > 0 || rig.back !== null;
+      },
+      /** Pause the idle sweep for a whole defence replay. aim() then owns the turret until release(). */
+      engage() {
+        if (rig.engaged) return;
+        rig.engaged = true;
+        rig.begin();
+      },
+      /** Hand the turret back to its idle sweep. */
+      release() {
+        if (!rig.engaged) return;
+        rig.engaged = false;
+        rig.goal = null;
+        rig.end();
+      },
+      /** Latest world point to aim at. Applied in update(), after the mixer. */
+      aim(point) {
+        (rig.goal ??= new THREE.Vector3()).copy(point);
       },
       begin() {
         if (rig.busy++ > 0) return;
@@ -961,6 +982,28 @@ export class TileFactory {
       update(dt) {
         if (!rig.active) return;
         rig.clock += dt;
+        // After the mixer: the sweep (and the Fire clip) must not leave the barrels on the idle pose.
+        if (rig.goal && rig.engaged && !rig.back) {
+          const { turret, pivot } = rig;
+          turret.parent?.updateWorldMatrix(true, false);
+          const local = turret.parent.worldToLocal(rig.goal.clone());
+          const yaw = Math.atan2(local.x - turret.position.x, local.z - turret.position.z);
+          let d = yaw - turret.rotation.y;
+          d = Math.atan2(Math.sin(d), Math.cos(d));
+          // The recorded aim already turns at the turret's own speed. Cap the visual step so leaving the
+          // idle pose (or a hitch) turns onto that aim instead of popping.
+          const maxStep = 8 * dt;
+          if (Math.abs(d) > maxStep) d = Math.sign(d) * maxStep;
+          turret.rotation.y += d;
+          if (pivot) {
+            const flat = Math.hypot(local.x - turret.position.x, local.z - turret.position.z);
+            const elev = Math.atan2(local.y - turret.position.y - pivot.position.y, flat);
+            let dp = -THREE.MathUtils.clamp(elev, -0.1, 1.45) - pivot.rotation.x;
+            if (Math.abs(dp) > maxStep) dp = Math.sign(dp) * maxStep;
+            pivot.rotation.x += dp;
+          }
+          turret.updateWorldMatrix(true, true);
+        }
         if (!rig.back) return;
         rig.back.t += dt;
         const k = Math.min(1, rig.back.t / CIWS_EASE_BACK);
