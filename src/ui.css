@@ -4291,7 +4291,7 @@ body.paying .float-btn {
   display: block;
   width: 100%;
   height: auto;
-  aspect-ratio: 1000 / 456;
+  aspect-ratio: 1000 / 444;
   object-fit: contain;
   filter: contrast(1.25) saturate(1.2) brightness(1.1) drop-shadow(0 4px 6px rgba(0, 0, 0, 0.8));
 }
