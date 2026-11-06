@@ -1254,7 +1254,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
         wheelAt = now;
         if (!dive) {
           const n = hoverFromLabel ?? pick(e.clientX, e.clientY, 1.6 * HEX);
-          if (!n) return;
+          if (!n || (n.rival && (n.rival.alive === false || n.deadShown))) return; // a fallen city can't be entered
           dive = { n, from: bend.scroll().clone(), k: 0, shown: 0, at: now };
         }
         if (units > 0 && dive.k < 0.6) {
@@ -1304,7 +1304,7 @@ export function createGlobeView({ renderer, root, factory, playerBuildings, play
   async function visit(id) {
     if (war && !freeDuringWar) return; // no flying off mid attack phase
     const n = nodes.find((node) => node.id === id);
-    if (n?.rival && n.rival.alive === false) return; // nothing left to visit
+    if (n?.rival && (n.rival.alive === false || n.deadShown)) return; // nothing left to visit
     if (!n || visiting || dive || !active) return;
     drag = null;
     velocity.set(0, 0);

@@ -4442,3 +4442,31 @@ body.title-screen #btnMissile,
 body.title-screen #btnReplayTutorial {
   display: none;
 }
+
+/* A rival Hive going up (main.js hiveFall): the screen whites out, over everything (the cloud transition too), and
+   stays white until the camera is back on the planet. */
+.hive-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(circle at 50% 45%, #fff 0%, #fffbe8 45%, #ffe9b8 100%);
+}
+.hive-flash.on {
+  opacity: 1;
+}
+#btnRivalDestroy {
+  border: 1px solid #c9a35c;
+  border-radius: 3px;
+  padding: 6px 10px;
+  background: rgba(20, 14, 10, 0.85);
+  color: #f0d79a;
+  font: 600 12px/1.2 var(--dp-serif, serif);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+#btnRivalDestroy[hidden] {
+  display: none;
+}

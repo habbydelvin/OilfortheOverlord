@@ -5905,9 +5905,55 @@ function playRivalStrike(r, rec) {
       whoosh?.stop(0.12);
       explode(t?.harmless ? 'small' : 'large');
       if (view === 'rival') camShake.add(missileCfg.shake * (t?.harmless ? 0.3 : 1));
+      if (rec.eliminated) hiveFall(r); // the missile that takes its last point: the whole Hive goes up
     },
     onCover: () => craterRival(r, rec),
   });
+}
+
+/**
+ * A rival Hive falls while you watch it: a huge blast whites out the screen, its Capital becomes a crater, and the
+ * camera takes you back to the War Map by itself, where the fallen city shows as a crater. It can't be visited again.
+ */
+const HIVE_FALL = { in: 0.25, leave: 0.5, fadeOut: 1.6, maxWait: 6 }; // seconds: white in, leave under it, fade once on the planet
+let falling = null; // the rival currently going up
+function hiveFall(r) {
+  if (!r || falling === r) return;
+  falling = r;
+  r.alive = false;
+  r.capitalHp = 0;
+  // Its Capital is gone: a crater where it stood (seen later from the planet).
+  for (const c of r.grid.cells.values()) if (c.terrain === 'capital') r.grid.set(c.x, c.z, { terrain: 'crater' });
+  r.version = (r.version ?? 0) + 1;
+  // The blast: the screen whites out and stays white until the camera is back on the planet.
+  const flash = document.createElement('div');
+  flash.className = 'hive-flash';
+  flash.style.transition = `opacity ${HIVE_FALL.in}s ease-out`;
+  document.body.appendChild(flash);
+  requestAnimationFrame(() => flash.classList.add('on'));
+  explode('large');
+  setTimeout(() => explode('large'), 140);
+  setTimeout(() => explode('large'), 380);
+  camShake.add(missileCfg.shake * 4);
+  toast(L(`${r.def.name} has fallen!`, `${r.def.zh}已陷落！`), 'good', 2600);
+  const fadeAway = () => {
+    flash.style.transition = `opacity ${HIVE_FALL.fadeOut}s ease-in`;
+    flash.classList.remove('on');
+    setTimeout(() => flash.remove(), HIVE_FALL.fadeOut * 1000 + 100);
+  };
+  // Under the white, the camera leaves for the planet; the white fades once it's there (the city is never seen again).
+  const run = runId;
+  setTimeout(async () => {
+    if (run !== runId || view !== 'rival' || rivalShown !== r) {
+      falling = null;
+      return fadeAway();
+    }
+    openGlobe();
+    const t0 = performance.now();
+    while ((view !== 'globe' || switching) && performance.now() - t0 < HIVE_FALL.maxWait * 1000 && run === runId) await wait(0.05);
+    falling = null;
+    fadeAway();
+  }, HIVE_FALL.leave * 1000);
 }
 
 /** The simulated flight of a strike (war.js / interceptSim.js), on the War Map clock. */
@@ -6426,6 +6472,7 @@ function closeGlobe() {
 function enterRival(id) {
   const rival = rivals.find((entry) => entry.id === id);
   if (!rival || view !== 'globe' || switching) return;
+  if (rival.alive === false) return; // a fallen Hive: nothing left to visit (its crater shows from the planet)
   zoomWhoosh(true);
   setMusicMuffled(false);
   swapView(() => {
@@ -6497,6 +6544,15 @@ globe = createGlobeView({
 // done here reaches the in-game planet. Its labels live in a detached element (the main screen shows none).
 const titleGlobeUI = document.createElement('div');
 titleGlobeUI.innerHTML = '<div class="globe-title"></div><div id="globeLabels"></div><div id="globeCard" class="hidden"></div>';
+// Debug (not in release): the Hive on screen falls, as if hit by its last missile (blast, crater, back to the planet).
+if (!RELEASE) {
+  const btn = $('btnRivalDestroy');
+  btn.hidden = false;
+  btn.addEventListener('click', (e) => {
+    e.currentTarget.blur();
+    if (view === 'rival' && rivalShown && rivalShown.alive !== false) hiveFall(rivalShown);
+  });
+}
 // Debug (not in release): destroy a random living rival Hive, to check how a fallen city looks on the War Map.
 if (!RELEASE) {
   const btn = $('btnGlobeDestroy');
