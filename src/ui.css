@@ -4663,3 +4663,41 @@ body.title-screen #btnGameMenu {
 #gameMenu #btnMainMenu {
   margin-top: 14px;
 }
+
+/* Incoming missiles (main.js updateIncoming): a red arrow on the edge of the view toward each target off screen. */
+#incomingArrows {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+}
+.incoming-arrow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: none;
+  width: 38px;
+  height: 38px;
+  padding: 7px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(40, 6, 4, 0.75);
+  box-shadow: 0 0 0 2px #ff3b2a, 0 0 14px rgba(255, 59, 42, 0.8);
+  color: #ff5a3a;
+  cursor: pointer;
+  pointer-events: auto;
+  animation: incomingPulse 0.9s ease-in-out infinite;
+}
+.incoming-arrow.on {
+  display: block;
+}
+.incoming-arrow svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+@keyframes incomingPulse {
+  50% {
+    box-shadow: 0 0 0 3px #ff6a4a, 0 0 22px rgba(255, 90, 60, 1);
+  }
+}

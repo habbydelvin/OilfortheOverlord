@@ -4,6 +4,7 @@ import './ui.css';
 import './theme.css';
 import './themeShine.js';
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createScene } from './scene.js';
 import { createInstancer } from './instancer.js';
 import { createTitleScreen } from './titleScreen.js';
@@ -6038,6 +6039,105 @@ function syncDefence() {
   else if (attackLive && view === 'rival' && rivalShown && warSims.get(rivalShown.id)) rivalMissiles = new MissileStrike(rivalView.scene, camera, missileCfg);
 }
 
+// ---------- incoming: where the rivals' missiles will come down on Hive City ----------
+/**
+ * From launch until each lands: a pulsing red target on its cell (on the board), and, while that cell is off screen,
+ * a red arrow at the edge of the view pointing to it (click it to look there).
+ */
+const incoming = new Map(); // strike -> { mark, arrow, x, z }
+const incomingGroup = new THREE.Group();
+incomingGroup.name = 'incoming marks';
+scene.add(incomingGroup);
+const incomingMat = new THREE.MeshBasicMaterial({ color: 0xff3b2a, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+const incomingRing = new THREE.RingGeometry(0.3, 0.39, 48).rotateX(-Math.PI / 2);
+const incomingCross = (() => {
+  // Crosshair ticks round the ring.
+  const parts = [];
+  for (const a of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
+    const g = new THREE.PlaneGeometry(0.16, 0.045).rotateX(-Math.PI / 2).translate(0.5, 0, 0).rotateY(a);
+    parts.push(g);
+  }
+  return mergeGeometries(parts);
+})();
+const incomingArrows = document.createElement('div');
+incomingArrows.id = 'incomingArrows';
+document.body.appendChild(incomingArrows);
+
+function markIncoming(list) {
+  clearIncoming();
+  for (const s of list) {
+    const [x, z] = s.at;
+    const mark = new THREE.Group();
+    const ring = new THREE.Mesh(incomingRing, incomingMat);
+    const cross = new THREE.Mesh(incomingCross, incomingMat);
+    for (const m of [ring, cross]) {
+      m.renderOrder = 12;
+      m.frustumCulled = false;
+      mark.add(m);
+    }
+    const w = hexToWorld(x, z);
+    mark.position.set(w.x, 0.08, w.z);
+    incomingGroup.add(mark);
+    const arrow = document.createElement('button');
+    arrow.type = 'button';
+    arrow.className = 'incoming-arrow';
+    arrow.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l7.5 9h-4.6v10h-5.8v-10H4.5z" fill="currentColor"/></svg>';
+    arrow.title = L('Incoming missile: click to look there', '来袭导弹：点击查看落点');
+    arrow.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (view === 'board') rig.focus(w.x, w.z);
+    });
+    incomingArrows.appendChild(arrow);
+    incoming.set(s, { mark, arrow, x: w.x, z: w.z });
+  }
+}
+function unmarkIncoming(s) {
+  const m = incoming.get(s);
+  if (!m) return;
+  incomingGroup.remove(m.mark);
+  m.arrow.remove();
+  incoming.delete(s);
+}
+function clearIncoming() {
+  for (const s of [...incoming.keys()]) unmarkIncoming(s);
+}
+const _inc = new THREE.Vector3();
+/** Every frame: the targets pulse; the arrows sit on the view's edge toward any target that is off screen. */
+function updateIncoming(time) {
+  if (!incoming.size) return;
+  const pulse = 0.5 + 0.5 * Math.sin(time * 7);
+  incomingMat.opacity = 0.55 + 0.45 * pulse;
+  const onBoard = view === 'board' && !switching;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const margin = 34;
+  for (const m of incoming.values()) {
+    m.mark.scale.setScalar(1 + 0.12 * pulse);
+    m.mark.rotation.y = time * 0.8;
+    if (!onBoard) {
+      m.arrow.classList.remove('on');
+      continue;
+    }
+    // Behind the camera: its view-space z is positive (project() alone can't tell that from beyond the far plane).
+    const behind = _inc.set(m.x, 0.3, m.z).applyMatrix4(steadyCam.matrixWorldInverse).z > 0;
+    _inc.set(m.x, 0.3, m.z).project(steadyCam);
+    let nx = behind ? -_inc.x : _inc.x;
+    let ny = behind ? -_inc.y : _inc.y;
+    const inside = !behind && Math.abs(nx) < 0.92 && Math.abs(ny) < 0.88;
+    m.arrow.classList.toggle('on', !inside);
+    if (inside) continue;
+    // Toward the target from the view's centre, stopped at the edge.
+    const k = 1 / Math.max(Math.abs(nx) / 0.92, Math.abs(ny) / 0.88, 1e-6);
+    nx *= k;
+    ny *= k;
+    const px = rect.left + (nx * 0.5 + 0.5) * rect.width;
+    const py = rect.top + (-ny * 0.5 + 0.5) * rect.height;
+    const cx = Math.min(rect.right - margin, Math.max(rect.left + margin, px));
+    const cy = Math.min(rect.bottom - margin, Math.max(rect.top + margin, py));
+    const angle = Math.atan2(nx * rect.width, ny * rect.height); // 0 = up
+    m.arrow.style.transform = `translate(${cx}px, ${cy}px) translate(-50%, -50%) rotate(${angle}rad)`;
+  }
+}
+
 /** A flight's countdown ran out: play it in the city on screen, or settle it quietly if that city isn't shown. */
 const played = new Set(); // strikes already playing in a city view (started at approach)
 /** A flight is a missile's flight time from landing: if its city is on screen, the missile sets off now. */
@@ -6072,6 +6172,7 @@ function joinFlights() {
 }
 
 function arrive(rec) {
+  unmarkIncoming(rec); // it's down: its target mark goes
   // A decoy that wasn't watched leaves nothing behind (its fakes are harmless).
   if (rec.fizzled || played.has(rec) || rec.decoy) return;
   if (rec.to === 'player') {
@@ -6260,6 +6361,7 @@ async function runAttackPhase() {
   warTimer.classList.remove('hidden');
   // The air-raid siren follows missiles aimed at Hive City, from launch until the last one is down.
   if (res.some((s) => s.to === 'player' && !s.fizzled)) snd(() => combatAudio.sirenOn(), buzz);
+  markIncoming(res.filter((s) => s.to === 'player' && !s.fizzled));
   const phase = globe.playAttack(res, rivals);
   // Everyone fires at once: on Hive City your magazines open and the salvo climbs away as the countdown starts.
   // The first strike while the military lesson is open: launched from home, it waits in the air for you to follow it.
@@ -6276,6 +6378,7 @@ async function runAttackPhase() {
   await phase;
   await Promise.all(landing);
   combatAudio.endAttack();
+  clearIncoming();
   attackLive = false;
   warTimer.classList.add('hidden');
   if (run !== runId) return true;
@@ -7336,6 +7439,7 @@ function resetIsland(opts) {
   setTurnRunning(false);
   settledSeason = null;
   attackLive = false;
+  clearIncoming();
   landing = [];
   for (const h of factoryHops) {
     h.mesh.scale.set(1, 1, 1);
@@ -7831,6 +7935,7 @@ function frame(now) {
   offerMagazine(dt);
   updateRecenter(dt);
   autosave(dt);
+  updateIncoming(time);
   perf.end('placement');
   tutorial.update(time);
 
@@ -8084,4 +8189,4 @@ factory.extrasReady.then(async (extras) => {
 if (RELEASE) for (const id of ['debugDock', 'libraryLink']) document.getElementById(id)?.remove();
 
 // Handy for debugging in the console (dev builds only).
-if (!RELEASE) window.tileIsland = { titleScreen, lod: { LOD, lodStats, setLod }, instancer, shadowCache, tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, openCityStrike, drawStrikeHand, missileCount, _t: { openGlobe, globeCfg, clear: () => (eventOpen = false), war: { addMissile, queueDrawn, updateAimBar, runAttackPhase, rivals: () => rivals } } };
+if (!RELEASE) window.tileIsland = { titleScreen, lod: { LOD, lodStats, setLod }, instancer, shadowCache, tutorial, shadeIdle, resetIsland, debugRandomStrike, traffic, addWastePiece, debugEvent, dealNewHand, debugShop, EVENTS, perf, renderer, grid, hand, placement, rig, expansion, mysteries, fog, turn, dialogue, missiles, missileCfg, previewMissileStrike, playMissileStrike, economy: economyNow, addTile, spawnBandits, settleTurn, spawnRaider, queueScene, playPendingScenes, openCityStrike, drawStrikeHand, missileCount, _t: { openGlobe, markIncoming, globeCfg, clear: () => (eventOpen = false), war: { addMissile, queueDrawn, updateAimBar, runAttackPhase, rivals: () => rivals } } };
