@@ -16,6 +16,7 @@ import * as THREE from 'three';
 
 export const CURVE = {
   radius: 40, // the planet's radius in cells (0: flat); set from Game Debug → Graphics (graphics.js)
+  cullMargin: 1, // world units (one tile) added to every culling bound, so nothing pops at the screen edge
 };
 
 const uniforms = {
@@ -115,15 +116,38 @@ export function flattenCurve() {
 export const curveDrop = (x, z) => state.k * ((x - state.cx) ** 2 + (z - state.cz) ** 2);
 
 const bentSphere = new THREE.Sphere();
-/** Conservative union of a flat world sphere and its paraboloid-bent image, including the drop across its radius. */
+/**
+ * Conservative union of a flat world sphere and its paraboloid-bent image, including the drop across its radius,
+ * grown by CURVE.cullMargin.
+ */
 export function includeCurvedBounds(sphere) {
-  if (!state.k || sphere.isEmpty()) return sphere;
+  if (sphere.isEmpty()) return sphere;
+  sphere.radius += CURVE.cullMargin;
+  if (!state.k) return sphere;
   bentSphere.copy(sphere);
   const d = Math.hypot(sphere.center.x - state.cx, sphere.center.z - state.cz);
   bentSphere.center.y -= curveDrop(sphere.center.x, sphere.center.z);
   bentSphere.radius += state.k * (2 * d * sphere.radius + sphere.radius ** 2);
   return sphere.union(bentSphere);
 }
+
+// Ordinary meshes are culled by three.js on their flat bounds, but drawn bent: one just past the top of the screen
+// in the flat world can drop into view and pop in and out as the camera moves. Cull them on the bent bounds too.
+const meshSphere = new THREE.Sphere();
+THREE.Mesh.prototype.intersectsFrustum = function (frustum) {
+  const g = this.geometry;
+  if (!g) return true;
+  if (this.boundingSphere !== undefined) {
+    // Instanced and skinned meshes keep their own bound (as three.js's Frustum.intersectsObject).
+    if (this.boundingSphere === null) this.computeBoundingSphere();
+    meshSphere.copy(this.boundingSphere);
+  } else {
+    if (g.boundingSphere === null) g.computeBoundingSphere();
+    meshSphere.copy(g.boundingSphere);
+  }
+  meshSphere.applyMatrix4(this.matrixWorld);
+  return frustum.intersectsSphere(includeCurvedBounds(meshSphere));
+};
 
 // HTML over the 3D view (labels, icons, the tutorial's hand...) projects world points: bend them the same way.
 const project = THREE.Vector3.prototype.project;

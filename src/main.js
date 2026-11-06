@@ -886,12 +886,28 @@ function mainCapital() {
 }
 
 /** Random building cells (never Wasteland or other land). With `capital`, the main Capital is one of them, hit last. */
+/** World distance over which a barrage's preference for buildings near the Capital falls off (e-folding distance). */
+const STRIKE_NEAR = 3;
 function pickStrikeTargets(count, capital = false) {
   const cap = capital ? mainCapital() : null;
   const pool = [...grid.cells.values()].filter((c) => isBuilding(c.terrain) && c !== cap && (capital || c.terrain !== 'capital'));
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
+  if (count > 1) {
+    // A barrage: favour buildings near the main Capital, where its camera holds. Weighted random order
+    // (weight falls off with distance), so the far edge can still be hit once the inner city runs out.
+    const home = mainCapital() ?? { x: 0, z: 0 };
+    const at = hexToWorld(home.x, home.z);
+    const keyed = pool.map((c) => {
+      const w = hexToWorld(c.x, c.z);
+      const weight = Math.exp(-Math.hypot(w.x - at.x, w.z - at.z) / STRIKE_NEAR);
+      return { c, k: Math.random() ** (1 / weight) }; // larger weight: key nearer 1, picked first
+    });
+    keyed.sort((a, b) => b.k - a.k);
+    pool.splice(0, pool.length, ...keyed.map((e) => e.c));
+  } else {
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
   }
   const picked = pool.slice(0, cap ? count - 1 : count);
   if (cap) picked.push(cap);
@@ -1114,8 +1130,8 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
 }
 
 /**
- * 激光打击. No missile. The camera holds on the Capital (zoomed to fit every target) and the strikes
- * start LASER.stagger s apart, overlapping.
+ * 激光打击. No missile. One target: the camera centres on it. Several: it holds on the Capital (zoomed to
+ * fit every target) and the strikes start LASER.stagger s apart, overlapping.
  * Five thin beams spiral inward and merge, charge briefly, then an energy blast falls from the
  * sky. The blast touching the ground plays the missile impact (blast, shake, crater).
  */
@@ -1177,7 +1193,11 @@ async function playLaserStrike(targets, { convert = true, restoreCamera = true, 
     });
   };
   // Hold on the Capital (zoomed to fit every target) and stagger the strikes so they overlap.
-  strikeCamera(order);
+  // One target: centre on it. Several: hold on the Capital (their targets favour its area, pickStrikeTargets).
+  if (order.length === 1) {
+    const w = hexToWorld(order[0].x, order[0].z);
+    followCamera(new THREE.Vector3(w.x, 0, w.z), 16, 4.5);
+  } else strikeCamera(order);
   await wait(LASER.firstAim);
   if (run !== runId) {
     stop();
@@ -6167,6 +6187,29 @@ function updateWarTimer() {
     by.set(f.to, g);
   }
   const fmt = (t) => `${t.toFixed(1)}s`;
+  // Nothing coming at Hive City and none of them yours: the rivals are fighting each other. Say who hits whom.
+  if (!by.has('player') && flights.every((f) => f.from !== 'player')) {
+    const pairs = new Map();
+    for (const f of flights) {
+      const k = `${f.from}>${f.to}`;
+      const p = pairs.get(k) ?? { from: f.from, to: f.to, n: 0, eta: Infinity };
+      p.n++;
+      p.eta = Math.min(p.eta, f.eta);
+      pairs.set(k, p);
+    }
+    const rows = [...pairs.values()].sort((a, b) => a.eta - b.eta);
+    warTimer.innerHTML = rows
+      .map((p, i) => {
+        const text = L(
+          `${cityName(p.from)} launched ${p.n} missile${p.n === 1 ? '' : 's'} at ${cityName(p.to)} · arriving in ${fmt(p.eta)}`,
+          `${cityName(p.from)}向${cityName(p.to)}发射了 ${p.n} 枚导弹 · ${fmt(p.eta)} 后抵达`,
+        );
+        return i === 0 ? `<b>${text}</b>` : `<span>${text}</span>`;
+      })
+      .join('');
+    warTimer.classList.remove('hidden');
+    return;
+  }
   const tone = (to, g) => (to === 'player' ? 'bad' : g.mine ? 'good' : '');
   const sorted = [...by].sort((a, b) => a[1].eta - b[1].eta);
   // The headline: what lands on the city in view, or else whatever lands next (in its colour, like the list below).
@@ -6714,7 +6757,8 @@ function gatherSave() {
     hand: hand.cards.map((p) => ({ ...p })),
     missiles: missileState(),
     sites: mysteries.list(),
-    rivals: rivals.map(({ def, rng, grid: g, stats, ...rest }) => ({ ...rest, cells: [...g.cells.values()], plots: [...g.plots] })),
+    // (cells without their mesh: visiting a rival city puts its scene objects on them, rivalView.js)
+    rivals: rivals.map(({ def, rng, grid: g, stats, ...rest }) => ({ ...rest, cells: [...g.cells.values()].map(({ mesh, ...c }) => c), plots: [...g.plots] })),
     piecesPlaced,
     labOilPool,
     bmRevealed,
@@ -6728,7 +6772,14 @@ function autosave(dt) {
   if (saveCheck > 0) return;
   saveCheck = SAVE_EVERY;
   if (!calmForSave()) return;
-  const encoded = encodeSave(gatherSave());
+  let encoded;
+  try {
+    encoded = encodeSave(gatherSave());
+  } catch (err) {
+    // Something unsaveable got into the snapshot: skip this save (the last good one stays) instead of breaking the frame.
+    console.warn('[save] autosave skipped', err);
+    return;
+  }
   // The time stamp changes every write: compare without it.
   const body = encoded.replace(/"savedAt":\d+,/, '');
   if (body === lastSaved) return;

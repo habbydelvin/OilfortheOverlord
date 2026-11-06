@@ -14,7 +14,7 @@ export const LOD = {
   ratio: 0.1, // aim: a tenth of the triangles
   error: 0.05, // allowed shape change, as a share of each mesh's size (5%: at the switch zoom, about a pixel)
   minTriangles: 48, // smaller meshes stay as they are
-  distance: 17, // camera distance where the light models take over (Performance overlay slider)
+  distance: 18, // camera distance where the light models take over (Performance overlay slider)
   hysteresis: 2, // camera units between switching to light and back, so it doesn't flicker at the threshold
 };
 
