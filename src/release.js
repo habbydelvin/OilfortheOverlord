@@ -17,6 +17,9 @@ const DEV_KEYS = [
   'oto.gfx',
   'oto.fogConfig',
   'oto.missileConfig',
+  'oto.laserConfig', // Game Debug → Laser strike: the release plays the code defaults
+  'oto.overlordStrike', // missile or laser: the release plays the laser
+  'oto.laserColor',
   'oto.payoutConfig',
   'oto.scaling',
   'oto.iconConfig',

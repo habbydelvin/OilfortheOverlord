@@ -42,11 +42,11 @@ body {
   pointer-events: none;
 }
 #laserFlash.on {
-  animation: laser-flash 0.14s linear;
+  animation: laser-flash 0.22s ease-out;
 }
 @keyframes laser-flash {
   0% { opacity: 0; }
-  12% { opacity: 0.92; }
+  10% { opacity: 0.5; }
   100% { opacity: 0; }
 }
 

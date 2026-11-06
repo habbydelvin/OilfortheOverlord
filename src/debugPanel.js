@@ -1,3 +1,4 @@
+import { L, onLangChange } from './i18n.js';
 import { PAYOUT_DEFAULTS, PAYOUT_PARAMS, savePayoutConfig, clearPayoutConfig } from './payoutConfig.js';
 
 const decimals = (step) => (String(step).split('.')[1] ?? '').length;
@@ -7,10 +8,10 @@ const decimals = (step) => (String(step).split('.')[1] ?? '').length;
  * Each tuning section edits its `cfg` in place (read live) and saves to localStorage.
  * `fog` and `gfx` are optional extra sections: { params, defaults, cfg, save, clear, onChange(param) }.
  */
-export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog, globe, gfx, missiles, intercept, icons, scaling, audio, preview, shake, onShake, onMissiles, onPerf, onResetTutorial, crtOn, onCrt, onGiveTile, giveKeys, onGiveMissile, overlordStrike, onOverlordStrike, laserColor, onLaserColor, laserColorDefault = '#24c5ff' }) {
+export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, onExpansionMode, onSkipYear, fog, globe, gfx, missiles, laser, onLaserTest, intercept, icons, scaling, audio, preview, shake, onShake, onMissiles, onPerf, onResetTutorial, crtOn, onCrt, onGiveTile, giveKeys, onGiveMissile, overlordStrike, onOverlordStrike, laserColor, onLaserColor, laserColorDefault = '#ff3a1c' }) {
   const fmt = (p, v) => (p.type === 'select' || p.type === 'color' ? v : Number(v).toFixed(decimals(p.step)));
   const payout = { id: 'payout', params: PAYOUT_PARAMS, defaults: PAYOUT_DEFAULTS, cfg, save: savePayoutConfig, clear: clearPayoutConfig };
-  const sections = [audio && { id: 'audio', ...audio }, gfx && { id: 'gfx', ...gfx }, preview && { id: 'preview', ...preview }, shake && { id: 'shake', ...shake }, missiles && { id: 'missiles', ...missiles }, intercept && { id: 'intercept', ...intercept }, payout, scaling && { id: 'scaling', ...scaling }, icons && { id: 'icons', ...icons }, fog && { id: 'fog', ...fog }, globe && { id: 'globe', ...globe }].filter(Boolean);
+  const sections = [audio && { id: 'audio', ...audio }, gfx && { id: 'gfx', ...gfx }, preview && { id: 'preview', ...preview }, shake && { id: 'shake', ...shake }, missiles && { id: 'missiles', ...missiles }, laser && { id: 'laser', ...laser }, intercept && { id: 'intercept', ...intercept }, payout, scaling && { id: 'scaling', ...scaling }, icons && { id: 'icons', ...icons }, fog && { id: 'fog', ...fog }, globe && { id: 'globe', ...globe }].filter(Boolean);
   const sectionOf = (id) => sections.find((s) => s.id === id);
 
   function rowsFor({ id, params, defaults, cfg }) {
@@ -49,21 +50,22 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
           <input type="checkbox" data-act="mode"${expansionMode?.() ? ' checked' : ''} />
         </label>
         <div class="dbg-group">Dev testing</div>
-        <label class="dbg-row" title="Which strike a missed tribute and the bottom-left button play. 激光打击 is a copy of 导弹打击.">
-          <span class="dbg-name">霸主打击</span>
+        <label class="dbg-row" title="${L('Which strike a missed tribute and the bottom-left button play.', '未缴足贡品和左下角按钮使用哪种打击。')}">
+          <span class="dbg-name">${L('Overlord strike', '霸主打击')}</span>
           <select data-act="overlordStrike">
-            <option value="missile"${overlordStrike?.() === 'laser' ? '' : ' selected'}>导弹打击</option>
-            <option value="laser"${overlordStrike?.() === 'laser' ? ' selected' : ''}>激光打击</option>
+            <option value="missile"${overlordStrike?.() === 'laser' ? '' : ' selected'}>${L('Missile strike', '导弹打击')}</option>
+            <option value="laser"${overlordStrike?.() === 'laser' ? ' selected' : ''}>${L('Laser strike', '激光打击')}</option>
           </select>
         </label>
-        <label class="dbg-row${(laserColor?.() ?? laserColorDefault).toLowerCase() === laserColorDefault.toLowerCase() ? '' : ' changed'}" title="Colour of the three thin columns, the bolt shell, and the orb glow. The white core stays white.">
-          <span class="dbg-name">激光颜色</span>
+        <label class="dbg-row${(laserColor?.() ?? laserColorDefault).toLowerCase() === laserColorDefault.toLowerCase() ? '' : ' changed'}" title="Colour of the five targeting beams and the energy blast.">
+          <span class="dbg-name">${L('Laser colour', '激光颜色')}</span>
           <span class="dbg-val" data-v="laserColor">${laserColor?.() ?? laserColorDefault}</span>
           <input type="color" data-act="laserColor" value="${laserColor?.() ?? laserColorDefault}" />
         </label>
         <div class="dbg-actions dbg-dev">
           <button data-act="skipMet" title="Jump to the tribute and deliver exactly the quota">Skip year <small>(meet)</small></button>
           <button data-act="skipMiss" title="Jump to the tribute and deliver nothing (a strike)">Skip year <small>(miss)</small></button>
+          <button data-act="laserTest" title="Preview the laser strike with the current Laser strike settings">Laser test</button>
           <button data-act="missiles" title="Preview the Overlord's missile strike (settings under Missiles · preview) (M)">Missiles <small>(M)</small></button>
           <button data-act="allTiles" title="Restart with every tile unlocked (?alltiles=1). Hand stays 5 cards; Give tile below adds one.">All tiles sandbox</button>
           <button data-act="resetTutorial" title="Forget that the tutorial and hints were seen, and start a new run with the guided Spring">Reset tutorial</button>
@@ -144,6 +146,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
     else if (act === 'giveMissile') status(onGiveMissile?.() ?? '');
     else if (act === 'giveDecoy') status(onGiveMissile?.('decoy') ?? '');
     else if (act === 'resetTutorial') status(onResetTutorial?.() ?? '');
+    else if (act === 'laserTest') status(onLaserTest?.() ?? '');
     else if (act === 'missiles') status(onMissiles?.() ?? '');
     else if (act === 'shake') status(onShake?.() ?? '');
     else if (act === 'crt') {
@@ -221,6 +224,7 @@ export function createDebugPanel(root, toggleBtn, cfg, { onPlay, expansionMode, 
   });
 
   render();
+  onLangChange(() => render());
   setOpen(localStorage.getItem('oto.debugOpen') === '1');
   return {
     toggle: () => setOpen(root.classList.contains('hidden')),

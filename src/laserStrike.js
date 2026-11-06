@@ -126,8 +126,6 @@ export const MISSILE_PARAMS = [
   { key: 'cloudShadeVar', label: 'Cloud two-tone', min: 0, max: 0.6, step: 0.01 },
 
   { group: 'Missiles · camera' },
-  { key: 'camRate', label: 'Camera ease speed', min: 0.3, max: 16, step: 0.1 },
-  { key: 'camLead', label: 'Camera lead time (s)', min: 0, max: 4, step: 0.05 },
   { key: 'camMinDistance', label: 'Min zoom distance', min: 6, max: 48, step: 0.5 },
   { key: 'camFit', label: 'Fit targets factor', min: 0.3, max: 3, step: 0.05 },
   { key: 'camLower', label: 'Capital below centre', min: -0.3, max: 0.4, step: 0.01, hint: 'share of the screen height' },
@@ -161,6 +159,78 @@ export function saveMissileConfig(cfg) {
 
 export function clearMissileConfig() {
   localStorage.removeItem(STORAGE_KEY);
+}
+
+// ---------- 激光打击 tuning (Game Debug → Laser strike) ----------
+export const LASER = {
+  beams: 5,
+  spread: 1.3,
+  height: 24,
+
+  firstAim: 0.7,
+  gather: 1.8,
+  spinTurns: 1.5,
+  pause: 0.5,
+  retract: 0.25,
+  fall: 0.5,
+  stagger: 0.45,
+  thinWidth: 0.007,
+  mergedWidth: 0.01,
+  chargeGrow: 0.009,
+  retractWidth: 0.014,
+  dotSize: 0.05,
+  glowWidth: 2.5,
+  glowOpacity: 0,
+  hazeWidth: 5,
+  hazeOpacity: 0.15,
+  hot: 0.55,
+  blastSize: 0.55,
+  sparks: 140,
+};
+
+export const LASER_PARAMS = [
+  { group: 'Laser strike · sequence (s)' },
+  { key: 'firstAim', label: 'Camera settle before firing', min: 0, max: 3, step: 0.05, hint: 'Wait after the camera moves to the first target, before the beams appear' },
+  { key: 'gather', label: 'Beams spiral in', min: 0.2, max: 5, step: 0.05 },
+  { key: 'pause', label: 'Merged charge pause', min: 0, max: 3, step: 0.05 },
+  { key: 'retract', label: 'Sight line retracts up', min: 0.05, max: 2, step: 0.01 },
+  { key: 'fall', label: 'Blast falls', min: 0.05, max: 2, step: 0.01 },
+  { key: 'stagger', label: 'Gap after impact (next target)', min: 0, max: 3, step: 0.05 },
+  { group: 'Laser strike · beams' },
+  { key: 'beams', label: 'Beam count', min: 1, max: 12, step: 1 },
+  { key: 'spread', label: 'Start spread', min: 0.2, max: 4, step: 0.05 },
+  { key: 'spinTurns', label: 'Spiral turns', min: 0, max: 5, step: 0.1 },
+  { key: 'height', label: 'Beam height', min: 4, max: 30, step: 0.5 },
+  { key: 'thinWidth', label: 'Beam width', min: 0.002, max: 0.08, step: 0.001 },
+  { key: 'mergedWidth', label: 'Merged width', min: 0.002, max: 0.1, step: 0.001 },
+  { key: 'chargeGrow', label: 'Width gained while charging', min: 0, max: 0.08, step: 0.001 },
+  { key: 'retractWidth', label: 'Width while retracting', min: 0.002, max: 0.1, step: 0.001 },
+  { key: 'dotSize', label: 'Ground dot size', min: 0, max: 1.5, step: 0.05 },
+  { key: 'glowWidth', label: 'Glow width (× core)', min: 1, max: 10, step: 0.1 },
+  { key: 'glowOpacity', label: 'Glow strength', min: 0, max: 1.5, step: 0.05 },
+  { key: 'hazeWidth', label: 'Haze width (× core)', min: 1, max: 20, step: 0.5 },
+  { key: 'hazeOpacity', label: 'Haze strength', min: 0, max: 1, step: 0.01 },
+  { key: 'hot', label: 'Core whiteness', min: 0, max: 1, step: 0.05 },
+  { group: 'Laser strike · blast' },
+  { key: 'blastSize', label: 'Blast size', min: 0.3, max: 3, step: 0.05 },
+  { key: 'sparks', label: 'Impact sparks', min: 0, max: 200, step: 5 },
+];
+
+export const LASER_DEFAULTS = { ...LASER };
+const LASER_KEY = 'oto.laserConfig';
+
+export function loadLaserConfig() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LASER_KEY) ?? '{}');
+    for (const k of Object.keys(LASER_DEFAULTS)) if (typeof saved[k] === 'number') LASER[k] = saved[k];
+  } catch {}
+  return LASER;
+}
+export function saveLaserConfig(cfg) {
+  localStorage.setItem(LASER_KEY, JSON.stringify(Object.fromEntries(Object.keys(LASER_DEFAULTS).map((k) => [k, cfg[k]]))));
+}
+export function clearLaserConfig() {
+  localStorage.removeItem(LASER_KEY);
 }
 
 // ---------- textures ----------
@@ -638,7 +708,7 @@ export class LaserStrike {
     this.beamColor = new THREE.Color(0x24c5ff);
   }
 
-  /** Tint of the thin columns, the bolt's outer shell, and the orb glow. The core stays white. */
+  /** Tint of the targeting beams and the energy blast. */
   setBeamColor(hex) {
     this.beamColor.set(hex);
   }
@@ -918,66 +988,199 @@ export class LaserStrike {
     return true;
   }
 
-  // ---------- 激光打击: three beams gather, then a bolt ----------
+  // ---------- 激光打击: five beams spiral in and merge, a pause, then an orbital energy blast ----------
+  // Look: a hot, near-white core in the beam's colour inside layered soft glows, with bright
+  // flare points where the beams leave the sky (a planet-killer laser).
   #gathers = [];
   #beamGeo = null;
+  #tailGeo = null;
   #orbGeo = null;
+  // Timings and looks are read live from LASER (Game Debug → Laser strike).
+  static get BEAMS() { return Math.round(LASER.beams); }
+  static get HEIGHT() { return LASER.height; }
+  static get GATHER() { return LASER.gather; }
+  static get PAUSE() { return LASER.pause; }
+  static get FALL() { return LASER.fall; }
+  static get RETRACT() { return LASER.retract; }
+  static get SPREAD() { return LASER.spread; }
+  static get HOT() { return LASER.hot; }
 
   #ensureBeamGeo() {
     if (this.#beamGeo) return;
-    this.#beamGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
+    this.#beamGeo = new THREE.CylinderGeometry(1, 1, 1, 16, 1, true);
     this.#beamGeo.translate(0, 0.5, 0); // base on the ground, length runs up +Y
-    this.#orbGeo = new THREE.SphereGeometry(1, 18, 12);
+    // The blast's trail: wide at its base (the head), tapering to a point above.
+    this.#tailGeo = new THREE.CylinderGeometry(0.04, 1, 1, 20, 1, true);
+    this.#tailGeo.translate(0, 0.5, 0);
+    this.#orbGeo = new THREE.SphereGeometry(1, 24, 16);
+  }
+
+  /** The beam colour pushed toward warm white: the hot centre of a laser. */
+  #hot(tint) {
+    return tint.clone().lerp(new THREE.Color('#fff2d8'), LaserStrike.HOT);
   }
 
   /**
-   * Beams over a world point (x, z). Three thin columns start apart, spin, and draw together.
-   * Then a thick column and a bolt drop in a flash. Resolves when the bolt touches the ground
-   * and the beams are gone. `onBolt` fires as the thick column appears.
+   * Shader for every laser part.
+   *  core: opaque hot centre, soft only at the very edge (normal blending).
+   *  glow: additive halo, brightest along the centre line, falling off to nothing at the rim.
+   *  fadeUp: fades out along the length (the blast's trail).
+   */
+  #beamMaterial(color, { core = false, fadeUp = 0, sharp = 1.6 } = {}) {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uColor: { value: new THREE.Color(color) },
+        uTime: { value: 0 },
+        uOpacity: { value: 0 },
+        uBright: { value: 1 },
+        uFadeUp: { value: fadeUp },
+        uSharp: { value: sharp },
+      },
+      vertexShader: /* glsl */ `
+        varying vec2 vUv;
+        varying vec3 vN;
+        varying vec3 vV;
+        void main() {
+          vUv = uv;
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          vN = normalize(normalMatrix * normal);
+          vV = normalize(-mv.xyz);
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: /* glsl */ `
+        uniform vec3 uColor;
+        uniform float uTime, uOpacity, uBright, uFadeUp, uSharp;
+        varying vec2 vUv;
+        varying vec3 vN;
+        varying vec3 vV;
+        void main() {
+          float facing = abs(dot(normalize(vN), normalize(vV)));
+          float along = mix(1.0, pow(1.0 - vUv.y, 1.4), uFadeUp);
+          float top = uFadeUp > 0.5 ? 1.0 : smoothstep(1.0, 0.45, vUv.y);
+          vec3 c = uColor * uBright;
+          ${core ? 'gl_FragColor = vec4(c, clamp(uOpacity, 0.0, 1.0) * top * along * smoothstep(0.0, 0.35, facing));' : 'gl_FragColor = vec4(c * pow(facing, uSharp) * uOpacity * top * along, 1.0);'}
+        }`,
+      transparent: true,
+      blending: core ? THREE.NormalBlending : THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+      fog: false,
+    });
+  }
+
+  /** A bright flare point (sprite) in the beam's colour. */
+  #flare(color, size, order = 15) {
+    const s = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: this.glow, color, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, fog: false }),
+    );
+    s.scale.setScalar(size);
+    s.renderOrder = order;
+    s.frustumCulled = false;
+    return s;
+  }
+
+  /** One laser line: hot core, inner glow, wide outer haze. Returns { group, parts, set(radius, opacity, bright) }. */
+  #laserLine(tint, hot, H) {
+    const group = new THREE.Group();
+    const mk = (mat, order) => {
+      const m = new THREE.Mesh(this.#beamGeo, mat);
+      m.frustumCulled = false;
+      m.renderOrder = order;
+      group.add(m);
+      return m;
+    };
+    const haze = mk(this.#beamMaterial(tint, { sharp: 2.4 }), 11);
+    const glow = mk(this.#beamMaterial(tint, { sharp: 1.2 }), 12);
+    const core = mk(this.#beamMaterial(hot, { core: true }), 13);
+    const parts = [haze, glow, core];
+    return {
+      group,
+      parts,
+      set(r, opacity, bright = 1) {
+        core.scale.set(r, H, r);
+        glow.scale.set(r * LASER.glowWidth, H, r * LASER.glowWidth);
+        haze.scale.set(r * LASER.hazeWidth, H, r * LASER.hazeWidth);
+        core.material.uniforms.uOpacity.value = opacity;
+        glow.material.uniforms.uOpacity.value = LASER.glowOpacity * opacity;
+        haze.material.uniforms.uOpacity.value = LASER.hazeOpacity * opacity;
+        for (const m of parts) m.material.uniforms.uBright.value = bright;
+      },
+    };
+  }
+
+  /**
+   * Beams over a world point (x, z). Five thin beams start apart, spiral inward and merge into one
+   * column in the centre. After a short charging pause it retracts into the sky, then an energy blast falls.
+   * Resolves when the blast hits the ground (`onBolt` fires at that moment too).
    */
   gather(x, z, { onBolt } = {}) {
     this.#ensureBeamGeo();
-    const mat = (color, opacity) =>
-      new THREE.MeshBasicMaterial({
-        color,
-        transparent: true,
-        opacity,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        toneMapped: false,
-        fog: false,
-      });
-    const column = (radius, height, color, opacity) => {
-      const mesh = new THREE.Mesh(this.#beamGeo, mat(color, opacity));
-      mesh.scale.set(radius, height, radius);
-      mesh.frustumCulled = false;
-      mesh.renderOrder = 12;
-      return mesh;
-    };
-    const H = 14;
-    const tint = this.beamColor;
+    const L = LaserStrike;
+    const H = L.HEIGHT;
+    const tint = this.beamColor.clone();
+    const hot = this.#hot(tint);
     const group = new THREE.Group();
     group.position.set(x, 0.05, z);
-    const thin = [0, 1, 2].map(() => column(0.07 / 3, H, tint, 0.95));
-    for (const m of thin) group.add(m);
-    const thick = column(0.26, H, 0xffffff, 1);
-    const shell = column(0.55, H, tint, 0.45);
-    thick.visible = shell.visible = false;
-    group.add(thick, shell);
-    const orb = new THREE.Mesh(this.#orbGeo, mat(0xffffff, 1));
-    orb.scale.setScalar(0.55);
-    orb.visible = false;
-    orb.frustumCulled = false;
-    orb.renderOrder = 13;
-    const glow = new THREE.Mesh(this.#orbGeo, mat(tint, 0.45));
-    glow.scale.setScalar(1.15);
-    orb.add(glow);
-    group.add(orb);
+    // Five targeting beams, each with a flare where it leaves the sky.
+    const thin = Array.from({ length: L.BEAMS }, () => {
+      const line = this.#laserLine(tint, hot, H);
+      const flare = this.#flare(hot, 0.9);
+      flare.position.y = H;
+      flare.visible = false; // no visible source in the sky
+      line.group.add(flare);
+      line.flare = flare;
+      line.dot = this.#flare(tint, LASER.dotSize); // the pointer dot on the ground
+      line.dot.position.y = 0.06;
+      line.group.add(line.dot);
+      group.add(line.group);
+      return line;
+    });
+    // The merged column, shown once the beams meet.
+    const merged = this.#laserLine(tint, hot, H);
+    merged.flare = this.#flare(hot, 1.6);
+    merged.flare.position.y = H;
+    merged.flare.visible = false;
+    merged.group.add(merged.flare);
+    merged.dot = this.#flare(tint, LASER.dotSize * 1.7);
+    merged.dot.position.y = 0.06;
+    merged.group.add(merged.dot);
+    merged.group.visible = false;
+    group.add(merged.group);
+    // The energy blast: a hot elongated head, a glow around it, a tapering streak above.
+    const blast = new THREE.Group();
+    const part = (geo, mat, order) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.frustumCulled = false;
+      m.renderOrder = order;
+      blast.add(m);
+      return m;
+    };
+    const head = part(this.#orbGeo, this.#beamMaterial(hot, { core: true }), 15);
+    head.scale.set(0.3, 0.9, 0.3);
+    const aura = part(this.#orbGeo, this.#beamMaterial(tint, { sharp: 1 }), 14);
+    aura.scale.set(0.8, 1.7, 0.8);
+    const tail = part(this.#tailGeo, this.#beamMaterial(hot, { core: true, fadeUp: 1 }), 14);
+    tail.scale.set(0.28, 6, 0.28);
+    const tailGlow = part(this.#tailGeo, this.#beamMaterial(tint, { fadeUp: 1, sharp: 1.2 }), 13);
+    tailGlow.scale.set(0.9, 8, 0.9);
+    const headFlare = this.#flare(tint, 2.6, 16);
+    blast.add(headFlare);
+    blast.scale.setScalar(LASER.blastSize);
+    blast.visible = false;
+    group.add(blast);
     this.group.add(group);
-    const g = { group, thin, thick, shell, orb, age: 0, bolt: false, onBolt, resolve: null, done: false };
+    const meshes = [...thin.flatMap((l) => [...l.parts, l.flare, l.dot]), ...merged.parts, merged.flare, merged.dot, head, aura, tail, tailGlow, headFlare];
+    const g = { group, thin, merged, blast, head, aura, tail, tailGlow, headFlare, mats: meshes.map((m) => m.material), tint, hot, x, z, age: 0, fired: false, onBolt, resolve: null, done: false };
     const promise = new Promise((resolve) => (g.resolve = resolve));
     this.#gathers.push(g);
     return promise;
+  }
+
+  /** Seconds until every beam/blast in progress has landed (0 if none). */
+  beamRemaining() {
+    const L = LaserStrike;
+    const total = L.GATHER + L.PAUSE + L.RETRACT + L.FALL;
+    return this.#gathers.reduce((t, g) => Math.max(t, total - g.age), 0);
   }
 
   abortGathers() {
@@ -989,43 +1192,92 @@ export class LaserStrike {
     if (g.done) return;
     g.done = true;
     this.group.remove(g.group);
-    for (const m of [...g.thin, g.thick, g.shell, g.orb, g.orb.children[0]]) m.material.dispose();
+    for (const m of g.mats) m.dispose();
+    const resolve = g.resolve;
+    g.resolve = null;
+    resolve?.();
   }
 
   #updateGathers(dt) {
-    const GATHER = 1.65; // long enough to see the three columns spin inward
-    const BOLT = 0.1; // thick column and the falling bolt: one instant
-    const H = 14;
-    const SPREAD = 0.9;
+    const { GATHER, PAUSE, RETRACT, FALL, SPREAD, BEAMS } = LaserStrike;
+    const H = LaserStrike.HEIGHT;
     for (let i = this.#gathers.length - 1; i >= 0; i--) {
       const g = this.#gathers[i];
       g.age += dt;
+      for (const m of g.mats) if (m.uniforms) m.uniforms.uTime.value = g.age;
+      // 1. Five beams spiral inward, speeding up as they close.
       if (g.age < GATHER) {
         const u = g.age / GATHER;
         const e = u * u * (3 - 2 * u);
         const spread = SPREAD * (1 - e);
-        const spin = g.age * ((Math.PI * 2 * 1.25) / GATHER);
-        g.thin.forEach((m, k) => {
-          const a = spin + (k * Math.PI * 2) / 3;
-          m.position.set(Math.cos(a) * spread, 0, Math.sin(a) * spread);
-          m.material.opacity = 0.55 + 0.4 * e;
+        const spin = Math.PI * 2 * LASER.spinTurns * u * u; // accelerating turn
+        const on = Math.min(1, g.age / 0.25);
+        g.thin.forEach((l, k) => {
+          const a = spin + (k * Math.PI * 2) / BEAMS;
+          l.group.position.set(Math.cos(a) * spread, 0, Math.sin(a) * spread);
+          l.set(LASER.thinWidth, on, 1.1);
+          l.dot.material.opacity = on;
+          l.flare.material.opacity = on;
         });
         continue;
       }
-      if (!g.bolt) {
-        g.bolt = true;
-        for (const m of g.thin) m.visible = false;
-        g.thick.visible = g.shell.visible = g.orb.visible = true;
-        g.orb.position.set(0, H, 0);
-        g.onBolt?.();
+      // 2. Merged: one column in the centre, steadily thickening and brightening as it charges.
+      const t = g.age - GATHER;
+      if (t < PAUSE) {
+        if (!g.merged.group.visible) {
+          for (const l of g.thin) l.group.visible = false;
+          g.merged.group.visible = true;
+        }
+        const c = t / PAUSE;
+        g.merged.set(LASER.mergedWidth + LASER.chargeGrow * c, 1, 1.1 + 0.4 * c);
+        g.merged.dot.material.opacity = 1;
+        g.merged.dot.scale.setScalar(LASER.dotSize * (1.7 + 0.85 * c));
+        g.merged.flare.material.opacity = 1;
+        g.merged.flare.scale.setScalar(1.6 + 1.2 * c);
+        continue;
       }
-      const b = Math.min(1, (g.age - GATHER) / BOLT);
-      g.orb.position.y = H * (1 - b);
-      if (b < 1) continue;
-      const resolve = g.resolve;
+      // 3. The sight line retracts back up into the sky.
+      const r = Math.min(1, (t - PAUSE) / RETRACT);
+      if (r < 1 || g.merged.group.visible) {
+        const e = r * r * (3 - 2 * r);
+        g.merged.set(LASER.retractWidth, 1, 1.5);
+        g.merged.dot.visible = r === 0; // the dot leaves the ground as the line lifts
+        g.merged.group.position.y = H * e;
+        g.merged.group.scale.y = Math.max(0.001, 1 - e);
+        g.merged.flare.scale.set(2.8, 2.8 / g.merged.group.scale.y, 1); // undo the column's squash: the flare stays round
+        if (r >= 1) g.merged.group.visible = false;
+        if (r < 1) continue;
+      }
+      // 4. Once it's fully back up, the energy blast falls from the sky.
+      const f = Math.min(1, (t - PAUSE - RETRACT) / FALL);
+      if (!g.fired) {
+        g.fired = true;
+        g.blast.visible = true;
+      }
+      const y = H * (1 - f * f); // accelerating fall
+      g.blast.position.y = y + 0.4;
+      g.head.material.uniforms.uOpacity.value = 1;
+      g.tail.material.uniforms.uOpacity.value = 1;
+      g.aura.material.uniforms.uOpacity.value = 1.2;
+      g.tailGlow.material.uniforms.uOpacity.value = 1;
+      for (const m of [g.head, g.aura, g.tail, g.tailGlow]) m.material.uniforms.uBright.value = 1.4;
+      g.headFlare.material.opacity = 1;
+      if (f < 1) continue;
+      // Impact: a fiery spray of sparks, hot to the beam's colour; the missile blast (impact()) follows.
+      const ground = new THREE.Vector3(g.x, 0.3, g.z);
+      const hotHex = '#' + g.hot.getHexString();
+      const hex = '#' + g.tint.getHexString();
+      this.flames.spawn({ pos: ground.clone().setY(0.6), size0: 1.2, size1: 3.2, life: 0.3, color0: hotHex, color1: hex, colorTime: 0.4, opacity: 1, fadeIn: 0.01, fadePow: 2 });
+      for (let k = 0; k < LASER.sparks; k++) {
+        const a = rand(0, Math.PI * 2);
+        const sp = rand(3, 8);
+        this.flames.spawn({ pos: ground.clone(), vel: new THREE.Vector3(Math.cos(a) * sp, rand(0.5, 4.5), Math.sin(a) * sp), drag: 3, size0: rand(0.1, 0.2), size1: 0.01, life: rand(0.3, 0.7), color0: hotHex, color1: hex, opacity: 1, fadeIn: 0.005 });
+      }
+      this.light.position.set(g.x, 0.8, g.z);
+      this.#lightLevel = 1;
+      g.onBolt?.();
       this.#dropGather(g);
       this.#gathers.splice(i, 1);
-      resolve?.();
     }
   }
 
@@ -1550,6 +1802,7 @@ export class LaserStrike {
     this.#rounds.length = 0;
     this.#blasts.length = 0;
     this.#timers.length = 0;
+    this.abortGathers();
     this.smoke.clear();
     this.cloud.clear();
     this.flames.clear();

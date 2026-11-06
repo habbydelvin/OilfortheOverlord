@@ -58,7 +58,8 @@ import { Perf } from './perfOverlay.js';
 import { GFX_PARAMS, GFX_DEFAULTS, loadGfxConfig, saveGfxConfig, clearGfxConfig, applyGfx } from './graphics.js';
 import { playRebelScene, playBanditScene, LEADER_COSTS } from './leaders.js';
 import { MissileStrike, MISSILE_PARAMS, MISSILE_DEFAULTS, MISSILE_TAIL, loadMissileConfig, saveMissileConfig, clearMissileConfig } from './missiles.js';
-import { LaserStrike } from './laserStrike.js';
+import { LaserStrike, LASER, LASER_PARAMS, LASER_DEFAULTS, loadLaserConfig, saveLaserConfig, clearLaserConfig } from './laserStrike.js';
+loadLaserConfig();
 import { Tutorial, TUTORIAL_KEY, OPENING, tutorialDone, markTutorialDone } from './tutorial.js';
 import { L, both, isZh, toggleLang, onLangChange, applyStatic, textOf, retranslate } from './i18n.js';
 import { createRivals, advanceRivals, rivalStats, PLAYER_NODE, RIVALS, mulberry32 } from './rivals.js';
@@ -145,10 +146,10 @@ const missiles = new MissileStrike(scene, camera, missileCfg);
 const lasers = new LaserStrike(scene, camera, missileCfg);
 const OVERLORD_STRIKE_KEY = 'oto.overlordStrike';
 const LASER_COLOR_KEY = 'oto.laserColor';
-const LASER_COLOR_DEFAULT = '#24c5ff';
-/** Which strike the Overlord uses: the bottom-left button and a missed tribute. 'missile' or 'laser'. */
+const LASER_COLOR_DEFAULT = '#ff3a1c';
+/** Which strike the Overlord uses: the bottom-left button and a missed tribute. Laser unless Game Debug saved missiles. */
 function overlordStrikeKind() {
-  return localStorage.getItem(OVERLORD_STRIKE_KEY) === 'laser' ? 'laser' : 'missile';
+  return localStorage.getItem(OVERLORD_STRIKE_KEY) === 'missile' ? 'missile' : 'laser';
 }
 function setOverlordStrikeKind(kind) {
   localStorage.setItem(OVERLORD_STRIKE_KEY, kind === 'laser' ? 'laser' : 'missile');
@@ -251,7 +252,7 @@ const debug = RELEASE
     resetIsland({ tutorial: true }); // (its lessons start over too)
     return 'Tutorial reset: guided first Spring started';
   },
-  onMissiles: () => (tutorialBlocks() ? 'Not during the tutorial' : previewMissileStrike()),
+  onMissiles: () => previewMissileStrike(),
   overlordStrike: overlordStrikeKind,
   onOverlordStrike: (kind) => {
     setOverlordStrikeKind(kind);
@@ -296,6 +297,21 @@ const debug = RELEASE
       hand.render();
       if (hand.piece) placement.setPiece(hand.piece);
     },
+  },
+  laser: {
+    params: LASER_PARAMS,
+    defaults: LASER_DEFAULTS,
+    cfg: LASER,
+    save: saveLaserConfig,
+    clear: clearLaserConfig,
+  },
+  onLaserTest: () => {
+    if (striking) return 'A strike is already playing';
+    const prev = overlordStrikeKind();
+    setOverlordStrikeKind('laser');
+    const msg = previewMissileStrike();
+    setOverlordStrikeKind(prev);
+    return msg;
   },
   intercept: {
     params: INTERCEPT_PARAMS,
@@ -1099,8 +1115,8 @@ async function playMissileStrike(targets, { convert = true, restoreCamera = true
 
 /**
  * 激光打击. No missile. The camera centres each building in a random order and stays on the last.
- * Three thin columns spin inward, then a thick column and a bolt drop in one flash. The bolt
- * touching the ground plays the missile impact (blast, shake, crater).
+ * Five thin beams spiral inward and merge, charge briefly, then an energy blast falls from the
+ * sky. The blast touching the ground plays the missile impact (blast, shake, crater).
  */
 async function playLaserStrike(targets, { convert = true, restoreCamera = true, onCover = null, holdAfter = null, free = false } = {}) {
   const run = runId;
@@ -1134,7 +1150,7 @@ async function playLaserStrike(targets, { convert = true, restoreCamera = true, 
   for (let i = 0; i < order.length; i++) {
     const t = order[i];
     centre(t);
-    await wait(i === 0 ? 0.7 : 0.55);
+    await wait(i === 0 ? LASER.firstAim : 0.55);
     if (run !== runId) {
       stop();
       return lost;
@@ -1166,13 +1182,13 @@ async function playLaserStrike(targets, { convert = true, restoreCamera = true, 
         if (name) lost.push(name);
       },
     });
-    if (i < order.length - 1) await wait(0.45);
+    if (i < order.length - 1) await wait(LASER.stagger);
     if (run !== runId) {
       stop();
       return lost;
     }
   }
-  await wait(holdAfter ?? missileCfg.holdAfter);
+  await wait(Math.max(holdAfter ?? missileCfg.holdAfter, lasers.beamRemaining() + 0.2));
   if (run !== runId) {
     stop();
     return lost;
@@ -1529,7 +1545,7 @@ function previewMissileStrike({ convert = missileCfg.previewCraters === 'yes', c
 $('btnMissile').addEventListener('click', (e) => {
   const btn = e.currentTarget;
   btn.blur();
-  const busyNow = turn.over || striking || shopOpen || eventOpen || payout.active || tutorial.active || view !== 'board';
+  const busyNow = turn.over || striking || shopOpen || eventOpen || payout.active || view !== 'board';
   if (busyNow) {
     btn.classList.remove('refused');
     void btn.offsetWidth;
